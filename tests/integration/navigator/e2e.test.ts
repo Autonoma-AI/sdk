@@ -3,18 +3,17 @@
  * Uses testcontainers. All scenarios use nested `create` format.
  */
 
-import { PostgreSqlContainer } from '@testcontainers/postgresql'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import { PrismaClient } from './generated/index.js'
 import { prismaAdapter } from '../../../packages/sdk-prisma/src/index'
-import { handleRequest, signBody } from '../../../packages/sdk/src/index'
-import type { HandlerConfig, ScenarioDefinition } from '../../../packages/sdk/src/types'
+import { checkScenario } from '../../../packages/sdk/src/check'
+import type { OrmAdapter, ScenarioDefinition } from '../../../packages/sdk/src/types'
 import { execSync } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const SHARED_SECRET = 'e2e-shared'
-const SIGNING_SECRET = 'e2e-signing'
 const SCHEMA_PATH = join(__dirname, 'prisma/schema.prisma')
 
 // ── Scenarios ─────────────────────────────────────────────────────────────
@@ -123,117 +122,44 @@ const scenarios: Record<string, ScenarioDefinition> = {
   },
 }
 
-// ── Runner ────────────────────────────────────────────────────────────────
+// ── Tests ─────────────────────────────────────────────────────────────────
 
-function signedRequest(body: Record<string, unknown>) {
-  const raw = JSON.stringify(body)
-  return { body: raw, headers: { 'x-signature': signBody(raw, SHARED_SECRET) } }
-}
+let container: StartedPostgreSqlContainer
+let prisma: PrismaClient
+let adapter: OrmAdapter
 
-async function runScenario(
-  name: string,
-  scenario: ScenarioDefinition,
-  config: HandlerConfig,
-  prisma: PrismaClient,
-) {
-  console.log(`\n──── Scenario: ${name} ────`)
-
-  const t0 = performance.now()
-  const upReq = signedRequest({ action: 'up', create: scenario.create })
-  const upRes = await handleRequest(config, upReq)
-  const upMs = (performance.now() - t0).toFixed(0)
-
-  if (upRes.status !== 200) {
-    console.error(`  ✗ UP failed:`, JSON.stringify(upRes.body, null, 2))
-    return false
-  }
-
-  const body = upRes.body as any
-  const refSummary = Object.entries(body.refs as Record<string, any[]>)
-    .map(([m, r]) => `${m}:${r.length}`)
-    .join(', ')
-  console.log(`  ✓ UP in ${upMs}ms — ${refSummary}`)
-
-  const orgCount = await prisma.organization.count()
-  const userCount = await prisma.user.count()
-  const appCount = await prisma.application.count()
-  const runCount = await prisma.run.count()
-  console.log(`  DB: ${orgCount} orgs, ${userCount} users, ${appCount} apps, ${runCount} runs`)
-
-  const t1 = performance.now()
-  const downReq = signedRequest({ action: 'down', refsToken: body.refsToken })
-  const downRes = await handleRequest(config, downReq)
-  const downMs = (performance.now() - t1).toFixed(0)
-
-  if (downRes.status !== 200) {
-    console.error(`  ✗ DOWN failed:`, JSON.stringify(downRes.body, null, 2))
-    return false
-  }
-
-  const remaining = await prisma.organization.count()
-  console.log(`  ✓ DOWN in ${downMs}ms — ${remaining} orgs remaining`)
-
-  if (remaining !== 0) {
-    console.error(`  ✗ Teardown incomplete!`)
-    return false
-  }
-
-  return true
-}
-
-// ── Main ──────────────────────────────────────────────────────────────────
-
-async function main() {
-  console.log('═══════════════════════════════════════════════════════')
-  console.log(' Autonoma SDK — Navigator E2E (3 scenarios)')
-  console.log('═══════════════════════════════════════════════════════')
-
-  console.log('\nStarting Postgres via testcontainers...')
-  const container = await new PostgreSqlContainer('postgres:16-alpine').start()
-  const url = container.getConnectionUri()
-  console.log(`  Running at: ${url}`)
-
-  console.log('Pushing navigator schema...')
+beforeAll(async () => {
+  container = await new PostgreSqlContainer('postgres:16-alpine').start()
   execSync(`npx prisma db push --schema ${SCHEMA_PATH} --skip-generate --accept-data-loss`, {
-    env: { ...process.env, DATABASE_URL: url },
+    env: { ...process.env, DATABASE_URL: container.getConnectionUri() },
     stdio: 'pipe',
   })
-  console.log('  Schema pushed')
+  prisma = new PrismaClient({ datasourceUrl: container.getConnectionUri() })
+  adapter = prismaAdapter(prisma, { scopeField: 'organizationID' })
+}, 60_000)
 
-  const prisma = new PrismaClient({ datasourceUrl: url })
-  const adapter = prismaAdapter(prisma, { scopeField: 'organizationID' })
-
-  const schema = adapter.getSchema()
-  console.log(`\n  Schema: ${schema.models.length} models, ${schema.edges.length} edges, ${schema.relations.length} relations`)
-
-  const config: HandlerConfig = {
-    adapter,
-    sharedSecret: SHARED_SECRET,
-    signingSecret: SIGNING_SECRET,
-    auth: async (user: any) => ({ token: `token-${user.id}`, userId: user.id }),
-  }
-
-  let allPassed = true
-
-  for (const [name, scenario] of Object.entries(scenarios)) {
-    const passed = await runScenario(name, scenario, config, prisma)
-    if (!passed) allPassed = false
-  }
-
+afterAll(async () => {
   await prisma.$disconnect()
   await container.stop()
+})
 
-  console.log('\n═══════════════════════════════════════════════════════')
-  if (allPassed) {
-    console.log(' ✓ ALL 3 SCENARIOS PASSED')
-  } else {
-    console.log(' ✗ SOME SCENARIOS FAILED')
-    process.exit(1)
+async function check(scenario: ScenarioDefinition) {
+  const result = await checkScenario(adapter, scenario)
+  if (!result.valid) {
+    for (const err of result.errors) {
+      console.log(`  [${result.phase}] ${err.message}`)
+      if (err.fix) console.log(`  fix: ${err.fix}`)
+    }
   }
-  console.log('═══════════════════════════════════════════════════════\n')
+  return result
 }
 
-main().catch((err) => {
-  console.error('\nFATAL:', err)
-  process.exit(1)
+describe('navigator e2e', () => {
+  for (const [name, scenario] of Object.entries(scenarios)) {
+    it(`${name} scenario`, async () => {
+      const result = await check(scenario)
+      expect(result.valid).toBe(true)
+      expect(result.phase).toBe('ok')
+    })
+  }
 })
