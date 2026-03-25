@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { topoSort, findDeferrableEdge } from '@autonoma/sdk'
+import { topoSort, findDeferrableEdge } from '@autonoma-ai/sdk'
 import { introspectPrisma } from '../src/introspect.js'
 import dmmf from '../../../fixtures/dmmf.json'
 

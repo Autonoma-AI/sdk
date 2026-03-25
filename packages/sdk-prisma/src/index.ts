@@ -1,4 +1,4 @@
-import type { OrmAdapter, SchemaInfo, ResolvedEntitySpec, CreateContext } from '@autonoma/sdk'
+import type { OrmAdapter, SchemaInfo, ResolvedEntitySpec, CreateContext } from '@autonoma-ai/sdk'
 import { introspectPrisma, type PrismaAdapterConfig } from './introspect'
 import { createEntities } from './create'
 import { teardown } from './teardown'
@@ -10,7 +10,7 @@ export type { PrismaAdapterConfig }
  *
  * @example
  * ```ts
- * import { prismaAdapter } from '@autonoma/sdk-prisma'
+ * import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
  * import { prisma } from './db'
  *
  * const adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })

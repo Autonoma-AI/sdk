@@ -1,5 +1,5 @@
-import type { SchemaInfo, FKEdge } from '@autonoma/sdk'
-import { topoSort, findDeferrableEdge } from '@autonoma/sdk'
+import type { SchemaInfo, FKEdge } from '@autonoma-ai/sdk'
+import { topoSort, findDeferrableEdge } from '@autonoma-ai/sdk'
 
 type PrismaClient = Record<string, any>
 

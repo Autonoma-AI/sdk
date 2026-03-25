@@ -1,5 +1,5 @@
 {
-  "name": "@autonoma/sdk-drizzle",
+  "name": "@autonoma-ai/sdk-drizzle",
   "version": "0.1.0",
   "description": "Drizzle adapter for Autonoma SDK",
   "type": "module",
@@ -20,7 +20,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@autonoma/sdk": "workspace:*"
+    "@autonoma-ai/sdk": "workspace:*"
   },
   "peerDependencies": {
     "drizzle-orm": ">=0.30.0"

@@ -1,13 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { handleRequest } from '@autonoma/sdk'
-import type { HandlerConfig, HandlerRequest } from '@autonoma/sdk'
+import { handleRequest } from '@autonoma-ai/sdk'
+import type { HandlerConfig, HandlerRequest } from '@autonoma-ai/sdk'
 
 /**
  * Create a Node.js http handler.
  *
  * @example
  * ```ts
- * import { createNodeHandler } from '@autonoma/server-node'
+ * import { createNodeHandler } from '@autonoma-ai/server-node'
  * import http from 'node:http'
  * http.createServer(createNodeHandler(config)).listen(3000)
  * ```

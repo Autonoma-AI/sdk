@@ -1,5 +1,5 @@
-import { handleRequest } from '@autonoma/sdk'
-import type { HandlerConfig, HandlerRequest } from '@autonoma/sdk'
+import { handleRequest } from '@autonoma-ai/sdk'
+import type { HandlerConfig, HandlerRequest } from '@autonoma-ai/sdk'
 
 interface ExpressRequest {
   body?: unknown
@@ -17,7 +17,7 @@ interface ExpressResponse {
  *
  * @example
  * ```ts
- * import { createExpressHandler } from '@autonoma/server-express'
+ * import { createExpressHandler } from '@autonoma-ai/server-express'
  * app.post('/api/autonoma', createExpressHandler(config))
  * ```
  */

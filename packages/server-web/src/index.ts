@@ -1,12 +1,12 @@
-import { handleRequest } from '@autonoma/sdk'
-import type { HandlerConfig, HandlerRequest } from '@autonoma/sdk'
+import { handleRequest } from '@autonoma-ai/sdk'
+import type { HandlerConfig, HandlerRequest } from '@autonoma-ai/sdk'
 
 /**
  * Create a Web standard handler (works with Next App Router, Hono, Bun, Deno).
  *
  * @example
  * ```ts
- * import { createHandler } from '@autonoma/server-web'
+ * import { createHandler } from '@autonoma-ai/server-web'
  * const handler = createHandler(config)
  * // Next.js App Router:
  * export const POST = handler

@@ -53,7 +53,7 @@ importers:
 
   packages/sdk-drizzle:
     dependencies:
-      '@autonoma/sdk':
+      '@autonoma-ai/sdk':
         specifier: workspace:*
         version: link:../sdk
       drizzle-orm:
@@ -75,7 +75,7 @@ importers:
 
   packages/sdk-prisma:
     dependencies:
-      '@autonoma/sdk':
+      '@autonoma-ai/sdk':
         specifier: workspace:*
         version: link:../sdk
       '@prisma/client':
@@ -97,7 +97,7 @@ importers:
 
   packages/server-express:
     dependencies:
-      '@autonoma/sdk':
+      '@autonoma-ai/sdk':
         specifier: workspace:*
         version: link:../sdk
     devDependencies:
@@ -116,7 +116,7 @@ importers:
 
   packages/server-node:
     dependencies:
-      '@autonoma/sdk':
+      '@autonoma-ai/sdk':
         specifier: workspace:*
         version: link:../sdk
     devDependencies:
@@ -135,7 +135,7 @@ importers:
 
   packages/server-web:
     dependencies:
-      '@autonoma/sdk':
+      '@autonoma-ai/sdk':
         specifier: workspace:*
         version: link:../sdk
     devDependencies:

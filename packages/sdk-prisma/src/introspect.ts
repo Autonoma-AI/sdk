@@ -1,4 +1,4 @@
-import type { SchemaInfo, ModelInfo, FieldInfo, FKEdge, SchemaRelation } from '@autonoma/sdk'
+import type { SchemaInfo, ModelInfo, FieldInfo, FKEdge, SchemaRelation } from '@autonoma-ai/sdk'
 
 interface PrismaClient {
   _runtimeDataModel?: { models: Record<string, DMMFModel> }

@@ -1,5 +1,5 @@
 {
-  "name": "@autonoma/sdk-prisma",
+  "name": "@autonoma-ai/sdk-prisma",
   "version": "0.1.0",
   "description": "Prisma adapter for Autonoma SDK",
   "type": "module",
@@ -20,7 +20,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@autonoma/sdk": "workspace:*"
+    "@autonoma-ai/sdk": "workspace:*"
   },
   "peerDependencies": {
     "@prisma/client": ">=5.0.0"

@@ -1,4 +1,4 @@
-import type { SchemaInfo, SchemaRelation, ModelInfo, FieldInfo, FKEdge } from '@autonoma/sdk'
+import type { SchemaInfo, SchemaRelation, ModelInfo, FieldInfo, FKEdge } from '@autonoma-ai/sdk'
 
 export interface DrizzleAdapterConfig {
   scopeField: string

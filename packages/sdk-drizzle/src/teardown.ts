@@ -1,5 +1,5 @@
-import type { SchemaInfo } from '@autonoma/sdk'
-import { topoSort, findDeferrableEdge } from '@autonoma/sdk'
+import type { SchemaInfo } from '@autonoma-ai/sdk'
+import { topoSort, findDeferrableEdge } from '@autonoma-ai/sdk'
 
 type DrizzleDB = Record<string, any> & {
   delete(table: any): { where(condition: any): Promise<void> }

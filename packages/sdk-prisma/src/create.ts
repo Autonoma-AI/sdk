@@ -1,4 +1,4 @@
-import type { ResolvedEntitySpec, CreateContext } from '@autonoma/sdk'
+import type { ResolvedEntitySpec, CreateContext } from '@autonoma-ai/sdk'
 
 type PrismaClient = Record<string, any>
 

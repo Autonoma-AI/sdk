@@ -1,4 +1,4 @@
-/** ORM adapter interface — implemented by @autonoma/sdk-prisma, @autonoma/sdk-drizzle, etc. */
+/** ORM adapter interface — implemented by @autonoma-ai/sdk-prisma, @autonoma-ai/sdk-drizzle, etc. */
 export interface OrmAdapter {
   /** Return schema metadata for discover (models, fields, relationships) */
   getSchema(): SchemaInfo

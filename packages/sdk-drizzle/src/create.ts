@@ -1,4 +1,4 @@
-import type { ResolvedEntitySpec, CreateContext } from '@autonoma/sdk'
+import type { ResolvedEntitySpec, CreateContext } from '@autonoma-ai/sdk'
 
 type DrizzleDB = Record<string, any> & {
   insert(table: any): { values(data: any): { returning(): Promise<any[]> } }

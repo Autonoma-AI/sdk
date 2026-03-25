@@ -1,4 +1,4 @@
-import type { OrmAdapter, SchemaInfo, ResolvedEntitySpec, CreateContext } from '@autonoma/sdk'
+import type { OrmAdapter, SchemaInfo, ResolvedEntitySpec, CreateContext } from '@autonoma-ai/sdk'
 import { introspectDrizzle, type DrizzleAdapterConfig } from './introspect'
 import { createEntities } from './create'
 import { teardown } from './teardown'
@@ -10,7 +10,7 @@ export type { DrizzleAdapterConfig }
  *
  * @example
  * ```ts
- * import { drizzleAdapter } from '@autonoma/sdk-drizzle'
+ * import { drizzleAdapter } from '@autonoma-ai/sdk-drizzle'
  * import { db } from '~/db'
  * import * as schema from '~/db/schema'
  *
