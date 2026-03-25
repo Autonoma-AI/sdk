@@ -1,0 +1,2320 @@
+# Overview
+
+## What the Environment Factory is
+
+Every E2E test needs data. A test for "user adds item to cart" needs a user, products, and a cart. A test for "admin views analytics" needs an organization with users, runs, and history.
+
+Tests can't share data — if one test deletes a product, another test that expects 10 products will fail. When tests run in parallel, this gets worse.
+
+The Environment Factory solves this. It's a single POST endpoint in your backend that the Autonoma platform calls to:
+
+1. **Create** fresh, isolated data before each test run
+2. **Tear down** that data after the test finishes
+
+Each test run gets its own organization, users, and data. No interference between tests.
+
+## What the SDK does
+
+The SDK is a set of npm packages that you install in your backend. Together they implement the entire Environment Factory endpoint. You configure it with your database connection, a scope field, two secrets, and an auth callback.
+
+The SDK handles everything:
+- Reading your database schema (models, fields, relationships)
+- Creating records in the correct FK order automatically
+- Resolving template expressions in field values (unique emails, distributed enums)
+- Bulk-inserting large datasets efficiently via `createMany`
+- Tearing down all created data without leaving orphans
+- Verifying incoming request signatures (HMAC-SHA256)
+- Signing teardown tokens (JWT) so nobody can tamper with them
+- Blocking the endpoint in production by default
+
+You write ~15 lines. The SDK does the rest.
+
+## The three actions
+
+The endpoint handles three actions via `POST`:
+
+**`discover`** — The platform asks "what does your database look like?" The SDK reads your ORM schema and returns the models, fields, and relationships. The platform uses this to generate valid scenario data.
+
+**`up`** — The platform sends scenario data (a nested tree describing what records to create). The SDK creates them in the correct FK order, resolves templates, and returns auth credentials so the test runner can log in. It also returns a signed token for teardown.
+
+**`down`** — The platform sends the signed token back. The SDK verifies it and deletes everything that was created — in the correct order, without FK constraint violations.
+
+## What you provide
+
+| Config | What it is | Example |
+|--------|-----------|---------|
+| `adapter` | Your ORM adapter with a scope field | `prismaAdapter(prisma, { scopeField: 'organizationId' })` |
+| `sharedSecret` | A secret shared between you and Autonoma — verifies incoming requests | `process.env.AUTONOMA_SHARED_SECRET` |
+| `signingSecret` | A secret only you know — signs the teardown token so nobody can tamper with it | `process.env.AUTONOMA_SIGNING_SECRET` |
+| `auth` | A callback that creates real login credentials for test users | See auth section in setup guide |
+
+## The scope field
+
+Most multi-tenant apps have a foreign key like `organizationId` on every model. This is the "scope field" — it's how the SDK isolates test data.
+
+**During creation**: child records get the organization's ID automatically via nesting. You never set it manually — the SDK reads the FK graph and injects it.
+
+**During teardown**: the SDK deletes everything where `organizationId = <the test org's ID>`, in reverse FK order to avoid constraint violations.
+
+**Example**: if your Prisma schema looks like this:
+
+```prisma
+model Organization {
+  id    String @id @default(cuid())
+  name  String
+  users User[]
+  apps  Application[]
+}
+
+model User {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Application {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+```
+
+Then `organizationId` is your scope field. The SDK will:
+1. Create the Organization first
+2. Create Users and Applications with `organizationId` set to the Organization's ID
+3. On teardown, delete Applications, then Users, then the Organization
+
+If your app isn't multi-tenant, you'll need a dedicated field (like `testRunId`) on every model.
+
+**Limitation**: The scope field must be a single column. Compound scope keys (e.g., `organizationId` + `countryId`) are not supported. If your app scopes by multiple fields, use a single root entity with its own ID that child models reference.
+
+## The two secrets
+
+You need two **different** secrets. The SDK will throw an error if they are the same.
+
+**Shared secret** (`AUTONOMA_SHARED_SECRET`): Both you and Autonoma know this. Autonoma signs every request with HMAC-SHA256; your endpoint verifies the signature. This prevents unauthorized calls to your endpoint.
+
+**Signing secret** (`AUTONOMA_SIGNING_SECRET`): Only you know this. During `up`, the SDK signs a JWT containing the IDs of all created records. During `down`, it verifies the JWT before deleting. Even Autonoma can't forge or modify this token — they just store it and pass it back.
+
+Generate both with **different** values:
+
+```bash
+openssl rand -hex 32   # → use as AUTONOMA_SHARED_SECRET
+openssl rand -hex 32   # → use as AUTONOMA_SIGNING_SECRET (must be different!)
+```
+
+## Handling updates
+
+The platform sends scenario data inline in the `up` request. If your schema changes (you add a model, rename a field), the platform sees the change on the next `discover` call. There are no local files to keep in sync.
+
+## The packages
+
+```
+@autonoma/sdk              Core protocol (shared by all adapters)
+@autonoma/sdk-prisma       Prisma ORM adapter
+@autonoma/sdk-drizzle      Drizzle ORM adapter
+@autonoma/server-web       Web standard adapter (Next.js App Router, Hono, Bun, Deno)
+@autonoma/server-express   Express adapter
+@autonoma/server-node      Node.js http adapter
+```
+
+Install the core + one ORM adapter + one server adapter. Example for Next.js + Prisma:
+
+```bash
+pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-web
+```
+
+Example for Express + Drizzle:
+
+```bash
+pnpm add @autonoma/sdk @autonoma/sdk-drizzle @autonoma/server-express
+```
+# Setup Guide
+
+## Prerequisites
+
+- A backend with **Prisma** or **Drizzle** and a generated client
+- **PostgreSQL**, **MySQL**, or **SQLite**
+- Node.js 18+
+
+## 1. Install
+
+Pick the packages that match your stack:
+
+**Next.js App Router + Prisma** (most common):
+```bash
+pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-web
+```
+
+**Express + Prisma**:
+```bash
+pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-express
+```
+
+**Hono / Bun / Deno + Drizzle**:
+```bash
+pnpm add @autonoma/sdk @autonoma/sdk-drizzle @autonoma/server-web
+```
+
+**Node.js http + Prisma**:
+```bash
+pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-node
+```
+
+### Package reference
+
+| Your ORM | Package |
+|----------|---------|
+| Prisma | `@autonoma/sdk-prisma` |
+| Drizzle | `@autonoma/sdk-drizzle` |
+
+| Your Framework | Package |
+|----------------|---------|
+| Next.js App Router, Hono, Bun, Deno | `@autonoma/server-web` |
+| Express, Fastify | `@autonoma/server-express` |
+| Node.js http | `@autonoma/server-node` |
+
+## 2. Find your scope field
+
+Open your Prisma schema (or Drizzle schema). Look for the FK that most models use to reference a root entity:
+
+```prisma
+model User {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Application {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Member {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+```
+
+If most models have `organizationId` (or `orgId`, `tenantId`, `workspaceId`), that's your scope field.
+
+**Important**: The scope root model (usually `Organization`) does NOT have this field on itself. The SDK knows this — it reads the FK graph and only injects the scope field into models that have it as a column.
+
+## 3. Generate secrets
+
+You need two **different** secrets. The SDK will throw an error at startup if they are the same.
+
+```bash
+openssl rand -hex 32   # → use as AUTONOMA_SHARED_SECRET
+openssl rand -hex 32   # → use as AUTONOMA_SIGNING_SECRET (must be different!)
+```
+
+Add to `.env`:
+
+```env
+AUTONOMA_SHARED_SECRET=abc123...   # share this with Autonoma
+AUTONOMA_SIGNING_SECRET=def456...  # keep this private, never share
+```
+
+If you have `.env.example`, add placeholders there too:
+
+```env
+AUTONOMA_SHARED_SECRET=
+AUTONOMA_SIGNING_SECRET=
+```
+
+## 4. Create the endpoint
+
+### Next.js App Router
+
+```typescript
+// app/api/autonoma/route.ts
+import { createHandler } from '@autonoma/server-web'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { prisma } from '@/lib/db'
+
+export const POST = createHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user) => {
+    // Create a real session for this user — see section 5
+    const session = await createSession(user.id as string)
+    return {
+      token: session.token,
+      cookies: [{ name: 'session', value: session.token, httpOnly: true, sameSite: 'lax', path: '/' }],
+    }
+  },
+})
+```
+
+### Express
+
+```typescript
+// routes/autonoma.ts
+import { createExpressHandler } from '@autonoma/server-express'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { prisma } from '../db'
+
+app.post('/api/autonoma', createExpressHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user) => {
+    const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET!)
+    return { token }
+  },
+}))
+```
+
+### Hono
+
+```typescript
+// src/routes/autonoma.ts
+import { createHandler } from '@autonoma/server-web'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { prisma } from '../db'
+
+const handler = createHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user) => {
+    const token = await createToken(user.id as string)
+    return { token }
+  },
+})
+
+app.post('/api/autonoma', (c) => handler(c.req.raw))
+```
+
+### Drizzle + Express
+
+```typescript
+import { createExpressHandler } from '@autonoma/server-express'
+import { drizzleAdapter } from '@autonoma/sdk-drizzle'
+import { db } from '../db'
+import * as schema from '../db/schema'
+
+app.post('/api/autonoma', createExpressHandler({
+  adapter: drizzleAdapter(db, schema, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user) => {
+    const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET!)
+    return { token }
+  },
+}))
+```
+
+### Node.js http
+
+```typescript
+import { createNodeHandler } from '@autonoma/server-node'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { prisma } from './db'
+
+const handler = createNodeHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user) => ({ token: 'test-token' }),
+})
+
+http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/api/autonoma') {
+    return handler(req, res)
+  }
+  res.writeHead(404).end()
+}).listen(3000)
+```
+
+## 5. Implement the auth callback
+
+The `auth` callback receives the first `User` record created during the `up` action. It must return real, working credentials that the test runner can use to log in to your app.
+
+**This is critical.** If the auth callback returns fake or expired tokens, every single test will fail at the login step. The callback must create credentials using the same auth mechanism your real app uses.
+
+### What the callback receives
+
+The callback receives the full User record as created in the database:
+
+```typescript
+auth: async (user) => {
+  // user is the first User record from the scenario, e.g.:
+  // { id: 'clxyz...', name: 'Admin', email: 'admin-abc123@test.com', ... }
+}
+```
+
+### What the callback must return
+
+Return an object with one or more credential types:
+
+```typescript
+interface AuthResult {
+  token?: string                    // Bearer token
+  cookies?: Array<{                 // Session cookies
+    name: string
+    value: string
+    httpOnly?: boolean
+    sameSite?: string
+    path?: string
+  }>
+  headers?: Record<string, string>  // Custom auth headers
+  credentials?: {                   // Email/password for manual login
+    email: string
+    password: string
+  }
+}
+```
+
+### Pattern 1: Session cookies (most web apps)
+
+Look at how your app creates sessions. Search your codebase for `createSession`, `lucia`, `better-auth`, `iron-session`, or similar.
+
+```typescript
+auth: async (user) => {
+  // Use your app's real session creation
+  const session = await lucia.createSession(user.id as string, {})
+  const cookie = lucia.createSessionCookie(session.id)
+  return {
+    token: session.id,
+    cookies: [{
+      name: cookie.name,
+      value: cookie.value,
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+    }],
+  }
+}
+```
+
+### Pattern 2: JWT bearer token (APIs, SPAs)
+
+Search your codebase for `jwt.sign`, `jose`, `jsonwebtoken`.
+
+```typescript
+auth: async (user) => {
+  const token = jwt.sign(
+    { sub: user.id, email: user.email },
+    process.env.JWT_SECRET!,
+    { expiresIn: '1h' }
+  )
+  return { token }
+}
+```
+
+### Pattern 3: Email/password (mobile apps)
+
+When the test runner needs to log in through the UI (e.g., mobile apps), return credentials instead of a token. The runner will type them into the login form.
+
+```typescript
+auth: async (user) => ({
+  credentials: {
+    email: user.email as string,
+    password: 'test-password-123',
+  },
+})
+```
+
+**Important**: For this to work, the User must be created with a password hash in the scenario data. Set the password field explicitly in your scenario:
+
+```json
+{
+  "create": {
+    "Organization": [{
+      "name": "Test Org",
+      "members": [{
+        "role": "owner",
+        "user": [{
+          "email": "admin-{{testRunId}}@test.com",
+          "name": "Admin",
+          "passwordHash": "$2b$10$..."
+        }]
+      }]
+    }]
+  }
+}
+```
+
+### Pattern 4: Custom auth headers
+
+```typescript
+auth: async (user) => ({
+  token: apiKey,
+  headers: {
+    'X-API-Key': apiKey,
+    'X-User-ID': user.id as string,
+  },
+})
+```
+
+### Common mistakes
+
+| Mistake | What happens | Fix |
+|---------|-------------|-----|
+| Returning a hardcoded string like `"test-token"` | Every test fails at login | Use your real session/JWT creation |
+| Not setting password on the User record | Email/password login fails | Add password hash in scenario data |
+| Token expires too quickly | Tests fail midway | Set expiration to at least 1 hour |
+| Wrong cookie name | Browser doesn't send the cookie | Check your app's cookie name in DevTools |
+
+## 6. Verify
+
+### Smoke test with curl
+
+```bash
+SECRET="your-shared-secret-here"
+URL="http://localhost:3000/api/autonoma"
+BODY='{"action":"discover"}'
+SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/.*= //')
+curl -s -X POST "$URL" \
+  -H "Content-Type: application/json" \
+  -H "x-signature: $SIG" \
+  -d "$BODY" | jq .
+```
+
+**Expected**: A JSON response with your full schema — models, fields, edges, relations. If you see this, your endpoint is working.
+
+**If you get 404**: You're running in production mode. Set `NODE_ENV=development` or add `allowProduction: true` to the config.
+
+**If you get 401**: The HMAC signature doesn't match. Make sure `SECRET` matches your `AUTONOMA_SHARED_SECRET` exactly.
+
+### Integration test with checkScenario
+
+Install test dependencies:
+
+```bash
+pnpm add -D vitest testcontainers @testcontainers/postgresql
+```
+
+```typescript
+// tests/autonoma.test.ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { PostgreSqlContainer } from '@testcontainers/postgresql'
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { checkScenario } from '@autonoma/sdk'
+import { execSync } from 'node:child_process'
+
+describe('environment factory', () => {
+  let container, prisma, adapter
+
+  beforeAll(async () => {
+    // Start a real Postgres in Docker (requires Docker running)
+    container = await new PostgreSqlContainer('postgres:16-alpine').start()
+
+    // Push your schema to the test database
+    execSync('npx prisma db push --skip-generate --accept-data-loss', {
+      env: { ...process.env, DATABASE_URL: container.getConnectionUri() },
+      stdio: 'pipe',
+    })
+
+    prisma = new PrismaClient({ datasourceUrl: container.getConnectionUri() })
+    adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+  }, 60_000) // 60s timeout — container startup takes time
+
+  afterAll(async () => {
+    await prisma.$disconnect()
+    await container.stop()
+  })
+
+  it('empty scenario — org + user only', async () => {
+    const result = await checkScenario(adapter, {
+      create: {
+        Organization: [{
+          name: 'Test Org [{{testRunId}}]',
+          slug: 'test-{{testRunId}}',
+          members: [{
+            role: 'owner',
+            user: [{ email: 'admin-{{testRunId}}@test.com', name: 'Admin' }],
+          }],
+        }],
+      },
+    })
+
+    expect(result.valid).toBe(true)
+    expect(result.phase).toBe('ok')
+    // result.timing.upMs / result.timing.downMs show performance
+  })
+
+  it('standard scenario — org with apps, tests, runs', async () => {
+    const result = await checkScenario(adapter, {
+      create: {
+        Organization: [{
+          name: 'Acme [{{testRunId}}]',
+          slug: 'acme-{{testRunId}}',
+          members: [
+            { role: 'owner', user: [{ name: 'Alice', email: 'alice-{{testRunId}}@test.com' }] },
+            { role: 'admin', user: [{ name: 'Bob', email: 'bob-{{testRunId}}@test.com' }] },
+          ],
+          applications: [{
+            _alias: 'webApp',
+            name: 'Marketing Website',
+            architecture: 'WEB',
+            webApplicationData: [{ url: 'https://acme.com' }],
+            tags: [
+              { name: 'Critical', color: '#DC2626' },
+              { name: 'Flaky', color: '#EAB308' },
+            ],
+            testPlans: [{
+              name: 'Smoke Plan',
+              plan: 'Basic smoke tests',
+              testGenerations: [{
+                _alias: 'gen1',
+                conversation: '[]',
+                status: 'success',
+                applicationId: { _ref: 'webApp' },
+              }],
+            }],
+            tests: [{
+              name: 'Homepage Test',
+              testGenerationId: { _ref: 'gen1' },
+              steps: [
+                { order: 1, interaction: 'click', params: {} },
+                { order: 2, interaction: 'assert', params: {} },
+              ],
+              runs: [{}, {}, {}],
+            }],
+          }],
+        }],
+      },
+    })
+
+    expect(result.valid).toBe(true)
+  })
+
+  it('large scenario — 10k runs with batch insert', async () => {
+    const result = await checkScenario(adapter, {
+      create: {
+        Organization: [{
+          name: 'Heavy [{{testRunId}}]',
+          slug: 'heavy-{{testRunId}}',
+          members: [{ role: 'owner', user: [{ name: 'User', email: 'heavy-{{testRunId}}@test.com' }] }],
+          applications: [{
+            _alias: 'app',
+            name: 'App',
+            architecture: 'WEB',
+            testPlans: [{
+              name: 'Plan',
+              plan: 'x',
+              testGenerations: [{
+                _alias: 'gen1',
+                conversation: '[]',
+                applicationId: { _ref: 'app' },
+              }],
+            }],
+            tests: [{
+              name: 'Test',
+              testGenerationId: { _ref: 'gen1' },
+              runs: [{ _count: 10000, _batch: true }],
+            }],
+          }],
+        }],
+      },
+    })
+
+    expect(result.valid).toBe(true)
+    expect(result.timing.upMs).toBeLessThan(5000) // batch insert should be fast
+  })
+})
+```
+
+Run it:
+
+```bash
+npx vitest run tests/autonoma.test.ts
+```
+
+### What checkScenario does
+
+`checkScenario` runs the full `up` → `down` cycle against a real database. It:
+1. Creates all entities from your scenario
+2. Tears down all created data
+3. Returns structured results
+
+```typescript
+const result = await checkScenario(adapter, scenario)
+
+result.valid   // true if everything worked
+result.phase   // 'ok' | 'up' | 'down' — where it failed
+result.errors  // array of { phase, message, fix? }
+result.timing  // { upMs, downMs } — performance numbers
+```
+
+If it fails, `result.errors[0].fix` tells you exactly what to change. See the Validation page for all error types and fixes.
+
+## 7. Enable in production
+
+The endpoint returns 404 in production (`NODE_ENV=production`) by default. This is a safety measure.
+
+When you're ready to use it in production, add `allowProduction: true`:
+
+```typescript
+export const POST = createHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  allowProduction: true,  // ← enable in production
+  auth: async (user) => { /* ... */ },
+})
+```
+
+## 8. Connect to Autonoma
+
+Deploy your endpoint and paste `AUTONOMA_SHARED_SECRET` into the Autonoma dashboard when connecting your app. The platform will:
+
+1. Call `discover` to learn your schema
+2. Generate scenario data based on your models
+3. Send that data in `up` requests before each test
+4. Send `down` requests after each test to clean up
+# Writing Scenario Data
+
+Scenario data describes what database records to create. The Autonoma platform generates this from your schema, but you'll write it for integration tests and debugging.
+
+## Why not raw SQL?
+
+A fair question. You're exposing an endpoint that writes to your database — why not just accept SQL?
+
+The Environment Factory is designed with hard constraints that make it safe by construction:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Environment Factory Safety Model                 │
+│                                                                     │
+│  ┌───────────┐      HMAC-signed request      ┌──────────────────┐   │
+│  │  Autonoma │ ─────────────────────────────▶│  Your Endpoint   │   │
+│  │  Platform │                               │     (SDK)        │   │
+│  └───────────┘                               └──────┬───────────┘   │
+│                                                      │              │
+│                                              ┌───────▼──────────┐   │
+│                                              │  ORM Adapter     |   │
+│                                              └───────┬──────────┘   │
+│                                                      │              │
+│                                              ┌───────▼──────────┐   │
+│                                              │     Database     │   │
+│                                              │  (test env only) │   │
+│                                              └──────────────────┘   │
+│                                                                     │
+│  Safety guarantees:                                                 │
+│                                                                     │
+│  1. BLOCKED IN PRODUCTION                                           │
+│     Endpoint returns 404 when NODE_ENV=production                   │
+│     (unless you explicitly opt in with allowProduction: true)       │
+│                                                                     │
+│  2. UP CAN ONLY CREATE                                              │
+│     The up action calls ORM .create() and .createMany()             │
+│     It cannot UPDATE, DELETE, DROP, TRUNCATE, or run raw SQL        │
+│     The worst it can do is INSERT rows                              │
+│                                                                     │
+│  3. DOWN CAN ONLY DELETE WHAT UP CREATED                            │
+│     During up, the SDK signs a JWT with the IDs of every            │
+│     created record, using YOUR signing secret (not Autonoma's)      │
+│     During down, the SDK verifies that JWT before deleting          │
+│     It deletes ONLY the records listed in the token                 │
+│     Even Autonoma cannot forge or modify this token                 │
+│                                                                     │
+│  4. REQUESTS ARE AUTHENTICATED                                      │
+│     Every request is HMAC-SHA256 signed with the shared secret      │
+│     Unsigned or tampered requests are rejected with 401             │
+│                                                                     │
+│  5. NO RAW SQL — EVER                                               │
+│     All database operations go through your ORM                     │
+│     The SDK uses prisma.user.create(), not SQL strings              │
+│     Schema validation happens at the ORM level                      │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Contrast with raw SQL**: A raw SQL endpoint could `DROP TABLE`, `DELETE FROM users`, or `UPDATE users SET role = 'admin'`. Even with auth, one malformed query could destroy production data.
+
+**The Environment Factory can't do any of that.** The `up` action can only insert rows through your ORM. The `down` action can only delete the specific rows that `up` created — verified by a cryptographic token that only your server can sign. And in production, the endpoint doesn't even respond.
+
+This is why scenario data is a structured JSON tree, not SQL. The SDK interprets it as a series of ORM `.create()` calls — nothing more.
+
+## The format
+
+Data is a nested JSON tree. The top-level keys are Prisma model names. Children are nested inside their parents. The SDK reads FK relationships from your schema and wires IDs automatically — you never set FK fields manually.
+
+Think of it like Protocol Buffers: the schema is shared once (via `discover`), and after that the data contains only values — no field types, no FK directions, no column names. Both sides already know the structure. The platform calls `discover` to learn your schema, then sends scenario data that references models and relation names. Your SDK already has the same schema compiled from your ORM, so it knows exactly how to interpret the nesting and wire the foreign keys. The scenario JSON is compact because the structure is agreed upon, not embedded.
+
+### Minimal example (org + user)
+
+```json
+{
+  "create": {
+    "Organization": [{
+      "name": "Test Org [{{testRunId}}]",
+      "slug": "test-{{testRunId}}",
+      "members": [{
+        "role": "owner",
+        "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
+      }]
+    }]
+  }
+}
+```
+
+This creates:
+1. One Organization
+2. One User (created first because Member holds the FK to it)
+3. One Member with `organizationId` set to the Organization's ID and `userId` set to the User's ID
+
+**How does the SDK know that `"members"` maps to `organizationId` and not `orgFK` or `org_id`?**
+
+It doesn't guess. The ORM adapter reads your schema metadata at runtime and extracts every model, field, and relationship — including the exact FK column names. For example, given this schema:
+
+```prisma
+model Organization {
+  members  Member[]   // ← list relation, no FK column here
+}
+
+model Member {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  userId         String
+  user           User @relation(fields: [userId], references: [id])
+}
+```
+
+The adapter extracts:
+- `Organization.members` is a relation to `Member`
+- `Member` holds the FK column `organizationId` pointing to `Organization.id`
+- `Member.user` is a relation to `User`
+- `Member` holds the FK column `userId` pointing to `User.id`
+
+Each ORM adapter reads this metadata differently — Prisma embeds it in the generated client, Drizzle exports it as plain JavaScript objects — but they all produce the same result. The SDK receives a standardized schema map and uses it to wire every nested object automatically.
+
+The FK column name comes directly from your schema definition — whether you called it `organizationId`, `orgId`, `tenant_fk`, or anything else. No string matching, no conventions, no guessing.
+
+### Realistic example (org with apps, tests, runs)
+
+```json
+{
+  "create": {
+    "Organization": [{
+      "name": "Acme [{{testRunId}}]",
+      "slug": "acme-{{testRunId}}",
+
+      "members": [
+        { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
+        { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] }
+      ],
+
+      "applications": [
+        {
+          "_alias": "webApp",
+          "name": "Marketing Website",
+          "architecture": "WEB",
+          "webApplicationData": [{ "url": "https://acme.com" }],
+          "tags": [
+            { "name": "Critical", "color": "#DC2626" },
+            { "name": "Flaky", "color": "#EAB308" }
+          ]
+        },
+        {
+          "name": "Android App",
+          "architecture": "ANDROID",
+          "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.apk" }]
+        }
+      ]
+    }]
+  }
+}
+```
+
+## How nesting works
+
+The SDK reads the Prisma schema's relations to know what each nested key means. **The nested key must be the exact Prisma relation field name from the parent model.**
+
+### Finding the right relation name
+
+Open your Prisma schema and look at the parent model:
+
+```prisma
+model Organization {
+  id           String        @id @default(cuid())
+  name         String
+  members      Member[]       // ← "members" is the relation name
+  applications Application[]  // ← "applications" is the relation name
+  invitations  Invitation[]   // ← "invitations" is the relation name
+}
+```
+
+Use those exact names in your scenario:
+
+```json
+{
+  "Organization": [{
+    "name": "...",
+    "members": [{ ... }],        // matches Organization.members
+    "applications": [{ ... }],   // matches Organization.applications
+    "invitations": [{ ... }]     // matches Organization.invitations
+  }]
+}
+```
+
+**Warning**: Some schemas use PascalCase for relation names (e.g., `Application` instead of `applications`). Always check your schema.
+
+### FK direction: child FK vs parent FK
+
+The SDK handles both FK directions:
+
+**FK on child** (most common): `Application.organizationId → Organization`
+- Parent (Organization) is created first
+- Child (Application) is created after, with `organizationId` set automatically
+- In the scenario, nest Application under Organization:
+
+```json
+"Organization": [{
+  "applications": [{ "name": "My App" }]
+}]
+```
+
+**FK on parent** (reverse): `Member.userId → User`
+- The FK (`userId`) is on Member, but User is the child in our nesting
+- The SDK detects this: creates User first, then sets `Member.userId`
+- In the scenario, nest User under Member:
+
+```json
+"members": [{
+  "role": "owner",
+  "user": [{ "name": "Alice", "email": "alice@test.com" }]
+}]
+```
+
+This is how you solve the "member-user distribution" problem — each member gets its own user, correctly wired.
+
+## What to include in fields
+
+**Required**: Every field marked as required in your Prisma schema that does NOT have `@default(...)`, `@updatedAt`, or `@id @default(...)`.
+
+**Unique fields**: Must include `{{testRunId}}` or `{{index}}` to avoid collisions when tests run in parallel.
+
+```json
+{
+  "name": "Acme [{{testRunId}}]",
+  "slug": "acme-{{testRunId}}",
+  "email": "admin-{{testRunId}}@test.com"
+}
+```
+
+## What to omit
+
+- **`id`** — auto-generated by the database
+- **Fields with `@default(...)`** — the SDK skips them (`@default(cuid())`, `@default(now())`, etc.)
+- **Fields with `@updatedAt`** — handled by Prisma automatically
+- **FK fields handled by nesting** — if you nest Application under Organization, don't set `organizationId` manually
+- **The scope field** — the SDK injects it automatically for models that have it
+
+**Example**: Given this Prisma schema:
+
+```prisma
+model Application {
+  id             String       @id @default(cuid())
+  name           String
+  architecture   Architecture
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+```
+
+You only provide `name` and `architecture`:
+```json
+{ "name": "My App", "architecture": "WEB" }
+```
+
+The SDK handles `id`, `organizationId`, `createdAt`, and `updatedAt`.
+
+## Template expressions
+
+Templates make values unique across parallel test runs and generate dynamic data.
+
+| Expression | Resolves to | Use for |
+|---|---|---|
+| `{{testRunId}}` | A unique string per test run (UUID) | Emails, slugs, names — anything that must be unique |
+| `{{index}}` | 0, 1, 2, 3... (0-based) | Array positioning |
+| `{{index1}}` | 1, 2, 3, 4... (1-based) | Human-readable numbering ("Product 1", "Product 2") |
+| `{{cycle(['a','b','c'])}}` | Cycles through values by index | Distributing enum values evenly |
+| `{{pick(['a','b','c'])}}` | Random item from array | Random but constrained values |
+| `{{random.int(1,100)}}` | Random integer in range | Numeric data |
+| `{{random.float(0.0,1.0)}}` | Random float in range | Decimal data |
+| `{{now()}}` | Current ISO timestamp | Date fields |
+| `{{daysAgo(7)}}` | ISO timestamp 7 days ago | Historical dates |
+
+### Type preservation
+
+When a template is the **entire** value, the SDK preserves the return type:
+- `"{{random.int(1,100)}"` → number (not string)
+- `"{{index}}"` → number
+- `"{{now()}}"` → string (ISO date)
+
+When a template is **part of** a string, it's interpolated as a string:
+- `"Product {{index1}}"` → `"Product 1"` (string)
+- `"user-{{testRunId}}@test.com"` → `"user-abc123@test.com"` (string)
+
+### Examples
+
+**Unique emails**:
+```json
+{ "email": "user-{{testRunId}}@test.com" }
+```
+
+**Numbered items**:
+```json
+{ "name": "Product {{index1}}" }
+```
+→ "Product 1", "Product 2", "Product 3"...
+
+**Distributed enum values**:
+```json
+{ "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }
+```
+→ "WEB", "ANDROID", "IOS", "WEB", "ANDROID", "IOS"...
+
+**Random data**:
+```json
+{ "score": "{{random.int(0,100)}}", "weight": "{{random.float(0.1,1.0)}}" }
+```
+
+**Dates**:
+```json
+{ "createdAt": "{{daysAgo(30)}}", "expiresAt": "{{now()}}" }
+```
+
+## Cross-branch references (_alias / _ref)
+
+When a record needs a FK to something in a different branch of the tree, use `_alias` to name a node and `_ref` to reference it.
+
+### Problem: TestGeneration needs applicationId
+
+TestGeneration is nested under TestPlan, but it also needs `applicationId` which points to the Application (a different branch):
+
+```
+Organization
+├── Application (webApp)       ← need to reference this
+│   └── TestPlan
+│       └── TestGeneration     ← needs applicationId = webApp.id
+```
+
+### Solution: _alias + _ref
+
+```json
+{
+  "applications": [{
+    "_alias": "webApp",
+    "name": "Marketing Website",
+    "architecture": "WEB",
+
+    "testPlans": [{
+      "name": "Smoke Plan",
+      "plan": "content",
+      "testGenerations": [{
+        "_alias": "gen1",
+        "conversation": "[]",
+        "status": "success",
+        "applicationId": { "_ref": "webApp" }
+      }]
+    }],
+
+    "tests": [{
+      "name": "Homepage Test",
+      "testGenerationId": { "_ref": "gen1" },
+      "steps": [
+        { "order": 1, "interaction": "click", "params": {} }
+      ]
+    }]
+  }]
+}
+```
+
+**Rules**:
+- `_alias` is a string name you choose. It must be unique across the entire scenario.
+- `_ref` resolves to the `id` of the aliased node after it's created.
+- The aliased node must appear **before** the `_ref` in tree traversal order (depth-first). If it doesn't, you'll get: `_ref "xyz" not found`.
+- You can chain references: alias a node, then reference it from multiple places.
+
+### Another example: Invitation with inviterId
+
+```json
+{
+  "Organization": [{
+    "name": "Org",
+    "members": [{
+      "role": "owner",
+      "user": [{
+        "_alias": "inviter",
+        "name": "Alice",
+        "email": "alice-{{testRunId}}@test.com"
+      }]
+    }],
+    "invitations": [
+      { "email": "bob@test.com", "inviterId": { "_ref": "inviter" }, "role": "admin", "expiresAt": "{{now()}}" },
+      { "email": "carol@test.com", "inviterId": { "_ref": "inviter" }, "role": "member", "expiresAt": "{{now()}}" }
+    ]
+  }]
+}
+```
+
+### Another example: TestTag (join table)
+
+```json
+{
+  "applications": [{
+    "tags": [
+      { "_alias": "tag1", "name": "Critical", "color": "#FF0000" },
+      { "_alias": "tag2", "name": "High", "color": "#FF8800" }
+    ],
+    "tests": [{
+      "name": "Test",
+      "testTags": [
+        { "tagId": { "_ref": "tag1" } },
+        { "tagId": { "_ref": "tag2" } }
+      ]
+    }]
+  }]
+}
+```
+
+## Bulk data (_count and _batch)
+
+For creating many records of the same type, use `_count` instead of writing each one manually. Add `_batch: true` for bulk insert performance.
+
+### Basic _count (array shorthand)
+
+Instead of writing 100 objects:
+```json
+"applications": [{ "_count": 100, "name": "App {{index1}}", "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }]
+```
+
+This creates 100 Application records:
+- App 1 (WEB), App 2 (ANDROID), App 3 (IOS), App 4 (WEB), ...
+
+Each record gets its own `{{index}}` value (0-99) and `{{index1}}` value (1-100).
+
+### _batch for performance
+
+Add `_batch: true` to use bulk insert (single SQL `INSERT` statement). This is **much faster** for large counts:
+
+```json
+"runs": [{ "_count": 10000, "_batch": true }]
+```
+
+**Without _batch**: 10,000 individual `INSERT` statements (~30 seconds)
+**With _batch**: 1 `INSERT` with 10,000 rows (~2 seconds)
+
+### _count + _batch with field templates
+
+```json
+"tags": [{ "_count": 200, "_batch": true, "name": "Tag {{index1}}", "color": "{{cycle(['#F00','#0F0','#00F'])}}" }]
+```
+
+Creates 200 tags with names "Tag 1" through "Tag 200", cycling through 3 colors.
+
+### _count + _batch as an object (not array)
+
+You can also use the object form — both work:
+
+```json
+"folders": { "_count": 20, "_batch": true, "name": "Folder {{index1}}" }
+```
+
+### _batch limitations
+
+- **Batched records cannot be referenced by `_ref`**. Batch insert uses `createMany` which doesn't return individual IDs. If another record needs to reference one of these, don't use `_batch`.
+- **Use `_batch` only at leaf nodes** — records that nothing else references.
+
+### Examples of when to use _batch
+
+| Good (_batch OK) | Bad (_batch breaks things) |
+|---|---|
+| `runs: { _count: 10000, _batch: true }` | `applications: { _count: 5, _batch: true }` if tests reference an app |
+| `tags: { _count: 200, _batch: true, ... }` | `users: { _count: 10, _batch: true }` if members reference users |
+| `folders: { _count: 50, _batch: true, ... }` | `testGenerations: { _count: 3, _batch: true }` if tests reference them |
+
+### Full example: large scenario with batch
+
+```json
+{
+  "create": {
+    "Organization": [{
+      "name": "Load Test Org [{{testRunId}}]",
+      "slug": "load-{{testRunId}}",
+      "members": [{
+        "role": "owner",
+        "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
+      }],
+      "applications": [{
+        "_alias": "app",
+        "name": "App",
+        "architecture": "WEB",
+
+        "tags": { "_count": 30, "_batch": true, "name": "Tag {{index1}}", "color": "#333" },
+        "folders": { "_count": 20, "_batch": true, "name": "Folder {{index1}}" },
+
+        "testPlans": [{
+          "name": "Plan",
+          "plan": "content",
+          "testGenerations": [{
+            "_alias": "gen1",
+            "conversation": "[]",
+            "status": "success",
+            "applicationId": { "_ref": "app" }
+          }]
+        }],
+
+        "tests": [{
+          "name": "Load Test",
+          "testGenerationId": { "_ref": "gen1" },
+          "steps": [{ "_count": 500, "_batch": true, "order": "{{index1}}", "interaction": "{{cycle(['click','type','assert'])}}", "params": {} }],
+          "runs": [{ "_count": 10000, "_batch": true }]
+        }]
+      }]
+    }]
+  }
+}
+```
+
+This creates: 1 org, 1 user, 1 member, 1 app, 30 tags, 20 folders, 1 plan, 1 generation, 1 test, 500 steps, 10,000 runs.
+
+## The three standard scenarios
+
+When writing scenarios for a project, create three:
+
+### empty — Org + user only
+Tests empty states, onboarding flows, "no data yet" screens.
+
+```json
+{
+  "create": {
+    "Organization": [{
+      "name": "Empty Org [{{testRunId}}]",
+      "slug": "empty-{{testRunId}}",
+      "members": [{ "role": "owner", "user": [{ "name": "Solo User", "email": "solo-{{testRunId}}@test.com" }] }]
+    }]
+  }
+}
+```
+
+### standard — Realistic variety
+Enough data to test every filter, status, and category. Use descriptive names ("Marketing Website", not "App 1"). Include at least one entity per enum value.
+
+```json
+{
+  "create": {
+    "Organization": [{
+      "name": "Acme [{{testRunId}}]",
+      "slug": "acme-{{testRunId}}",
+      "members": [
+        { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
+        { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] },
+        { "role": "viewer", "user": [{ "name": "Carol", "email": "carol-{{testRunId}}@test.com" }] }
+      ],
+      "applications": [
+        {
+          "_alias": "webApp",
+          "name": "Marketing Website",
+          "architecture": "WEB",
+          "webApplicationData": [{ "url": "https://acme.com" }],
+          "tags": [
+            { "name": "Critical", "color": "#DC2626" },
+            { "name": "P1 - High", "color": "#F97316" },
+            { "name": "Flaky", "color": "#EAB308" }
+          ],
+          "folders": [
+            { "name": "Smoke Tests" },
+            { "name": "Regression" }
+          ],
+          "testPlans": [{
+            "name": "Smoke Plan",
+            "plan": "Basic smoke tests",
+            "testGenerations": [{
+              "_alias": "gen1",
+              "conversation": "[]",
+              "status": "success",
+              "applicationId": { "_ref": "webApp" }
+            }]
+          }],
+          "tests": [{
+            "name": "Homepage Test",
+            "testGenerationId": { "_ref": "gen1" },
+            "steps": [
+              { "order": 1, "interaction": "click", "params": {} },
+              { "order": 2, "interaction": "type", "params": {} },
+              { "order": 3, "interaction": "assert", "params": {} }
+            ],
+            "runs": [{}, {}, {}, {}, {}]
+          }]
+        },
+        {
+          "name": "Android App",
+          "architecture": "ANDROID",
+          "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.apk" }]
+        },
+        {
+          "name": "iOS App",
+          "architecture": "IOS",
+          "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.ipa" }]
+        }
+      ]
+    }]
+  }
+}
+```
+
+### large — High volume
+Exceeds pagination thresholds. Uses `_batch` at leaf nodes. Tests pagination, sort stability, filter performance.
+
+```json
+{
+  "create": {
+    "Organization": [{
+      "name": "Load Test [{{testRunId}}]",
+      "slug": "load-{{testRunId}}",
+      "members": [{ "role": "owner", "user": [{ "name": "User", "email": "load-{{testRunId}}@test.com" }] }],
+      "applications": [{
+        "_alias": "app",
+        "name": "App",
+        "architecture": "WEB",
+        "tags": { "_count": 50, "_batch": true, "name": "Tag {{index1}}", "color": "#333" },
+        "folders": { "_count": 40, "_batch": true, "name": "Folder {{index1}}" },
+        "testPlans": [{
+          "name": "Plan",
+          "plan": "x",
+          "testGenerations": [{
+            "_alias": "gen1",
+            "conversation": "[]",
+            "applicationId": { "_ref": "app" }
+          }]
+        }],
+        "tests": [{
+          "name": "Test",
+          "testGenerationId": { "_ref": "gen1" },
+          "runs": [{ "_count": 10000, "_batch": true }]
+        }]
+      }]
+    }]
+  }
+}
+```
+# Validation
+
+Scenario data is often generated by an LLM. Validation catches mistakes before they hit your production database.
+
+## Database dry-run (checkScenario)
+
+The primary validation method. Runs the full create → teardown cycle against a real database.
+
+The typical workflow: generate a scenario JSON file (by hand or via LLM), then point `checkScenario` at it. The test reads the file, runs it against a real database, and tells you exactly what's wrong.
+
+```typescript
+import { readFileSync } from 'node:fs'
+import { checkScenario } from '@autonoma/sdk'
+
+// Read the scenario file that was just generated
+const scenario = JSON.parse(readFileSync('./scenarios/standard.json', 'utf-8'))
+
+const result = await checkScenario(adapter, scenario)
+
+if (result.valid) {
+  console.log('Scenario is valid!')
+  console.log(`Create: ${result.timing.upMs}ms, Teardown: ${result.timing.downMs}ms`)
+} else {
+  console.log(`Failed at phase: ${result.phase}`)
+  for (const err of result.errors) {
+    console.log(`[${err.phase}] ${err.message}`)
+    if (err.fix) console.log(`  Fix: ${err.fix}`)
+  }
+}
+```
+
+For example, if the scenario file has a duplicate slug:
+
+```json
+{
+  "create": {
+    "Organization": [
+      { "name": "Org 1", "slug": "same-slug" },
+      { "name": "Org 2", "slug": "same-slug" }
+    ]
+  }
+}
+```
+
+The result will be:
+```
+Failed at phase: up
+[up] Unique constraint failed on the fields: (`slug`)
+  Fix: Unique constraint on (slug). Add {{testRunId}} or {{index}} to make values unique.
+```
+
+You fix the JSON file, re-run the test, and repeat until it passes.
+
+### What the result tells you
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `valid` | boolean | `true` if the full cycle succeeded |
+| `phase` | `'ok'` \| `'up'` \| `'down'` | Where it stopped |
+| `errors` | array | Each error has `phase`, `message`, and optional `fix` |
+| `timing` | `{ upMs, downMs }` | Performance numbers in milliseconds |
+
+| `phase` value | What happened |
+|---------------|---------------|
+| `ok` | Full create + teardown cycle succeeded |
+| `up` | Database rejected the data during creation |
+| `down` | Teardown failed (FK constraint during deletion) |
+
+### Common errors and how to fix them
+
+| Error message | What's wrong | How to fix |
+|---------------|-------------|-----------|
+| `Unique constraint failed on the fields: (\`slug\`)` | Two records have the same value for a unique field | Add `{{testRunId}}` to the field: `"slug": "acme-{{testRunId}}"` |
+| `Unique constraint failed on the fields: (\`userId\`,\`organizationId\`)` | A user is a member of the same org twice | Each member must have its own user. Nest each user under its member. |
+| `Invalid value for argument \`architecture\`. Expected Architecture.` | Wrong enum value | Check your Prisma schema for valid enum values: `enum Architecture { WEB ANDROID IOS }` |
+| `Unknown argument \`applications\`.` | Wrong relation name | Check your Prisma schema for the exact relation field name. It might be `Application` (PascalCase) not `applications`. |
+| `Argument \`email\` must not be null.` | A required field is missing from the scenario | Add the field with a value: `"email": "user-{{testRunId}}@test.com"` |
+| `Foreign key constraint failed` | A referenced record doesn't exist | Check that parent entities are nested correctly. The parent must exist before the child. |
+| `_ref "xyz" not found` | An `_alias` is referenced before it's created | Move the aliased node earlier in the tree (it must appear before any `_ref` to it in depth-first order) |
+
+### Example: fixing a unique constraint
+
+**Broken** — two orgs with the same slug:
+```json
+{
+  "create": {
+    "Organization": [
+      { "name": "Org 1", "slug": "test-org" },
+      { "name": "Org 2", "slug": "test-org" }
+    ]
+  }
+}
+```
+
+**Fixed** — unique slugs:
+```json
+{
+  "create": {
+    "Organization": [
+      { "name": "Org 1", "slug": "test-org-1-{{testRunId}}" },
+      { "name": "Org 2", "slug": "test-org-2-{{testRunId}}" }
+    ]
+  }
+}
+```
+
+### Example: fixing a wrong relation name
+
+**Broken** — "apps" is not the Prisma relation name:
+```json
+{
+  "Organization": [{
+    "apps": [{ "name": "My App" }]
+  }]
+}
+```
+
+**Fixed** — use the exact Prisma relation name:
+```prisma
+// Your Prisma schema says:
+model Organization {
+  applications Application[]  // ← the relation name is "applications"
+}
+```
+
+```json
+{
+  "Organization": [{
+    "applications": [{ "name": "My App" }]
+  }]
+}
+```
+
+### Example: fixing an invalid enum
+
+**Broken** — "DESKTOP" is not a valid enum value:
+```json
+{ "architecture": "DESKTOP" }
+```
+
+**Fixed** — use a valid enum:
+```prisma
+// Your Prisma schema says:
+enum Architecture {
+  WEB
+  ANDROID
+  IOS
+}
+```
+
+```json
+{ "architecture": "WEB" }
+```
+
+## Using with testcontainers
+
+The recommended approach for local validation before deploying. Spins up a real Postgres in Docker, runs your scenario files against it, tears down. No test data leaks.
+
+This test is designed as a reusable harness: generate your scenario JSON files (by hand, via LLM, or from the Autonoma platform), drop them in a `scenarios/` folder, and run the test. It reads every `.json` file in the folder and validates each one.
+
+```typescript
+// tests/validate-scenarios.test.ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { PostgreSqlContainer } from '@testcontainers/postgresql'
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { checkScenario } from '@autonoma/sdk'
+import { execSync } from 'node:child_process'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+
+// Point this at your scenario files
+const SCENARIOS_DIR = join(__dirname, '../scenarios')
+
+describe('scenario validation', () => {
+  let container, prisma, adapter
+
+  beforeAll(async () => {
+    container = await new PostgreSqlContainer('postgres:16-alpine').start()
+    execSync('npx prisma db push --skip-generate --accept-data-loss', {
+      env: { ...process.env, DATABASE_URL: container.getConnectionUri() },
+      stdio: 'pipe',
+    })
+    prisma = new PrismaClient({ datasourceUrl: container.getConnectionUri() })
+    adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+  }, 60_000)
+
+  afterAll(async () => {
+    await prisma.$disconnect()
+    await container.stop()
+  })
+
+  // Discover all .json files in the scenarios folder
+  const files = readdirSync(SCENARIOS_DIR).filter(f => f.endsWith('.json'))
+
+  for (const file of files) {
+    it(`validates ${file}`, async () => {
+      const scenario = JSON.parse(readFileSync(join(SCENARIOS_DIR, file), 'utf-8'))
+      const result = await checkScenario(adapter, scenario)
+
+      if (!result.valid) {
+        for (const err of result.errors) {
+          console.log(`[${err.phase}] ${err.message}`)
+          if (err.fix) console.log(`  Fix: ${err.fix}`)
+        }
+      }
+
+      expect(result.valid).toBe(true)
+    })
+  }
+})
+```
+
+**Usage**:
+
+1. Generate your scenario files into `scenarios/`:
+```
+scenarios/
+  empty.json       ← org + user only
+  standard.json    ← realistic variety
+  large.json       ← high volume with _batch
+```
+
+2. Run the test:
+```bash
+npx vitest run tests/validate-scenarios.test.ts
+```
+
+3. If a scenario fails, read the error and fix the JSON file. Re-run until all pass.
+
+Later, once deployed, the Autonoma platform validates scenarios against your live endpoint — it calls `up` and `down` directly. But testcontainers lets you catch errors locally before deploying, without risking your staging database.
+
+## Check multiple scenarios at once
+
+```typescript
+import { checkAllScenarios } from '@autonoma/sdk'
+
+const results = await checkAllScenarios(adapter, [
+  emptyScenario,
+  standardScenario,
+  largeScenario,
+])
+
+for (const result of results) {
+  if (!result.valid) {
+    console.log(`Failed at ${result.phase}:`, result.errors)
+  }
+}
+```
+
+## The fix loop (for LLM-generated scenarios)
+
+When an LLM generates scenario data, use this loop:
+
+```
+1. Run discover to get the schema
+2. LLM generates scenario JSON based on the schema
+3. Run checkScenario against a real database
+4. If errors → read the fix field, edit the scenario, go to step 3
+5. Scenario is valid — use it
+```
+
+Each error's `fix` field contains actionable instructions. Feed it back to the LLM.
+# Building Adapters
+
+The SDK has three adapter types: ORM, Server, and Auth. Each is a separate npm package. This page is for developers building **new** adapters (e.g., a Knex ORM adapter or a Fastify server adapter). If you're just using the SDK, you don't need to read this.
+
+## ORM Adapter
+
+Connects the SDK to a database ORM. Existing adapters: `@autonoma/sdk-prisma`, `@autonoma/sdk-drizzle`.
+
+### The interface
+
+```typescript
+// Defined in @autonoma/sdk/types.ts
+interface OrmAdapter {
+  getSchema(): SchemaInfo
+  createEntities(
+    spec: Record<string, ResolvedEntitySpec>,
+    context: CreateContext,
+  ): Promise<Record<string, Record<string, unknown>[]>>
+  teardown(
+    scopeValue: string,
+    refs?: Record<string, Record<string, unknown>[]>,
+  ): Promise<void>
+}
+```
+
+### getSchema()
+
+Read your ORM's metadata and return a `SchemaInfo` object. This tells the SDK everything about your database.
+
+```typescript
+interface SchemaInfo {
+  models: ModelInfo[]        // all models with their fields
+  edges: FKEdge[]            // all FK relationships
+  relations: SchemaRelation[] // named relation mappings (for tree nesting)
+  scopeField: string         // e.g., 'organizationId'
+}
+
+interface ModelInfo {
+  name: string               // PascalCase model name: 'User', 'Application'
+  fields: FieldInfo[]
+}
+
+interface FieldInfo {
+  name: string               // field name: 'email', 'organizationId'
+  type: string               // 'String', 'Int', 'DateTime', 'Architecture' (enum name)
+  isRequired: boolean        // NOT NULL
+  isId: boolean              // primary key
+  hasDefault: boolean        // @default, @updatedAt, auto-increment, etc.
+}
+
+interface FKEdge {
+  from: string               // model that holds the FK column
+  to: string                 // model being referenced
+  localField: string         // FK column name on `from`: 'organizationId'
+  foreignField: string       // referenced column on `to`: 'id'
+  nullable: boolean          // can the FK be NULL?
+}
+
+interface SchemaRelation {
+  parentModel: string        // 'Organization'
+  childModel: string         // 'Application'
+  parentField: string        // relation field name on parent: 'applications'
+  childField: string         // FK field name: 'organizationId'
+}
+```
+
+**Important details**:
+- Mark `@updatedAt` fields as `hasDefault: true` — Prisma handles them, they shouldn't be required in scenarios.
+- Mark auto-generated fields (like `@default(cuid())`) as `hasDefault: true`.
+- `SchemaRelation.parentField` must match the exact relation field name in the ORM. This is what users write in scenario nesting keys.
+- `scopeField` must be a single column name (e.g., `'organizationId'`). Compound scope keys are not supported.
+- Cache the result — `getSchema()` is called on every request.
+
+### createEntities()
+
+Create records in the database from a resolved spec.
+
+```typescript
+interface ResolvedEntitySpec {
+  count: number              // how many records to create
+  fields: Record<string, unknown>[]  // one field object per record (already template-resolved)
+  batch?: boolean            // true → use bulk insert (createMany)
+}
+
+interface CreateContext {
+  testRunId: string
+  refs: Record<string, Record<string, unknown>[]>  // accumulator of all created records
+}
+```
+
+The SDK calls this once per model group. The spec is already fully resolved — all templates are replaced, all FKs are set.
+
+**Implementation rules**:
+1. If `batch` is true: use bulk insert (e.g., `prisma.user.createMany`). Return an empty array (bulk insert doesn't return individual records).
+2. If `batch` is false: create each record individually (e.g., `prisma.user.create`). Return all created records with their IDs.
+3. Wrap everything in a transaction for atomicity.
+4. The model name in the spec key is PascalCase. Convert to camelCase for Prisma: `User` → `prisma.user.create(...)`.
+
+**Example** (simplified Prisma implementation):
+
+```typescript
+async createEntities(spec, context) {
+  const results: Record<string, Record<string, unknown>[]> = {}
+
+  for (const [model, entitySpec] of Object.entries(spec)) {
+    const modelClient = (prisma as any)[camelCase(model)]
+
+    if (entitySpec.batch) {
+      await modelClient.createMany({ data: entitySpec.fields })
+      results[model] = []  // createMany doesn't return records
+    } else {
+      const records = []
+      for (const fields of entitySpec.fields) {
+        const record = await modelClient.create({ data: fields })
+        records.push(record)
+      }
+      results[model] = records
+    }
+  }
+
+  return results
+}
+```
+
+### teardown()
+
+Delete all data created during a test run. The SDK provides both the scope value and the full refs.
+
+**Implementation rules**:
+1. Import `topoSort` and `findDeferrableEdge` from `@autonoma/sdk/graph`.
+2. Get the FK graph from `getSchema()`.
+3. **Break circular FKs first**: if the graph has cycles, find a nullable FK in the cycle and `UPDATE SET fk = null` before deleting.
+4. **Delete scoped models**: for each model that has the scope FK (e.g., `organizationId`), delete all records where `scopeField = scopeValue`, in **reverse topological order** (children before parents).
+5. **Delete non-scoped models by ID**: some models (like `User` in a join-table setup) don't have the scope FK directly. Delete them by their IDs from `refs`.
+6. **Delete the scope root last**: the Organization (or whatever the root entity is).
+
+**Example** (simplified):
+
+```typescript
+async teardown(scopeValue, refs) {
+  const schema = this.getSchema()
+  const sorted = topoSort(schema.edges, schema.models.map(m => m.name))
+
+  // Break circular FKs
+  for (const scc of findCycles(schema.edges)) {
+    const edge = findDeferrableEdge(scc, schema.edges)
+    if (edge) {
+      await prisma[camelCase(edge.from)].updateMany({
+        where: { [scopeField]: scopeValue },
+        data: { [edge.localField]: null },
+      })
+    }
+  }
+
+  // Delete in reverse topo order
+  for (const model of [...sorted].reverse()) {
+    if (modelHasScopeField(model)) {
+      await prisma[camelCase(model)].deleteMany({
+        where: { [scopeField]: scopeValue },
+      })
+    } else if (refs?.[model]?.length) {
+      const ids = refs[model].map(r => r.id).filter(Boolean)
+      if (ids.length) {
+        await prisma[camelCase(model)].deleteMany({
+          where: { id: { in: ids } },
+        })
+      }
+    }
+  }
+
+  // Delete scope root
+  await prisma[camelCase(scopeRootModel)].delete({
+    where: { id: scopeValue },
+  })
+}
+```
+
+## Server Adapter
+
+Converts between a framework's request/response and the SDK's internal format. Existing adapters: `@autonoma/server-web`, `@autonoma/server-express`, `@autonoma/server-node`.
+
+### The internal format
+
+```typescript
+// Input to handleRequest()
+interface HandlerRequest {
+  body: string                       // raw body as string — needed for HMAC verification
+  headers: Record<string, string>    // lowercase header names
+}
+
+// Output from handleRequest()
+interface HandlerResponse {
+  status: number
+  body: Record<string, unknown>
+}
+```
+
+### How to build one
+
+A server adapter is ~15 lines. It:
+1. Reads the raw request body as a **string** (not parsed JSON — HMAC needs the exact bytes)
+2. Extracts headers as a flat `Record<string, string>` with lowercase keys
+3. Calls `handleRequest(config, { body, headers })` from `@autonoma/sdk`
+4. Writes the status code and JSON body to the framework's response
+
+### Example: Web standard (Next.js, Hono, Bun, Deno)
+
+```typescript
+import { handleRequest } from '@autonoma/sdk'
+import type { HandlerConfig } from '@autonoma/sdk'
+
+export function createHandler(config: HandlerConfig) {
+  return async (req: Request): Promise<Response> => {
+    const body = await req.text()
+    const headers: Record<string, string> = {}
+    req.headers.forEach((value, key) => {
+      headers[key.toLowerCase()] = value
+    })
+
+    const res = await handleRequest(config, { body, headers })
+    return new Response(JSON.stringify(res.body), {
+      status: res.status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+}
+```
+
+### Example: Express
+
+```typescript
+import { handleRequest } from '@autonoma/sdk'
+import type { HandlerConfig } from '@autonoma/sdk'
+
+export function createExpressHandler(config: HandlerConfig) {
+  return async (req, res) => {
+    // Important: need raw body as string for HMAC
+    const body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body)
+    const headers: Record<string, string> = {}
+    for (const [key, val] of Object.entries(req.headers)) {
+      if (typeof val === 'string') headers[key.toLowerCase()] = val
+    }
+
+    const result = await handleRequest(config, { body, headers })
+    res.status(result.status).json(result.body)
+  }
+}
+```
+
+**Express gotcha**: If you use `express.json()` middleware, `req.body` is already parsed. The adapter must `JSON.stringify` it back. For best results, use `express.text({ type: 'application/json' })` on this route so the body stays as a string.
+
+## Auth Adapter (future)
+
+Not yet formalized as a separate package. Customers implement the `auth` callback directly in the handler config. See the Setup Guide, section 5.
+
+Planned packages for common auth providers:
+- `@autonoma/auth-betterauth`
+- `@autonoma/auth-lucia`
+- `@autonoma/auth-workos`
+- `@autonoma/auth-auth0`
+
+### Planned interface
+
+```typescript
+interface AuthAdapter {
+  authenticate(user: Record<string, unknown>): Promise<AuthResult>
+}
+
+interface AuthResult {
+  token?: string
+  cookies?: Array<{
+    name: string
+    value: string
+    httpOnly?: boolean
+    sameSite?: string
+    path?: string
+  }>
+  headers?: Record<string, string>
+  credentials?: { email: string; password: string }
+}
+```
+
+An auth adapter wraps the auth provider's API. You'd use it like:
+
+```typescript
+import { betterAuthAdapter } from '@autonoma/auth-betterauth'
+
+export const POST = createHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: betterAuthAdapter(authClient),
+})
+```
+# Agent Prompt: Set Up the Environment Factory
+
+This is the complete prompt for an AI agent to install and configure the Autonoma SDK in a customer's backend. Give this entire document to the agent.
+
+---
+
+You are a backend engineer. Your job is to install the Autonoma SDK and create a working Environment Factory endpoint. Follow these phases exactly.
+
+## Phase 0: Understand the project
+
+### 0.1 — Detect the stack
+
+Search the codebase for:
+- **Framework**: `next.config` → Next.js, `express` in dependencies → Express, `hono` → Hono, `fastify` → Fastify
+- **ORM**: `schema.prisma` file → Prisma, `drizzle.config` or `drizzle/schema` → Drizzle
+- **Auth**: search for `createSession`, `jwt.sign`, `lucia`, `better-auth`, `iron-session`, `setCookie`, `authOptions`
+
+### 0.2 — Find the scope field
+
+Read the database schema (Prisma schema or Drizzle schema). Find the FK that most models use to reference a root entity.
+
+Common scope fields: `organizationId`, `orgId`, `tenantId`, `workspaceId`.
+
+**How to identify it**: count how many models have a specific FK. The one that appears on the most models is your scope field.
+
+Example:
+```prisma
+model User {
+  organizationId String    // ← this FK
+}
+model Application {
+  organizationId String    // ← appears on most models
+}
+model Member {
+  organizationId String    // ← this is the scope field
+}
+```
+
+### 0.3 — Ask the user
+
+Present your findings and ask for confirmation:
+
+> "I've detected:
+> - Framework: **[detected]** → will use `@autonoma/server-[web|express|node]`
+> - ORM: **[detected]** → will use `@autonoma/sdk-[prisma|drizzle]`
+> - Scope field: `[field]` on most models, referencing `[Model]`
+> - Auth: found `[auth mechanism]` in `[file path]`
+>
+> Questions:
+> 1. Is the scope field correct?
+> 2. Where should the endpoint file go? (e.g., `app/api/autonoma/route.ts`)
+> 3. Can I replicate the auth pattern I found for creating test credentials?"
+
+**Wait for the user's answers before proceeding.**
+
+## Phase 1: Install packages
+
+Based on the detected stack, install three packages:
+
+```bash
+# Next.js + Prisma:
+pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-web
+
+# Express + Prisma:
+pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-express
+
+# Hono/Bun/Deno + Drizzle:
+pnpm add @autonoma/sdk @autonoma/sdk-drizzle @autonoma/server-web
+
+# Node.js http + Prisma:
+pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-node
+```
+
+Use the project's package manager (pnpm, npm, yarn, bun).
+
+## Phase 2: Generate secrets
+
+```bash
+openssl rand -hex 32   # → AUTONOMA_SHARED_SECRET
+openssl rand -hex 32   # → AUTONOMA_SIGNING_SECRET (MUST be different!)
+```
+
+Add to `.env`:
+```env
+AUTONOMA_SHARED_SECRET=<first value>
+AUTONOMA_SIGNING_SECRET=<second value>
+```
+
+If `.env.example` exists, add placeholder entries there too.
+
+**Critical**: The two secrets must be different. The SDK throws an error if they are the same.
+
+## Phase 3: Create the endpoint
+
+### Next.js App Router example:
+
+```typescript
+// app/api/autonoma/route.ts
+import { createHandler } from '@autonoma/server-web'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { prisma } from '@/lib/db'  // use the project's existing prisma import
+
+export const POST = createHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user) => {
+    // Implement in Phase 4
+  },
+})
+```
+
+### Express example:
+
+```typescript
+// routes/autonoma.ts (or wherever the project puts routes)
+import { createExpressHandler } from '@autonoma/server-express'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { prisma } from '../db'  // use the project's existing prisma import
+
+app.post('/api/autonoma', createExpressHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user) => {
+    // Implement in Phase 4
+  },
+}))
+```
+
+### Drizzle variant:
+
+```typescript
+import { drizzleAdapter } from '@autonoma/sdk-drizzle'
+import { db } from '../db'
+import * as schema from '../db/schema'
+
+// Use drizzleAdapter instead of prismaAdapter:
+adapter: drizzleAdapter(db, schema, { scopeField: 'organizationId' }),
+```
+
+**Match the project's conventions**: same import style, same file naming, same directory structure.
+
+## Phase 4: Implement the auth callback
+
+This is the most important part. The auth callback must create **real, working credentials** using the project's existing auth mechanism. If it returns fake tokens, every test will fail.
+
+### Step 1: Find the auth pattern
+
+Search the codebase for:
+- `createSession` — session-based auth
+- `jwt.sign` — JWT token auth
+- `lucia` — Lucia auth library
+- `better-auth` — Better Auth library
+- `setCookie` — cookie-based sessions
+- `authOptions` — NextAuth
+- `iron-session` — encrypted session cookies
+
+### Step 2: Replicate it
+
+The callback receives the first User record created from the scenario:
+
+```typescript
+auth: async (user) => {
+  // user = { id: 'clxyz...', name: 'Admin', email: 'admin-abc123@test.com', ... }
+}
+```
+
+**Session cookies (most web apps)**:
+```typescript
+auth: async (user) => {
+  // Copy the session creation from your signup/login handler
+  const session = await createSession(user.id as string)
+  return {
+    token: session.token,
+    cookies: [{
+      name: 'session',         // must match your app's cookie name
+      value: session.token,
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+    }],
+  }
+}
+```
+
+**JWT tokens**:
+```typescript
+auth: async (user) => {
+  // Copy the JWT signing from your login handler
+  const token = jwt.sign(
+    { sub: user.id, email: user.email },
+    process.env.JWT_SECRET!,
+    { expiresIn: '1h' }
+  )
+  return { token }
+}
+```
+
+**Email/password (mobile apps)**:
+```typescript
+auth: async (user) => ({
+  credentials: {
+    email: user.email as string,
+    password: 'test-password-123',  // must match the password hash in your scenario data
+  },
+})
+```
+
+### Step 3: Verify it works
+
+The credentials returned here must actually work if used to make authenticated requests to your app. Test this by:
+1. Running `checkScenario` (Phase 5)
+2. Using the returned `auth` to make a request to a protected endpoint
+
+## Phase 5: Generate the three base scenarios
+
+Every project starts with three scenarios. Generate each as a JSON file in a `scenarios/` folder.
+
+### 5.1 — Read the schema
+
+Call `adapter.getSchema()` or look at the Prisma schema directly. Identify:
+- All models and their required fields (no default)
+- All enum types and their valid values
+- All relation names (the nesting keys)
+- Which models have the scope field
+
+### 5.2 — Generate the three files
+
+**`scenarios/empty.json`** — Org + user only. Tests empty states and onboarding.
+```json
+{
+  "create": {
+    "Organization": [{
+      "name": "Empty Org [{{testRunId}}]",
+      "slug": "empty-{{testRunId}}",
+      "members": [{
+        "role": "owner",
+        "user": [{ "name": "Solo User", "email": "solo-{{testRunId}}@test.com" }]
+      }]
+    }]
+  }
+}
+```
+
+**`scenarios/standard.json`** — Realistic variety. Include:
+- Multiple users with different roles
+- At least one entity per enum value
+- Descriptive names ("Marketing Website", not "App 1")
+- Enough data to test filters, statuses, and categories
+- Every relation path exercised at least once
+
+**`scenarios/large.json`** — High volume. Use `_count` and `_batch` at leaf nodes:
+- 10k+ runs, 40+ folders, 200+ tags
+- Tests pagination, sort stability, filter performance
+
+### 5.3 — Validate each scenario (iterate until all pass)
+
+Install test dependencies:
+
+```bash
+pnpm add -D vitest testcontainers @testcontainers/postgresql
+```
+
+Create the validation test harness:
+
+```typescript
+// tests/validate-scenarios.test.ts
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { PostgreSqlContainer } from '@testcontainers/postgresql'
+import { PrismaClient } from '@prisma/client'
+import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { checkScenario } from '@autonoma/sdk'
+import { execSync } from 'node:child_process'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+
+const SCENARIOS_DIR = join(__dirname, '../scenarios')
+
+describe('scenario validation', () => {
+  let container, prisma, adapter
+
+  beforeAll(async () => {
+    container = await new PostgreSqlContainer('postgres:16-alpine').start()
+    execSync('npx prisma db push --skip-generate --accept-data-loss', {
+      env: { ...process.env, DATABASE_URL: container.getConnectionUri() },
+      stdio: 'pipe',
+    })
+    prisma = new PrismaClient({ datasourceUrl: container.getConnectionUri() })
+    adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+  }, 60_000)
+
+  afterAll(async () => {
+    await prisma.$disconnect()
+    await container.stop()
+  })
+
+  const files = readdirSync(SCENARIOS_DIR).filter(f => f.endsWith('.json'))
+
+  for (const file of files) {
+    it(`validates ${file}`, async () => {
+      const scenario = JSON.parse(readFileSync(join(SCENARIOS_DIR, file), 'utf-8'))
+      const result = await checkScenario(adapter, scenario)
+
+      if (!result.valid) {
+        for (const err of result.errors) {
+          console.log(`[${err.phase}] ${err.message}`)
+          if (err.fix) console.log(`  Fix: ${err.fix}`)
+        }
+      }
+
+      expect(result.valid).toBe(true)
+    })
+  }
+})
+```
+
+Run it:
+
+```bash
+npx vitest run tests/validate-scenarios.test.ts
+```
+
+**This is a loop. Keep iterating until all three pass:**
+
+1. Run the test
+2. If a scenario fails, read the `fix` field in the error
+3. Edit the JSON file
+4. Re-run the test
+5. Repeat until all scenarios pass
+
+### Common fixes
+
+| Error | Fix |
+|-------|-----|
+| `Unique constraint on (slug)` | Add `{{testRunId}}`: `"slug": "test-{{testRunId}}"` |
+| `Unknown argument 'applications'` | Check Prisma schema for the exact relation name (might be PascalCase) |
+| `Argument 'email' must not be null` | Add the required field to the scenario |
+| `Invalid value for 'architecture'` | Check enum values in your Prisma schema |
+
+## Phase 6: Report
+
+Tell the user:
+
+> "Environment Factory endpoint is at `[path]`.
+> Base scenarios are in `scenarios/` — all three pass against a real Postgres.
+>
+> Next steps:
+> 1. Set `AUTONOMA_SHARED_SECRET` and `AUTONOMA_SIGNING_SECRET` in your production/staging env vars
+> 2. Deploy the endpoint
+> 3. Paste `AUTONOMA_SHARED_SECRET` into the Autonoma dashboard when connecting your app
+> 4. Run `npx vitest run [test path]` to verify after any schema changes"
+
+---
+
+## Skill: Generate a new scenario
+
+During test writing, you may discover that the existing scenarios don't represent the data you need. For example:
+
+- A processing job that writes different statuses to the database at each step — you need a scenario with runs in various states (queued, processing, completed, failed)
+- A permission test that needs users with very specific role combinations
+- A migration test that needs data in a legacy format
+
+When this happens, **generate a new targeted scenario** rather than overloading an existing one.
+
+### When to use this skill
+
+Use it when you're writing a test and realize: "none of the existing scenarios have the data shape I need for this test."
+
+### How to do it
+
+1. **Identify what's different**: What specific data shape does this test need that `empty`, `standard`, and `large` don't have? Be specific — "runs in different statuses" not "more data".
+
+2. **Generate a new scenario file**: Create `scenarios/<descriptive-name>.json`. Name it after the use case, not the test:
+   - `scenarios/processing-job-states.json` — runs at different pipeline stages
+   - `scenarios/multi-role-permissions.json` — users with every permission combination
+   - `scenarios/nested-folders.json` — deep folder hierarchy
+
+3. **Keep it minimal**: Only include the data this scenario needs. Don't duplicate the standard scenario with minor tweaks — just include the specific shape.
+
+4. **Validate it**: The test harness automatically picks up new `.json` files in `scenarios/`. Run:
+   ```bash
+   npx vitest run tests/validate-scenarios.test.ts
+   ```
+   Iterate until it passes.
+
+5. **Check for reuse**: Before generating, check if another scenario already covers the case. After generating, note in the scenario file (as a top-level `"_description"` field) what it's for — other tests may be able to reuse it.
+
+### Example
+
+You're writing a test for a dashboard that shows run statuses. The standard scenario only has runs with default (empty) fields. You need runs in specific states.
+
+Generate `scenarios/run-statuses.json`:
+```json
+{
+  "_description": "Runs in various pipeline states — for testing status filters, progress bars, and dashboard aggregations",
+  "create": {
+    "Organization": [{
+      "name": "Status Test [{{testRunId}}]",
+      "slug": "status-{{testRunId}}",
+      "members": [{
+        "role": "owner",
+        "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
+      }],
+      "applications": [{
+        "_alias": "app",
+        "name": "App",
+        "architecture": "WEB",
+        "testPlans": [{
+          "name": "Plan",
+          "plan": "x",
+          "testGenerations": [{
+            "_alias": "gen1",
+            "conversation": "[]",
+            "applicationId": { "_ref": "app" }
+          }]
+        }],
+        "tests": [{
+          "name": "Pipeline Test",
+          "testGenerationId": { "_ref": "gen1" },
+          "runs": [
+            { "status": "queued" },
+            { "status": "queued" },
+            { "status": "processing" },
+            { "status": "processing" },
+            { "status": "processing" },
+            { "status": "completed" },
+            { "status": "completed" },
+            { "status": "completed" },
+            { "status": "completed" },
+            { "status": "failed" }
+          ]
+        }]
+      }]
+    }]
+  }
+}
+```
+
+Now the test that checks "dashboard shows 2 queued, 3 processing, 4 completed, 1 failed" has a scenario that exactly matches its needs. And the next test that needs status variety can reuse this file.
+
+---
+
+## Rules — do NOT skip these
+
+### DO:
+- **DO** use the project's existing Prisma/Drizzle client import — don't create a new one
+- **DO** create real auth credentials in the callback — use the project's actual auth mechanism
+- **DO** match existing codebase conventions — same import style, file naming, directory structure
+- **DO** test with testcontainers and `checkScenario` — mocks don't catch real DB errors
+- **DO** add both secrets to `.env` and `.env.example`
+- **DO** use `{{testRunId}}` on all unique fields in test scenarios
+- **DO** check your Prisma schema for exact relation field names before writing scenarios
+- **DO** iterate on scenarios until `checkScenario` passes — never ship a scenario that hasn't been validated
+- **DO** generate new targeted scenarios when existing ones don't fit a test's needs
+- **DO** check existing scenarios before generating a new one — reuse when possible
+
+### DO NOT:
+- **DO NOT** implement HMAC verification, JWT signing, or teardown logic yourself. The SDK handles all of this.
+- **DO NOT** return fake or hardcoded auth tokens like `"test-token"`. The test runner uses these to actually log in. If they don't work, every test fails.
+- **DO NOT** set FK fields manually in scenarios. If you nest Application under Organization, don't set `organizationId` — the SDK does it.
+- **DO NOT** set `id` fields in scenarios. They're auto-generated.
+- **DO NOT** set fields with `@default(...)` or `@updatedAt` in scenarios unless you want to override the default.
+- **DO NOT** use the same value for `sharedSecret` and `signingSecret`. The SDK will throw an error.
+- **DO NOT** generate dozens of scenarios upfront. Start with empty, standard, large. Add more only when a test needs it.
+- **DO NOT** ship a scenario without validating it. Always run `checkScenario` and iterate until it passes.

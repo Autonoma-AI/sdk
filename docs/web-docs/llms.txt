@@ -1,0 +1,16 @@
+# Autonoma SDK Docs
+
+> The Autonoma SDK automates the Environment Factory — the backend endpoint that creates and destroys isolated test data for each E2E test run.
+
+## Pages
+
+- [Overview](llms/overview.txt): What the Environment Factory is, why it exists, and what you need to set it up.
+- [Setup Guide](llms/setup.txt): Step-by-step: install, configure, verify.
+- [Writing Scenario Data](llms/scenarios.txt): How to describe test data — nesting, templates, aliases, batch insert, full examples.
+- [Validation](llms/validation.txt): How to check that scenario data is correct before it hits your database.
+- [Building Adapters](llms/adapters.txt): Interfaces for ORM, server, and auth adapters.
+- [Agent Prompt](llms/agent-prompt.txt): Complete prompt for an AI agent to set up the SDK in a codebase.
+
+## Complete Documentation
+
+- [All pages in one file](llms-full.txt)

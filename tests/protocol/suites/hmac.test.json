@@ -1,0 +1,21 @@
+{
+  "name": "HMAC validation rejects invalid signatures",
+  "steps": [
+    {
+      "action": "discover",
+      "overrideSignature": "invalid-signature-value",
+      "expect": {
+        "status": 401,
+        "body": { "code": "INVALID_SIGNATURE" }
+      }
+    },
+    {
+      "action": "discover",
+      "overrideSignature": "",
+      "expect": {
+        "status": 401,
+        "body": { "code": "INVALID_SIGNATURE" }
+      }
+    }
+  ]
+}

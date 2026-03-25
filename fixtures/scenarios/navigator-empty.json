@@ -1,0 +1,20 @@
+{
+  "name": "empty",
+  "description": "Brand new org, zero data — tests empty states and onboarding",
+  "entities": {
+    "Organization": {
+      "count": 1,
+      "fields": {
+        "name": "Fresh Start Inc [{{testRunId}}]"
+      }
+    },
+    "User": {
+      "count": 1,
+      "fields": {
+        "name": "New User",
+        "email": "new-user-{{testRunId}}@freshstart.com",
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    }
+  }
+}

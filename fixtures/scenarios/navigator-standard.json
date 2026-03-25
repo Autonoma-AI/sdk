@@ -1,0 +1,131 @@
+{
+  "name": "standard",
+  "description": "Realistic org: 3 apps (web/android/ios), 7 folders, 5 tags, 17 tests, 58 runs",
+  "entities": {
+    "Organization": {
+      "count": 1,
+      "fields": {
+        "name": "Acme Testing Co [{{testRunId}}]"
+      }
+    },
+    "User": {
+      "count": 1,
+      "fields": {
+        "name": "QA Admin",
+        "email": "qa-admin-{{testRunId}}@acme-testing.com",
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "Application": {
+      "count": 3,
+      "fields": {
+        "name": "{{cycle(['Marketing Website','Android Shopping App','iOS Banking App'])}}",
+        "applicationType": "{{cycle(['web','android','ios'])}}",
+        "organizationId": "{{refs.Organization[0].id}}",
+        "applicationMetadata": {}
+      }
+    },
+
+    "ApplicationVersion": {
+      "count": 6,
+      "fields": {
+        "name": "{{cycle(['v2.1','v2.0','v1.9','v3.0.1','v2.9.0','v4.2'])}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "applicationID": "{{cycle(['refs.Application[0].id','refs.Application[0].id','refs.Application[0].id','refs.Application[1].id','refs.Application[1].id','refs.Application[2].id'])}}",
+        "path": "{{cycle(['https://www.acme-marketing.com','https://www.acme-marketing.com/staging','https://www.acme-marketing.com/old','app.apk','app-staging.apk','app.ipa'])}}",
+        "tag": "{{cycle(['main','staging','other','main','staging','main'])}}"
+      }
+    },
+
+    "Folder": {
+      "count": 7,
+      "fields": {
+        "name": "{{cycle(['Smoke Tests','Regression Suite','Mobile Flows','Checkout Flows','Authentication','Nightly Batch','Critical Path'])}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "folderRunType": "{{cycle(['parallel','sequential','parallel','sequential','parallel','parallel','parallel'])}}",
+        "private": false
+      }
+    },
+
+    "Tag": {
+      "count": 5,
+      "fields": {
+        "name": "{{cycle(['P0 - Critical','P1 - High','P2 - Medium','Flaky','Needs Review'])}}",
+        "description": "{{cycle(['Critical priority','High priority','Medium priority','Flaky tests','Pending review'])}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "color": "{{cycle(['#DC2626','#F97316','#3B82F6','#EAB308','#8B5CF6'])}}"
+      }
+    },
+
+    "TestGroup": {
+      "count": 17,
+      "fields": {
+        "name": "{{cycle(['Homepage Load','Search Products','Contact Form','Newsletter Signup','Login Valid','Login Invalid','Add to Cart','Remove from Cart','Discount Code','Complete Purchase','Cancel Order','Balance Check','Transfer Accounts','Transaction History','Flaky Checkout','Critical Path Smoke','Footer Links'])}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "architecture": "{{cycle(['web','web','web','web','web','web','android','android','android','android','android','ios','ios','ios','android','web','web'])}}"
+      }
+    },
+
+    "Test": {
+      "count": 17,
+      "fields": {
+        "name": "{{cycle(['Homepage Load and Navigation','Search Products','Contact Form Submission','Newsletter Signup','Login with Valid Credentials','Login with Invalid Password','Add Item to Cart','Remove Item from Cart','Apply Discount Code','Complete Purchase','Cancel Order','Account Balance Check','Transfer Between Accounts','View Transaction History','Flaky Checkout Validation','Critical Path Smoke','Footer Links Validation'])}}",
+        "metadata": {},
+        "architecture": "{{cycle(['web','web','web','web','web','web','android','android','android','android','android','ios','ios','ios','android','web','web'])}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "applicationVersionID": "{{cycle(['refs.ApplicationVersion[0].id','refs.ApplicationVersion[0].id','refs.ApplicationVersion[0].id','refs.ApplicationVersion[0].id','refs.ApplicationVersion[0].id','refs.ApplicationVersion[0].id','refs.ApplicationVersion[3].id','refs.ApplicationVersion[3].id','refs.ApplicationVersion[3].id','refs.ApplicationVersion[3].id','refs.ApplicationVersion[3].id','refs.ApplicationVersion[5].id','refs.ApplicationVersion[5].id','refs.ApplicationVersion[5].id','refs.ApplicationVersion[3].id','refs.ApplicationVersion[0].id','refs.ApplicationVersion[0].id'])}}",
+        "testGroupid": "{{cycle(['refs.TestGroup[0].id','refs.TestGroup[1].id','refs.TestGroup[2].id','refs.TestGroup[3].id','refs.TestGroup[4].id','refs.TestGroup[5].id','refs.TestGroup[6].id','refs.TestGroup[7].id','refs.TestGroup[8].id','refs.TestGroup[9].id','refs.TestGroup[10].id','refs.TestGroup[11].id','refs.TestGroup[12].id','refs.TestGroup[13].id','refs.TestGroup[14].id','refs.TestGroup[15].id','refs.TestGroup[16].id'])}}"
+      }
+    },
+
+    "Run": {
+      "count": 58,
+      "batch": true,
+      "fields": {
+        "name": "Run {{index1}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "status": "{{cycle(['passed','passed','passed','passed','passed','failed','failed','failed','running','pending','stopped','skipped'])}}"
+      }
+    },
+
+    "Script": {
+      "count": 2,
+      "fields": {
+        "name": "{{cycle(['Clear Browser Cache','Reset API State'])}}",
+        "type": "{{cycle(['curl','fetch'])}}",
+        "script": "{{cycle(['curl -X POST http://localhost/clear-cache','fetch(\"http://localhost/reset\")'])}}",
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "Variable": {
+      "count": 3,
+      "fields": {
+        "key": "{{cycle(['BASE_URL','API_TOKEN','TEST_EMAIL'])}}",
+        "value": "{{cycle(['https://www.acme-marketing.com','sk-test-abc123','qa-user@acme-testing.com'])}}",
+        "private": false,
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "ApiKey": {
+      "count": 2,
+      "fields": {
+        "hash": "{{cycle(['hash_prod_{{testRunId}}','hash_ci_{{testRunId}}'])}}",
+        "createdById": "{{refs.User[0].id}}",
+        "organizationId": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "Webhook": {
+      "count": 2,
+      "fields": {
+        "name": "{{cycle(['Slack Notifications','CI Pipeline Callback'])}}",
+        "url": "{{cycle(['https://hooks.slack.com/services/acme/testing','https://ci.acme-testing.com/webhooks/autonoma'])}}",
+        "active": true,
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    }
+  }
+}

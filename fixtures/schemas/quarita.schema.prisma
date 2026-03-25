@@ -1,0 +1,415 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator json {
+  provider = "prisma-json-types-generator"
+}
+
+// ─── Better Auth Core Models ────────────────────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions    Session[]
+  accounts    Account[]
+  members     Member[]
+  invitations Invitation[] @relation("invitations")
+  apiKeys     ApiKey[]
+  testPlans   TestPlan[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activeOrganizationId String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  idToken               String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ─── Organization Plugin Models ─────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logo      String?
+  metadata  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members      Member[]
+  invitations  Invitation[]
+  applications Application[]
+  testPlans    TestPlan[]
+}
+
+model Member {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  role           String
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+}
+
+model Invitation {
+  id             String   @id @default(cuid())
+  email          String
+  inviterId      String
+  organizationId String
+  role           String
+  status         String   @default("pending")
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  inviter      User         @relation("invitations", fields: [inviterId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// --- Application Models ─────────────────────────────────────────────
+
+enum ApplicationArchitecture {
+  WEB
+  IOS
+  ANDROID
+}
+
+model Application {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  architecture ApplicationArchitecture
+
+  webApplicationData    WebApplicationData?
+  mobileApplicationData MobileApplicationData?
+  testPlans             TestPlan[]
+  folders               Folder[]
+  testGenerations       TestGeneration[]
+  tests                 Test[]
+  tags                  Tag[]
+
+  @@unique([name, organizationId])
+}
+
+model WebApplicationData {
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  url String
+
+  @@id([applicationId])
+}
+
+model MobileApplicationData {
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  packageUrl String
+
+  @@id([applicationId])
+}
+
+// ─── API Key Plugin Model ───────────────────────────────────────────
+
+model ApiKey {
+  id                  String    @id @default(cuid())
+  name                String?
+  start               String?
+  prefix              String?
+  key                 String
+  userId              String
+  refillInterval      Int?
+  refillAmount        Int?
+  lastRefillAt        DateTime?
+  enabled             Boolean   @default(true)
+  rateLimitEnabled    Boolean   @default(false)
+  rateLimitTimeWindow Int?
+  rateLimitMax        Int?
+  requestCount        Int       @default(0)
+  remaining           Int?
+  lastRequest         DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  permissions         String?
+  metadata            String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ─── Enums ─────────────────────────────────────────────────────────
+
+enum RunStepStatus {
+  pending
+  running
+  passed
+  failed
+  skipped
+
+  @@map("run_step_status")
+}
+
+enum ConversationMessageRole {
+  user
+  assistant
+  system
+  tool_call
+
+  @@map("conversation_message_role")
+}
+
+// ─── Organization & Test Structure ─────────────────────────────────
+
+model Folder {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  applicationId String   @map("application_id")
+  parentId      String?  @map("parent_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  parent      Folder?     @relation("FolderTree", fields: [parentId], references: [id])
+  children    Folder[]    @relation("FolderTree")
+  tests       Test[]
+
+  @@map("folder")
+}
+
+// ─── Test Generation ───────────────────────────────────────────────────────────
+
+model TestPlan {
+  id        String   @id @default(cuid())
+  plan      String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  applicationId  String
+  application    Application  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  testGenerations TestGeneration[]
+}
+
+enum GenerationStatus {
+  pending
+  running
+  success
+  failed
+}
+
+model TestGeneration {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  testPlanId    String
+  applicationId String   @map("application_id")
+
+  status    GenerationStatus @default(pending)
+  reasoning String?          @map("reasoning")
+
+  /// [ModelConversation]
+  conversation Json @default("[]")
+
+  testPlan        TestPlan         @relation(fields: [testPlanId], references: [id], onDelete: Cascade)
+  application     Application      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  test            Test?
+  generationSteps GenerationStep[]
+}
+
+model GenerationStep {
+  id           String   @id @default(cuid())
+  generationId String   @map("generation_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  order        Int
+
+  interaction   String
+  /// ![object]
+  params        Json
+  /// ![object]
+  output        Json
+  waitCondition String? @map("wait_condition")
+
+  screenshotBefore String? @map("screenshot_before")
+  screenshotAfter  String? @map("screenshot_after")
+
+  generation TestGeneration @relation(fields: [generationId], references: [id], onDelete: Cascade)
+
+  @@unique([generationId, order])
+  @@map("generation_step")
+}
+
+// --- Test Models ───────────────────────────────────────────────────
+
+model Test {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  testGenerationId String         @unique @map("test_generation_id")
+  testGeneration   TestGeneration @relation(fields: [testGenerationId], references: [id], onDelete: Cascade)
+
+  applicationId String      @map("application_id")
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  folderId String? @map("folder_id")
+  folder   Folder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  steps    TestStep[]
+  testTags TestTag[]
+  runs     Run[]
+
+  @@map("test")
+}
+
+model TestStep {
+  id        String   @id @default(cuid())
+  testId    String   @map("test_id")
+  order     Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  interaction   String
+  /// ![object]
+  params        Json
+  waitCondition String? @map("wait_condition")
+
+  screenshotBefore String? @map("screenshot_before")
+  screenshotAfter  String? @map("screenshot_after")
+
+  test     Test      @relation(fields: [testId], references: [id], onDelete: Cascade)
+  runSteps RunStep[]
+
+  @@unique([testId, order])
+  @@map("test_step")
+}
+
+model Tag {
+  id            String   @id @default(cuid())
+  name          String
+  color         String
+  applicationId String   @map("application_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  testTags    TestTag[]
+
+  @@map("tag")
+}
+
+model TestTag {
+  id     String @id @default(cuid())
+  testId String @map("test_id")
+  tagId  String @map("tag_id")
+
+  test Test @relation(fields: [testId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([testId, tagId])
+  @@map("test_tag")
+}
+
+// ─── Run Execution ─────────────────────────────────────────────────
+
+model Run {
+  id          String    @id @default(cuid())
+  testId      String    @map("test_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+
+  test  Test      @relation(fields: [testId], references: [id], onDelete: Cascade)
+  steps RunStep[]
+
+  @@map("run")
+}
+
+model RunStep {
+  id         String        @id @default(cuid())
+  runId      String        @map("run_id")
+  testStepId String        @map("test_step_id")
+  order      Int
+  status     RunStepStatus
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  screenshotBefore String? @map("screenshot_before")
+  screenshotAfter  String? @map("screenshot_after")
+
+  /// ![object]
+  output Json
+
+  run      Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  testStep TestStep @relation(fields: [testStepId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, order])
+  @@unique([runId, testStepId])
+  @@map("run_step")
+}
+
+// ─── RunWorkflow ───────────────────────────────────────────────────
+// Placeholder for future workflow orchestration model
+// model RunWorkflow { ... }

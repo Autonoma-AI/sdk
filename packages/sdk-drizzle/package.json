@@ -1,0 +1,36 @@
+{
+  "name": "@autonoma/sdk-drizzle",
+  "version": "0.1.0",
+  "description": "Drizzle adapter for Autonoma SDK",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@autonoma/sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "drizzle-orm": ">=0.30.0"
+  },
+  "peerDependenciesMeta": {
+    "drizzle-orm": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "tsup": "^8.4.0"
+  }
+}

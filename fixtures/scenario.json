@@ -1,0 +1,30 @@
+{
+  "scenarios": [
+    {
+      "name": "standard",
+      "description": "Full dataset for core workflow testing",
+      "descriptor": { "users": 1, "products": { "count": 10 } },
+      "entities": {
+        "Organization": {
+          "count": 1,
+          "fields": { "name": "Acme [{{testRunId}}]" }
+        },
+        "User": {
+          "count": 1,
+          "fields": {
+            "email": "admin-{{testRunId}}@autonoma.dev",
+            "role": "ADMIN",
+            "organizationId": "{{refs.Organization[0].id}}"
+          }
+        },
+        "Product": {
+          "count": 10,
+          "fields": {
+            "name": "Product {{index1}}",
+            "status": "{{cycle(['active','active','active','draft'])}}"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,1421 @@
+{
+  "models": [
+    {
+      "name": "User",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "email",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "emailVerified",
+          "type": "Boolean",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "image",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "Session",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "token",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "ipAddress",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "userAgent",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "userId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "activeOrganizationId",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "Account",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "accountId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "providerId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "userId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "accessToken",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "refreshToken",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "accessTokenExpiresAt",
+          "type": "DateTime",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "refreshTokenExpiresAt",
+          "type": "DateTime",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "scope",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "idToken",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "password",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "Verification",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "identifier",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "value",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "Organization",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "slug",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "logo",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "metadata",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "Member",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "userId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "organizationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "role",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "Invitation",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "email",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "inviterId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "organizationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "role",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "status",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "Application",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "organizationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "architecture",
+          "type": "ApplicationArchitecture",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "WebApplicationData",
+      "fields": [
+        {
+          "name": "applicationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": false
+        },
+        {
+          "name": "url",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "MobileApplicationData",
+      "fields": [
+        {
+          "name": "applicationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": false
+        },
+        {
+          "name": "packageUrl",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "ApiKey",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "start",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "prefix",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "key",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "userId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "refillInterval",
+          "type": "Int",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "refillAmount",
+          "type": "Int",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "lastRefillAt",
+          "type": "DateTime",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "enabled",
+          "type": "Boolean",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "rateLimitEnabled",
+          "type": "Boolean",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "rateLimitTimeWindow",
+          "type": "Int",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "rateLimitMax",
+          "type": "Int",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "requestCount",
+          "type": "Int",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "remaining",
+          "type": "Int",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "lastRequest",
+          "type": "DateTime",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "permissions",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "metadata",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "Folder",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "description",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "applicationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "parentId",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "TestPlan",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "plan",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "userId",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "organizationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "applicationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "TestGeneration",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "testPlanId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "applicationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "status",
+          "type": "GenerationStatus",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "reasoning",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "conversation",
+          "type": "Json",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "GenerationStep",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "generationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "order",
+          "type": "Int",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "interaction",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "params",
+          "type": "Json",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "output",
+          "type": "Json",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "waitCondition",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "screenshotBefore",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "screenshotAfter",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "Test",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "description",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "testGenerationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "applicationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "folderId",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "TestStep",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "testId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "order",
+          "type": "Int",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "interaction",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "params",
+          "type": "Json",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "waitCondition",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "screenshotBefore",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "screenshotAfter",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "Tag",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "color",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "applicationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        }
+      ]
+    },
+    {
+      "name": "TestTag",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "testId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "tagId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "Run",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "testId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "startedAt",
+          "type": "DateTime",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "completedAt",
+          "type": "DateTime",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "RunStep",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "runId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "testStepId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "order",
+          "type": "Int",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "status",
+          "type": "RunStepStatus",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": true
+        },
+        {
+          "name": "screenshotBefore",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "screenshotAfter",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "output",
+          "type": "Json",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "Session",
+      "to": "User",
+      "localField": "userId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Account",
+      "to": "User",
+      "localField": "userId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Member",
+      "to": "User",
+      "localField": "userId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Member",
+      "to": "Organization",
+      "localField": "organizationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Invitation",
+      "to": "User",
+      "localField": "inviterId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Invitation",
+      "to": "Organization",
+      "localField": "organizationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Application",
+      "to": "Organization",
+      "localField": "organizationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "WebApplicationData",
+      "to": "Application",
+      "localField": "applicationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "MobileApplicationData",
+      "to": "Application",
+      "localField": "applicationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "ApiKey",
+      "to": "User",
+      "localField": "userId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Folder",
+      "to": "Application",
+      "localField": "applicationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Folder",
+      "to": "Folder",
+      "localField": "parentId",
+      "foreignField": "id",
+      "nullable": true
+    },
+    {
+      "from": "TestPlan",
+      "to": "User",
+      "localField": "userId",
+      "foreignField": "id",
+      "nullable": true
+    },
+    {
+      "from": "TestPlan",
+      "to": "Organization",
+      "localField": "organizationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "TestPlan",
+      "to": "Application",
+      "localField": "applicationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "TestGeneration",
+      "to": "TestPlan",
+      "localField": "testPlanId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "TestGeneration",
+      "to": "Application",
+      "localField": "applicationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "GenerationStep",
+      "to": "TestGeneration",
+      "localField": "generationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Test",
+      "to": "TestGeneration",
+      "localField": "testGenerationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Test",
+      "to": "Application",
+      "localField": "applicationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Test",
+      "to": "Folder",
+      "localField": "folderId",
+      "foreignField": "id",
+      "nullable": true
+    },
+    {
+      "from": "TestStep",
+      "to": "Test",
+      "localField": "testId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Tag",
+      "to": "Application",
+      "localField": "applicationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "TestTag",
+      "to": "Test",
+      "localField": "testId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "TestTag",
+      "to": "Tag",
+      "localField": "tagId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Run",
+      "to": "Test",
+      "localField": "testId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "RunStep",
+      "to": "Run",
+      "localField": "runId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "RunStep",
+      "to": "TestStep",
+      "localField": "testStepId",
+      "foreignField": "id",
+      "nullable": false
+    }
+  ],
+  "scopeField": "organizationId"
+}

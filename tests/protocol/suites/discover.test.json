@@ -1,0 +1,26 @@
+{
+  "name": "discover returns environment descriptors",
+  "steps": [
+    {
+      "action": "discover",
+      "expect": {
+        "status": 200,
+        "bodyShape": {
+          "environments": "array"
+        },
+        "bodyAssertions": [
+          { "path": "environments[0].name", "type": "string" },
+          { "path": "environments[0].fingerprint", "type": "string", "pattern": "^[a-f0-9]{16}$" }
+        ]
+      }
+    },
+    {
+      "description": "fingerprints are stable across calls",
+      "action": "discover",
+      "expect": {
+        "status": 200,
+        "fingerprintsMatchStep": 0
+      }
+    }
+  ]
+}

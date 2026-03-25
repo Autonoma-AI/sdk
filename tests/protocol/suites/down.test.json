@@ -1,0 +1,28 @@
+{
+  "name": "down tears down environment with valid refsToken",
+  "steps": [
+    {
+      "action": "discover",
+      "expect": { "status": 200 },
+      "saveAs": "discoverResult"
+    },
+    {
+      "action": "up",
+      "body": {
+        "environment": "{{discoverResult.environments[0].name}}"
+      },
+      "expect": { "status": 200 },
+      "saveAs": "upResult"
+    },
+    {
+      "action": "down",
+      "body": {
+        "refsToken": "{{upResult.refsToken}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": { "ok": true }
+      }
+    }
+  ]
+}

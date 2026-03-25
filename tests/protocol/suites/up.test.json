@@ -1,0 +1,29 @@
+{
+  "name": "up creates environment and returns auth + refs",
+  "steps": [
+    {
+      "action": "discover",
+      "expect": { "status": 200 },
+      "saveAs": "discoverResult"
+    },
+    {
+      "action": "up",
+      "body": {
+        "environment": "{{discoverResult.environments[0].name}}"
+      },
+      "expect": {
+        "status": 200,
+        "bodyShape": {
+          "auth": "object",
+          "refs": "object",
+          "refsToken": "string"
+        },
+        "bodyAssertions": [
+          { "path": "auth.token", "type": "string" },
+          { "path": "refsToken", "type": "string", "notEmpty": true }
+        ]
+      },
+      "saveAs": "upResult"
+    }
+  ]
+}

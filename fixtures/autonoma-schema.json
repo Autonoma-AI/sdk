@@ -1,0 +1,153 @@
+{
+  "models": [
+    {
+      "name": "Organization",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "testRunId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "User",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "email",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "role",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "organizationId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "testRunId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "Product",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "status",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "testRunId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    },
+    {
+      "name": "Category",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "isRequired": true,
+          "isId": true,
+          "hasDefault": true
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "parentId",
+          "type": "String",
+          "isRequired": false,
+          "isId": false,
+          "hasDefault": false
+        },
+        {
+          "name": "testRunId",
+          "type": "String",
+          "isRequired": true,
+          "isId": false,
+          "hasDefault": false
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "User",
+      "to": "Organization",
+      "localField": "organizationId",
+      "foreignField": "id",
+      "nullable": false
+    },
+    {
+      "from": "Category",
+      "to": "Category",
+      "localField": "parentId",
+      "foreignField": "id",
+      "nullable": true
+    }
+  ],
+  "scopeField": "testRunId"
+}

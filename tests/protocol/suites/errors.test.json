@@ -1,0 +1,20 @@
+{
+  "name": "error handling for invalid requests",
+  "steps": [
+    {
+      "action": "nonexistent",
+      "expect": {
+        "status": 400,
+        "body": { "code": "UNKNOWN_ACTION" }
+      }
+    },
+    {
+      "action": "up",
+      "body": { "environment": "does-not-exist" },
+      "expect": {
+        "status": 400,
+        "body": { "code": "UNKNOWN_ENVIRONMENT" }
+      }
+    }
+  ]
+}

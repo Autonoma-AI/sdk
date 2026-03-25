@@ -1,0 +1,44 @@
+{
+  "models": {
+    "Organization": {
+      "name": "Organization",
+      "fields": [
+        { "name": "id", "type": "String", "kind": "scalar", "isRequired": true, "isId": true, "hasDefaultValue": true },
+        { "name": "name", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false },
+        { "name": "testRunId", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false },
+        { "name": "users", "type": "User", "kind": "object", "isRequired": false, "isId": false, "hasDefaultValue": false, "isList": true }
+      ]
+    },
+    "User": {
+      "name": "User",
+      "fields": [
+        { "name": "id", "type": "String", "kind": "scalar", "isRequired": true, "isId": true, "hasDefaultValue": true },
+        { "name": "email", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false },
+        { "name": "role", "type": "String", "kind": "enum", "isRequired": true, "isId": false, "hasDefaultValue": false },
+        { "name": "organizationId", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false },
+        { "name": "organization", "type": "Organization", "kind": "object", "isRequired": true, "isId": false, "hasDefaultValue": false, "relationFromFields": ["organizationId"], "relationToFields": ["id"], "relationName": "UserToOrganization" },
+        { "name": "testRunId", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false }
+      ]
+    },
+    "Product": {
+      "name": "Product",
+      "fields": [
+        { "name": "id", "type": "String", "kind": "scalar", "isRequired": true, "isId": true, "hasDefaultValue": true },
+        { "name": "name", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false },
+        { "name": "status", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false },
+        { "name": "testRunId", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false }
+      ]
+    },
+    "Category": {
+      "name": "Category",
+      "fields": [
+        { "name": "id", "type": "String", "kind": "scalar", "isRequired": true, "isId": true, "hasDefaultValue": true },
+        { "name": "name", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false },
+        { "name": "parentId", "type": "String", "kind": "scalar", "isRequired": false, "isId": false, "hasDefaultValue": false },
+        { "name": "parent", "type": "Category", "kind": "object", "isRequired": false, "isId": false, "hasDefaultValue": false, "relationFromFields": ["parentId"], "relationToFields": ["id"], "relationName": "CategoryToCategory" },
+        { "name": "children", "type": "Category", "kind": "object", "isRequired": false, "isId": false, "hasDefaultValue": false, "isList": true },
+        { "name": "testRunId", "type": "String", "kind": "scalar", "isRequired": true, "isId": false, "hasDefaultValue": false }
+      ]
+    }
+  }
+}

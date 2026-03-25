@@ -1,0 +1,20 @@
+{
+  "name": "refs token validation rejects tampered tokens",
+  "steps": [
+    {
+      "action": "down",
+      "body": { "refsToken": "tampered.token.value" },
+      "expect": {
+        "status": 403,
+        "body": { "code": "INVALID_REFS_TOKEN" }
+      }
+    },
+    {
+      "action": "down",
+      "body": { "refsToken": "" },
+      "expect": {
+        "status": 400
+      }
+    }
+  ]
+}

@@ -1,0 +1,1581 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "./lib"
+  moduleFormat = "cjs"
+}
+
+generator json {
+  provider = "prisma-json-types-generator"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Organization {
+  id                     String                @id @default(cuid())
+  name                   String
+  createdAt              DateTime              @default(now()) @map("created_at")
+  updatedAt              DateTime              @updatedAt @map("updated_at")
+  communicationChannel   CommunciationChannel? @map("communication_channel")
+  communicationChannelID String?               @map("communication_channel_id")
+  organizationQuotaId    String?               @unique @map("quota_id")
+  teamSlugs              String[]              @default([]) @map("team_slugs")
+
+  /// [OrganizationConfiguration]
+  orgConfiguration        Json                     @default("{}") @map("org_configuration") @db.Json
+  domain                  String?                  @unique
+  workosId                String?                  @unique @map("workos_id")
+  APIKey                  ApiKey[]
+  Application             Application[]
+  applicationVersions     ApplicationVersion[]
+  folders                 Folder[]
+  FolderCache             FolderCache?
+  integrations            Integration[]
+  runs                    Run[]
+  scripts                 Script[]
+  TagInTestGroup          TagInTestGroup[]
+  teams                   Team[]
+  Tag                     Tag[]
+  tests                   Test[]
+  testGroups              TestGroup[]
+  uploadedFiles           UploadedFile[]
+  users                   User[]
+  variables               Variable[]
+  Webhook                 Webhook[]
+  WebhookDelivery         WebhookDelivery[]
+  notifications           Notification[]
+  installations           VercelInstallation[]
+  vercelSSOLinks          VercelSSOLink[]
+  organizationQuota       OrganizationQuota?
+  appMirrorPairs          AppMirrorPair[]
+  archivedTests           ArchivedTest[]
+  stickinessEmails        StickinessEmail[]
+  components              Component[]
+  componentVersions       ComponentVersion[]
+  stepSequences              StepSequence[]
+  deviceFarmConfiguration    DeviceFarmConfiguration?
+  aiUsage                    AiUsage[]
+  pendingPhysicalDeviceFiles PendingPhysicalDeviceFile[]
+  accessibilityReports       AccessibilityReport[]
+
+  @@index([workosId])
+  @@map("organization")
+}
+
+model OrganizationQuota {
+  id             String @id @default(cuid())
+  organizationId String @unique @map("organization_id")
+
+  active        Boolean @default(true)
+  unlimited     Boolean @default(false) @map("unlimited")
+  runsLeft      Int     @default(0) @map("runs_left")
+  purchasedRuns Int     @default(0) @map("purchased_runs")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+  @@map("organization_quota")
+}
+
+model DeviceFarmConfiguration {
+  id                      String   @id @default(cuid())
+  organizationId          String   @unique @map("organization_id")
+  projectArn              String?  @map("project_arn")
+  defaultAndroidDeviceArn String?  @map("default_android_device_arn")
+  defaultIOSDeviceArn     String?  @map("default_ios_device_arn")
+  region                  String   @default("us-west-2")
+  pricePerMinute          Float?   @map("price_per_minute")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("device_farm_configuration")
+}
+
+model DeviceFarmBilling {
+  id               String   @id @default(cuid())
+  runID            String   @unique @map("run_id")
+  sessionArn       String   @map("session_arn")
+  billingMethod    String   @map("billing_method")
+  totalMinutes     Float?   @map("total_minutes")
+  meteredMinutes   Float?   @map("metered_minutes")
+  unmeteredMinutes Float?   @map("unmetered_minutes")
+  pricePerMinute   Float?   @map("price_per_minute")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  run Run @relation(fields: [runID], references: [id], onDelete: Cascade)
+
+  @@map("device_farm_billing")
+}
+
+model Application {
+  id                  String                    @id @default(cuid())
+  name                String
+  createdAt           DateTime                  @default(now()) @map("created_at")
+  updatedAt           DateTime                  @updatedAt @map("updated_at")
+  applicationType     ApplicationType           @map("application_type")
+  organizationId      String                    @map("organization_id")
+  /// [ApplicationMetadata]
+  applicationMetadata Json                      @map("application_metadata")
+  organization        Organization              @relation(fields: [organizationId], references: [id])
+  /// [AppConfiguration]
+  appConfiguration    Json                      @default("{}") @map("app_configuration") @db.Json
+  applicationVersions        ApplicationVersion[]
+  testGroups                 TestGroup[]
+  components                 Component[]
+  vercelConnections          VercelProjectConnection[]
+  tag                        Tag?
+  mirrorPairsA               AppMirrorPair[]              @relation("AppMirrorPairA")
+  mirrorPairsB               AppMirrorPair[]              @relation("AppMirrorPairB")
+  pendingPhysicalDeviceFiles PendingPhysicalDeviceFile[]
+
+  @@index([organizationId])
+  @@map("application")
+}
+
+model ApplicationVersion {
+  id                          String                       @id @default(cuid())
+  name                        String
+  createdAt                   DateTime                     @default(now()) @map("created_at")
+  organizationID              String                       @map("organization_id")
+  /// [ApplicationVersionConfiguration]
+  configuration               Json?                        @db.Json
+  tag                         VersionTag                   @default(main)
+  path                        String
+  physicalDevicePath          String?                      @map("physical_device_path")
+  minimumIOSVersion           String?                      @map("minimum_ios_version")
+  applicationID               String
+  disabled                    Boolean                      @default(false)
+  customID                    String?                      @map("custom_id")
+  deviceFarmUploadArn         String?                      @map("device_farm_upload_arn")
+  application                 Application                  @relation(fields: [applicationID], references: [id], onDelete: Cascade)
+  organization                Organization                 @relation(fields: [organizationID], references: [id])
+  test                        Test[]
+  vercelTargets               VercelTargetMapping[]
+  versionAssignments          VersionAssignment[]
+  componentVersionAssignments ComponentVersionAssignment[]
+
+  @@index([organizationID])
+  @@index([applicationID], map: "application_version_application_id_idx")
+  @@index([customID], map: "application_version_custom_id_idx")
+  @@map("application_version")
+}
+
+model PendingPhysicalDeviceFile {
+  id                 String   @id @default(cuid())
+  applicationID      String   @map("application_id")
+  organizationID     String   @map("organization_id")
+  versionName        String?  @map("version_name")
+  customID           String?  @map("custom_id")
+  physicalDevicePath String   @map("physical_device_path")
+  minimumIOSVersion  String?  @map("minimum_ios_version")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  application  Application  @relation(fields: [applicationID], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationID], references: [id])
+
+  @@unique([applicationID, versionName])
+  @@unique([applicationID, customID])
+  @@index([organizationID])
+  @@map("pending_physical_device_file")
+}
+
+enum TestType {
+  final
+  draft
+  edit
+}
+
+model Test {
+  id                   String              @id @default(cuid())
+  name                 String
+  metadata             Json
+  architecture         Architecture
+  target               Json?
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  organizationID       String              @map("organization_id")
+  crontab              String?
+  folderID             String?             @map("folder_id")
+  runOrder             Int?                @map("run_order")
+  applicationVersionID String              @map("application_version_id")
+  testGroupid          String
+  parentTestID         String?             @map("parent_test_id")
+  type                 TestType            @default(final) @map("type")
+  userID               String?             @map("user_id")
+  runs                 Run[]
+  applicationVersion   ApplicationVersion  @relation(fields: [applicationVersionID], references: [id])
+  folder               Folder?             @relation(fields: [folderID], references: [id], onDelete: Cascade)
+  organization         Organization        @relation(fields: [organizationID], references: [id])
+  parentTest           Test?               @relation("EditTests", fields: [parentTestID], references: [id], onDelete: Cascade)
+  editTests            Test[]              @relation("EditTests")
+  testGroup            TestGroup           @relation("ParentTestGroup", fields: [testGroupid], references: [id], onDelete: Cascade)
+  user                 User?               @relation(fields: [userID], references: [id])
+  webhookMetadata      Json?               @map("webhook_metadata")
+  /// [TestConfiguration]
+  testConfiguration    Json                @default("{}") @map("test_configuration") @db.Json
+  versionAssignments   VersionAssignment[]
+  mirrorPairsA         TestMirrorPair[]    @relation("MirrorTestA")
+  mirrorPairsB         TestMirrorPair[]    @relation("MirrorTestB")
+
+  defaultInTestGroup TestGroup[] @relation("DefaultTest")
+  editHistory        TestEdit[]
+
+  @@index([organizationID])
+  @@index([folderID])
+  @@index([applicationVersionID])
+  @@index([testGroupid], map: "test_test_groupid_idx")
+  @@index([name])
+  @@index([name, organizationID])
+  @@index([createdAt])
+  @@index([type, userID])
+  @@map("test")
+}
+
+model TestEdit {
+  id       String   @id @default(cuid())
+  testID   String   @map("test_id")
+  userID   String   @map("user_id")
+  editedAt DateTime @default(now()) @map("edited_at")
+  test     Test     @relation(fields: [testID], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userID], references: [id])
+
+  @@index([testID])
+  @@index([userID])
+  @@map("test_edit")
+}
+
+model ArchivedTest {
+  id                   String       @id @default(cuid())
+  originalTestID       String       @unique @map("original_test_id")
+  name                 String
+  metadata             Json
+  architecture         Architecture
+  target               Json?
+  createdAt            DateTime     @map("created_at")
+  updatedAt            DateTime     @map("updated_at")
+  archivedAt           DateTime     @default(now()) @map("archived_at")
+  organizationID       String       @map("organization_id")
+  folderID             String?      @map("folder_id")
+  applicationVersionID String       @map("application_version_id")
+  testGroupid          String       @map("test_group_id")
+  userID               String?      @map("user_id")
+  archivedByUserID     String       @map("archived_by_user_id")
+  type                 TestType     @map("type")
+
+  organization Organization @relation(fields: [organizationID], references: [id])
+  archivedBy   User         @relation(fields: [archivedByUserID], references: [id])
+
+  @@index([organizationID])
+  @@index([archivedAt])
+  @@map("archived_test")
+}
+
+model Component {
+  id                String                       @id @default(cuid())
+  name              String
+  architecture      Architecture
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  updatedAt         DateTime                     @updatedAt @map("updated_at")
+  organizationId    String                       @map("organization_id")
+  organization      Organization                 @relation(fields: [organizationId], references: [id])
+  folderId          String                       @map("folder_id")
+  folder            Folder                       @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  userId            String                       @map("user_id")
+  user              User                         @relation(fields: [userId], references: [id])
+  defaultVersionId  String                       @map("default_version_id")
+  defaultVersion    ComponentVersion             @relation("DefaultVersion", fields: [defaultVersionId], references: [id])
+  applicationId     String                       @map("application_id")
+  application       Application                  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  assignments       ComponentVersionAssignment[]
+  mirrorPairsA      ComponentMirrorPair[]        @relation("MirrorComponentA")
+  mirrorPairsB      ComponentMirrorPair[]        @relation("MirrorComponentB")
+  componentVersions ComponentVersion[]
+
+  @@index([organizationId])
+  @@index([folderId])
+  @@index([name])
+  @@index([name, organizationId])
+  @@index([createdAt])
+  @@index([userId])
+  @@map("component")
+}
+
+model ComponentVersion {
+  id                  String                       @id @default(cuid())
+  name                String
+  createdAt           DateTime                     @default(now()) @map("created_at")
+  organizationId      String                       @map("organization_id")
+  organization        Organization                 @relation(fields: [organizationId], references: [id])
+  componentId         String                       @map("component_id")
+  component           Component                    @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  userId              String?                      @map("user_id")
+  user                User?                        @relation(fields: [userId], references: [id])
+  prefixSequenceId    String?                      @map("prefix_sequence_id")
+  prefixSequence      StepSequence?                @relation("PrefixStepSequence", fields: [prefixSequenceId], references: [id], onDelete: Cascade)
+  executionSequenceId String?                      @map("execution_sequence_id")
+  executionSequence   StepSequence?                @relation("ExecutionStepSequence", fields: [executionSequenceId], references: [id], onDelete: Cascade)
+  parameters          Json? /// JSON object mapping parameter names to their definitions: { [name]: { defaultValue: string } }
+  bindsVariables      String[]                     @default([]) @map("binds_variables") /// Variable keys that this component creates during execution
+  defaultIn           Component[]                  @relation("DefaultVersion")
+  mirrorPairsA        ComponentVersionMirrorPair[] @relation("MirrorComponentVersionA")
+  mirrorPairsB        ComponentVersionMirrorPair[] @relation("MirrorComponentVersionB")
+  versionAssignments  ComponentVersionAssignment[]
+
+  @@index([organizationId])
+  @@index([createdAt])
+  @@map("component_version")
+}
+
+model ComponentVersionAssignment {
+  id                   String             @id @default(cuid())
+  applicationVersionId String             @map("application_version_id")
+  componentId          String             @map("component_id")
+  componentVersionId   String             @map("component_version_id")
+  applicationVersion   ApplicationVersion @relation(fields: [applicationVersionId], references: [id], onDelete: Cascade)
+  componentVersion     ComponentVersion   @relation(fields: [componentVersionId], references: [id], onDelete: Cascade)
+  component            Component          @relation(fields: [componentId], references: [id])
+
+  @@unique([applicationVersionId, componentId])
+  @@index([componentVersionId])
+  @@map("component_version_assignment")
+}
+
+model ComponentMirrorPair {
+  id                    String                       @id @default(cuid())
+  appMirrorPairID       String                       @map("app_mirror_pair_id")
+  componentIdA          String                       @map("component_id_a")
+  componentIdB          String                       @map("component_id_b")
+  createdBy             String?                      @map("created_by")
+  createdAt             DateTime                     @default(now()) @map("created_at")
+  updatedAt             DateTime                     @updatedAt @map("updated_at")
+  componentA            Component                    @relation("MirrorComponentA", fields: [componentIdA], references: [id], onDelete: Cascade)
+  componentB            Component                    @relation("MirrorComponentB", fields: [componentIdB], references: [id], onDelete: Cascade)
+  appMirrorPair         AppMirrorPair                @relation(fields: [appMirrorPairID], references: [id], onDelete: Cascade)
+  componentVersionPairs ComponentVersionMirrorPair[]
+
+  @@unique([appMirrorPairID, componentIdA, componentIdB])
+  @@index([appMirrorPairID])
+  @@index([componentIdA])
+  @@index([componentIdB])
+  @@map("component_mirror_pair")
+}
+
+model ComponentVersionMirrorPair {
+  id                    String              @id @default(cuid())
+  componentMirrorPairID String              @map("component_mirror_pair_id")
+  componentVersionIdA   String              @map("component_version_id_a")
+  componentVersionIdB   String              @map("component_version_id_b")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+  componentMirrorPair   ComponentMirrorPair @relation(fields: [componentMirrorPairID], references: [id], onDelete: Cascade)
+  componentVersionA     ComponentVersion    @relation("MirrorComponentVersionA", fields: [componentVersionIdA], references: [id], onDelete: Cascade)
+  componentVersionB     ComponentVersion    @relation("MirrorComponentVersionB", fields: [componentVersionIdB], references: [id], onDelete: Cascade)
+
+  @@unique([componentMirrorPairID, componentVersionIdA, componentVersionIdB])
+  @@index([componentMirrorPairID])
+  @@index([componentVersionIdA])
+  @@index([componentVersionIdB])
+  @@map("component_version_mirror_pair")
+}
+
+model StepSequence {
+  id             String             @id @default(cuid())
+  name           String
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  organizationId String             @map("organization_id")
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  steps          TestStep[]
+  prefixTo       ComponentVersion[] @relation("PrefixStepSequence")
+  executionFor   ComponentVersion[] @relation("ExecutionStepSequence")
+
+  @@index([organizationId])
+  @@map("step_sequence")
+}
+
+model TestStep {
+  id             String        @id @default(cuid())
+  instruction    String
+  interaction    String
+  // For now, metadata still is a horrible Json field. In the future this NEEDS to change to a proper structured type.
+  metadata       Json
+  order          Int
+  createdAt      DateTime      @default(now()) @map("created_at")
+  stepSequenceId String?       @map("step_sequence_id")
+  stepSequence   StepSequence? @relation(fields: [stepSequenceId], references: [id])
+
+  @@map("test_step")
+}
+
+model VersionAssignment {
+  id                   String             @id @default(cuid())
+  applicationVersionID String             @map("application_version_id")
+  testID               String             @map("test_id")
+  testGroupID          String             @map("test_group_id")
+  applicationVersion   ApplicationVersion @relation(fields: [applicationVersionID], references: [id], onDelete: Cascade)
+  test                 Test               @relation(fields: [testID], references: [id], onDelete: Cascade)
+  testGroup            TestGroup          @relation(fields: [testGroupID], references: [id], onDelete: Cascade)
+
+  @@unique([applicationVersionID, testGroupID])
+  @@index([testID])
+  @@map("version_assignment")
+}
+
+model TestGroup {
+  id             String                @id @default(cuid())
+  name           String
+  organizationID String
+  organization   Organization          @relation(fields: [organizationID], references: [id])
+  userID         String?               @map("user_id")
+  user           User?                 @relation(fields: [userID], references: [id])
+  applicationID  String?               @map("application_id")
+  application    Application?          @relation(fields: [applicationID], references: [id])
+  folderID       String?               @map("folder_id")
+  architecture   Architecture
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @updatedAt @map("updated_at")
+  quarantined    Boolean               @default(false)
+  tags           TagInTestGroup[]
+  tests          Test[]                @relation("ParentTestGroup")
+  runSchedules   RunSchedule[]
+  folder         Folder?               @relation(fields: [folderID], references: [id])
+  watches        Watch[]
+  defaultTestId  String?               @map("default_test_id")
+  defaultTest    Test?                 @relation("DefaultTest", fields: [defaultTestId], references: [id], onDelete: SetNull)
+  assignments    VersionAssignment[]
+  mirrorPairsA   TestGroupMirrorPair[] @relation("MirrorTestGroupA")
+  mirrorPairsB   TestGroupMirrorPair[] @relation("MirrorTestGroupB")
+
+  @@index([organizationID], name: "test_group_organization_id_idx")
+  @@index([applicationID], name: "test_group_application_id_idx")
+  @@index([folderID])
+  @@index([quarantined])
+  @@map("test_group")
+}
+
+model AppMirrorPair {
+  id                   String                @id @default(cuid())
+  organizationID       String                @map("organization_id")
+  appIdA               String                @map("app_id_a")
+  appIdB               String                @map("app_id_b")
+  createdBy            String?               @map("created_by")
+  metadata             Json?                 @default("{}") @db.Json
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  organization         Organization          @relation(fields: [organizationID], references: [id], onDelete: Cascade)
+  appA                 Application           @relation("AppMirrorPairA", fields: [appIdA], references: [id], onDelete: Cascade)
+  appB                 Application           @relation("AppMirrorPairB", fields: [appIdB], references: [id], onDelete: Cascade)
+  testGroupPairs       TestGroupMirrorPair[]
+  componentMirrorPairs ComponentMirrorPair[]
+
+  @@unique([organizationID, appIdA, appIdB])
+  @@index([organizationID, appIdA])
+  @@index([organizationID, appIdB])
+  @@map("app_mirror_pair")
+}
+
+model TestGroupMirrorPair {
+  id              String           @id @default(cuid())
+  appMirrorPairID String           @map("app_mirror_pair_id")
+  testGroupIdA    String           @map("test_group_id_a")
+  testGroupIdB    String           @map("test_group_id_b")
+  createdBy       String?          @map("created_by")
+  metadata        Json?            @default("{}") @db.Json
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  appMirrorPair   AppMirrorPair    @relation(fields: [appMirrorPairID], references: [id], onDelete: Cascade)
+  testGroupA      TestGroup        @relation("MirrorTestGroupA", fields: [testGroupIdA], references: [id], onDelete: Cascade)
+  testGroupB      TestGroup        @relation("MirrorTestGroupB", fields: [testGroupIdB], references: [id], onDelete: Cascade)
+  testPairs       TestMirrorPair[]
+
+  @@unique([appMirrorPairID, testGroupIdA, testGroupIdB])
+  @@index([appMirrorPairID])
+  @@index([testGroupIdA])
+  @@index([testGroupIdB])
+  @@map("test_group_mirror_pair")
+}
+
+model TestMirrorPair {
+  id                    String              @id @default(cuid())
+  testGroupMirrorPairID String              @map("test_group_mirror_pair_id")
+  testIdA               String              @map("test_id_a")
+  testIdB               String              @map("test_id_b")
+  sourceTestType        TestType            @map("source_test_type")
+  metadata              Json?               @default("{}") @db.Json
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+  testGroupMirrorPair   TestGroupMirrorPair @relation(fields: [testGroupMirrorPairID], references: [id], onDelete: Cascade)
+  testA                 Test                @relation("MirrorTestA", fields: [testIdA], references: [id], onDelete: Cascade)
+  testB                 Test                @relation("MirrorTestB", fields: [testIdB], references: [id], onDelete: Cascade)
+
+  @@unique([testGroupMirrorPairID, testIdA, testIdB])
+  @@index([testGroupMirrorPairID])
+  @@index([testIdA])
+  @@index([testIdB])
+  @@map("test_mirror_pair")
+}
+
+model Run {
+  id              String       @id @default(cuid())
+  videoURL        String?      @map("video_url")
+  appiumLogsURL   String?      @map("appium_logs_url")
+  deviceLogsURL   String?      @map("device_logs_url")
+  networkLogsURL  String?      @map("network_logs_url")
+  tcpDumpLogsURL  String?      @map("tcp_dump_logs_url")
+  name            String
+  createdAt       DateTime     @default(now()) @map("created_at")
+  startedAt       DateTime?    @map("started_at")
+  endedAt         DateTime?    @map("ended_at")
+  organizationID  String       @map("organization_id")
+  testSuiteRunID  String?
+  organization    Organization @relation(fields: [organizationID], references: [id])
+  steps           Step[]
+  status          StepStatus? // TODO: Make it non-optional
+  folderID        String?      @map("folder_id")
+  folder          Folder?      @relation(fields: [folderID], references: [id], onDelete: Cascade)
+  tagIDs          String[]     @default([]) @map("tag_ids")
+  tagID           String?      @map("tag_id")
+  tag             Tag?         @relation(fields: [tagID], references: [id], onDelete: Cascade)
+  folderRunID     String?      @map("folder_run_id")
+  testID          String?      @map("test_id")
+  test            Test?        @relation(fields: [testID], references: [id], onDelete: SetNull)
+  jobId           String?      @map("job_id")
+  jobRunId        String?      @map("job_run_id")
+  /// [RuntimeMetadata]
+  runtimeMetadata Json?        @map("runtime_metadata")
+  regeneration    Boolean?     @map("regeneration")
+  retries         Int?
+  runGroupID      String?      @map("run_group_id")
+
+  runGroup      RunGroup?     @relation(fields: [runGroupID], references: [id], onDelete: Cascade)
+  scheduledRuns RunSchedule[]
+  runMetadata   RunMetadata?  @relation("RunToRunMetadata")
+  testReview    TestReview?
+  aiUsage       AiUsage[]
+  accessibilityReports AccessibilityReport[]
+  deviceFarmBilling    DeviceFarmBilling?
+
+  @@index([createdAt])
+  @@index([organizationID])
+  @@index([folderID])
+  @@index([testID])
+  @@index([runGroupID])
+  @@index([folderRunID])
+  @@index([organizationID, createdAt(sort: Desc)], map: "run_org_id_created_at_desc_idx")
+  @@map("run")
+}
+
+model RunGroup {
+  id                 String     @id @default(cuid())
+  status             StepStatus @default(pending)
+  notified           Boolean    @default(false)
+  conciliationReason String?    @map("conciliation_reason")
+
+  runs Run[]
+
+  @@map("run_group")
+}
+
+enum SourceType {
+  SCHEDULED
+  MANUAL
+  API
+  CI_CD
+  VERCEL
+
+  @@map("source_type")
+}
+
+model RunMetadata {
+  id         String     @id @default(cuid())
+  runId      String     @unique @map("run_id")
+  source     SourceType @default(API)
+  dynamicUrl String?    @map("dynamic_url")
+  userImage  String?    @map("user_image")
+  username   String?
+  email      String?
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+  rerunAt    DateTime?  @map("rerun_at")
+
+  run Run @relation("RunToRunMetadata", fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([username])
+  @@index([source])
+  @@map("run_metadata")
+}
+
+model RunSchedule {
+  id                    String           @id @default(cuid())
+  crontab               String
+  type                  SchedulerJobType @default(test)
+  enabled               Boolean          @default(true)
+  folderID              String?          @map("folder_id")
+  folder                Folder?          @relation(fields: [folderID], references: [id], onDelete: Cascade)
+  testGroupID           String?          @map("test_group_id")
+  testGroup             TestGroup?       @relation(fields: [testGroupID], references: [id], onDelete: Cascade)
+  tagID                 String?          @map("tag_id")
+  tag                   Tag?             @relation(fields: [tagID], references: [id], onDelete: Cascade)
+  lastRunID             String?          @map("last_run_id")
+  lastRun               Run?             @relation(fields: [lastRunID], references: [id], onDelete: SetNull)
+  lastFolderRunID       String?          @map("last_folder_run_id")
+  applicationVersionIDs String[]         @default([]) @map("application_version_ids")
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+  schedulerJobs         SchedulerJob[]
+  recursive             Boolean          @default(false)
+
+  @@index([enabled])
+  @@map("run_schedule")
+}
+
+model Step {
+  id               String     @id @default(cuid())
+  instruction      String?
+  image            String?
+  networkLogsUrl   String?
+  interaction      String?
+  metadata         Json?
+  order            Int
+  createdAt        DateTime   @default(now()) @map("created_at")
+  runID            String     @map("run_id")
+  status           StepStatus @default(pending)
+  output           String?
+  run              Run        @relation(fields: [runID], references: [id], onDelete: Cascade)
+  parentStep       String?    @map("parent_step")
+  regenerated      Boolean?   @map("regenerated")
+  /// [VisualCheckResult[]]
+  visualChecks     Json?      @map("visual_checks")
+  /// [InteractedElementData]
+  elementData      Json?      @map("element_data")
+  /// ![{ x: number, y: number }]
+  clickedPoint     Json?      @map("clicked_point")
+  /// ![{ width: number, height: number }]
+  screenResolution Json?      @map("screen_resolution")
+
+  @@unique([runID, order])
+  @@index([runID])
+  @@map("step")
+}
+
+model AccessibilityReport {
+  id              String   @id @default(cuid())
+  name            String
+  organizationID  String   @map("organization_id")
+  organization    Organization @relation(fields: [organizationID], references: [id], onDelete: Cascade)
+  createdByID     String   @map("created_by_id")
+  createdBy       User     @relation(fields: [createdByID], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  folderID        String?  @map("folder_id")
+  folder          Folder?  @relation(fields: [folderID], references: [id], onDelete: SetNull)
+  tagID           String?  @map("tag_id")
+  tag             Tag?     @relation(fields: [tagID], references: [id], onDelete: SetNull)
+  runID           String?  @map("run_id")
+  run             Run?     @relation(fields: [runID], references: [id], onDelete: SetNull)
+
+  totalWarnings   Int      @default(0) @map("total_warnings")
+
+  /// [AccessibilityReportData]
+  reportData      Json     @map("report_data")
+
+  @@index([organizationID])
+  @@index([createdAt])
+  @@map("accessibility_report")
+}
+
+model VisualCheckDefinition {
+  id          String   @id
+  description String
+  examples    String[]
+
+  @@map("visual_check_definition")
+}
+
+model UploadedFile {
+  id             String       @id @default(cuid())
+  name           String
+  gcsPath        String       @map("gcs_path")
+  type           FileType
+  organizationID String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationID], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([organizationID])
+  @@map("uploaded_file")
+}
+
+model User {
+  id             String  @id @default(cuid())
+  name           String  @db.VarChar(255)
+  lastName       String? @map("last_name") @db.VarChar(255)
+  email          String  @unique @db.VarChar(255)
+  image          String? @map("image")
+  organizationID String  @default(cuid()) @map("organization_id")
+
+  workosId String? @unique @map("workos_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(0)
+
+  organization        Organization         @relation(fields: [organizationID], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  teams               UsersInTeams[]
+  APIKey              ApiKey[]
+  folders             Folder[]
+  tests               Test[]
+  notifications       Notification[]
+  settings            Settings?
+  watches             Watch[]
+  testGroups          TestGroup[]
+  vercelInstallations VercelInstallation[]
+  vercelSSOLinks      VercelSSOLink[]
+  testEdits           TestEdit[]
+  archivedTestsBy     ArchivedTest[]
+  stickinessEmails    StickinessEmail[]
+  accessibilityReports AccessibilityReport[]
+
+  isOnboarded           Boolean            @default(false) @map("is_onboarded")
+  currentOnboardingStep Int?               @default(0) @map("current_onboarding_step")
+  components            Component[]
+  componentVersions     ComponentVersion[]
+
+  @@index([organizationID])
+  @@index([workosId])
+  @@map("user")
+}
+
+model Settings {
+  id                 String   @id @default(cuid())
+  userID             String   @unique @map("user_id")
+  user               User     @relation(fields: [userID], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  failedRunEmail     Boolean  @default(true) @map("failed_run_email")
+  failedRunUI        Boolean  @default(true) @map("failed_run_ui")
+  successfulRunEmail Boolean  @default(false) @map("successful_run_email")
+  successfulRunUI    Boolean  @default(true) @map("successful_run_ui")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([userID])
+  @@map("settings")
+}
+
+model Watch {
+  id          String     @id @default(cuid())
+  userID      String     @map("user_id")
+  user        User       @relation(fields: [userID], references: [id])
+  testGroupID String?    @map("test_group_id")
+  testGroup   TestGroup? @relation(fields: [testGroupID], references: [id])
+  folderID    String?    @map("folder_id")
+  folder      Folder?    @relation(fields: [folderID], references: [id])
+  tagID       String?    @map("tag_id")
+  tag         Tag?       @relation(fields: [tagID], references: [id])
+
+  @@index([userID])
+  @@index([testGroupID])
+  @@index([folderID])
+  @@index([tagID])
+  @@map("watch")
+}
+
+model StickinessEmail {
+  id             String              @id @default(cuid())
+  userID         String              @map("user_id")
+  user           User                @relation(fields: [userID], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  emailType      StickinessEmailType @map("email_type")
+  sentAt         DateTime            @default(now()) @map("sent_at")
+  organizationID String              @map("organization_id")
+  organization   Organization        @relation(fields: [organizationID], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userID])
+  @@index([organizationID])
+  @@index([emailType])
+  @@index([sentAt])
+  @@map("stickiness_email")
+}
+
+model ApiKey {
+  id             String       @id @default(cuid())
+  hash           String
+  createdById    String       @map("created_by_id")
+  clientId       String       @default(cuid()) @map("client_id")
+  organizationId String       @map("organization_id")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  lastUsed       DateTime     @default(now()) @map("last_used")
+  createdBy      User         @relation(fields: [createdById], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([createdById])
+  @@index([organizationId])
+  @@map("api_key")
+}
+
+model SchedulerJob {
+  id                    String             @id @default(cuid())
+  type                  SchedulerJobType
+  taskID                String
+  status                SchedulerJobStatus @default(pending)
+  executeAt             DateTime           @map("execute_at")
+  applicationVersionIDs String[]           @default([]) @map("application_version_ids")
+  runScheduleID         String?            @map("run_schedule_id")
+  runSchedule           RunSchedule?       @relation(fields: [runScheduleID], references: [id], onDelete: Cascade)
+  recursive             Boolean            @default(false)
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  @@index([status, executeAt])
+  @@map("scheduler_job")
+}
+
+model Folder {
+  id             String         @id @default(cuid())
+  name           String
+  parentID       String?        @map("parent_id")
+  organizationID String         @map("organization_id")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  crontab        String?
+  folderRunType  FolderRunType? @map("folder_run_type")
+  organization   Organization   @relation(fields: [organizationID], references: [id])
+  parent         Folder?        @relation("FolderHierarchy", fields: [parentID], references: [id], onDelete: Cascade)
+  children       Folder[]       @relation("FolderHierarchy")
+  runs           Run[]
+  tests          Test[]
+  testGroups     TestGroup[]
+  user           User?          @relation(fields: [userID], references: [id])
+  userID         String?
+  runSchedules   RunSchedule[]
+  watches        Watch[]
+  private        Boolean        @default(false)
+  ownerTeamSlug  String?        @map("owner_team_slug")
+  components     Component[]
+  accessibilityReports AccessibilityReport[]
+
+  @@index([organizationID])
+  @@index([parentID])
+  @@index([name])
+  @@index([name, organizationID])
+  @@index([organizationID, parentID])
+  @@map("folder")
+}
+
+model FolderCache {
+  id              String       @id @default(cuid())
+  organizationID  String       @unique @map("organization_id")
+  folderStructure Json         @map("folder_structure")
+  organization    Organization @relation(fields: [organizationID], references: [id])
+
+  @@index([organizationID])
+  @@map("folder_cache")
+}
+
+model Tag {
+  id             String           @id @default(cuid())
+  name           String
+  description    String
+  organizationID String           @map("organization_id")
+  organization   Organization     @relation(fields: [organizationID], references: [id], onDelete: Cascade)
+  applicationID  String?          @unique @map("application_id")
+  application    Application?     @relation(fields: [applicationID], references: [id], onDelete: Cascade)
+  TagInTestGroup TagInTestGroup[]
+  color          String?
+  runs           Run[]
+  runSchedules   RunSchedule[]
+  watches        Watch[]
+  accessibilityReports AccessibilityReport[]
+
+  @@unique([name, organizationID])
+  @@index([organizationID])
+  @@index([name])
+  @@map("tag")
+}
+
+model TagInTestGroup {
+  id             String       @id @default(cuid())
+  organizationID String       @map("organization_id")
+  tagID          String       @map("tag_id")
+  testGroupID    String       @map("test_group_id")
+  organization   Organization @relation(fields: [organizationID], references: [id], onDelete: Cascade)
+  tag            Tag          @relation(fields: [tagID], references: [id], onDelete: Cascade)
+  testGroup      TestGroup    @relation(fields: [testGroupID], references: [id], onDelete: Cascade)
+
+  @@unique([tagID, testGroupID])
+  @@index([tagID])
+  @@index([testGroupID])
+  @@map("tag_in_test_group")
+}
+
+model Team {
+  id             String         @id @default(cuid())
+  name           String
+  organizationID String         @map("organization_id")
+  organization   Organization   @relation(fields: [organizationID], references: [id])
+  users          UsersInTeams[]
+
+  @@index([organizationID])
+  @@map("team")
+}
+
+model UsersInTeams {
+  userID String @map("user_id")
+  teamID String @map("team_id")
+  team   Team   @relation(fields: [teamID], references: [id])
+  user   User   @relation(fields: [userID], references: [id])
+
+  @@id([userID, teamID])
+  @@index([userID])
+  @@index([teamID])
+  @@map("users_in_teams")
+}
+
+model Variable {
+  id             String       @id @default(cuid())
+  key            String
+  value          String
+  private        Boolean      @default(false)
+  ownerTeamSlug  String?      @map("owner_team_slug")
+  organizationID String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationID], references: [id])
+
+  @@unique([key, organizationID])
+  @@index([organizationID])
+  @@map("variable")
+}
+
+model Script {
+  id             String       @id @default(cuid())
+  name           String
+  type           ScriptType
+  script         String
+  parameters     Json? /// JSON array of parameter definitions: [{ name: string, defaultValue: string }]
+  organizationID String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationID], references: [id])
+
+  @@unique([name, type, organizationID])
+  @@index([organizationID])
+  @@map("script")
+}
+
+model Webhook {
+  id                String                    @id @default(cuid())
+  organizationID    String                    @map("organization_id")
+  name              String
+  description       String?
+  url               String
+  active            Boolean                   @default(true)
+  method            MethodRequest             @default(POST)
+  lastTriggeredAt   DateTime?                 @map("last_triggered_at")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+  organization      Organization              @relation(fields: [organizationID], references: [id])
+  WebhookDelivery   WebhookDelivery[]
+  /// [WebhookCustomRequest]
+  customRequest     Json?                     @map("custom_request")
+  notificationRules WebhookNotificationRule[]
+
+  @@index([organizationID])
+  @@map("webhook")
+}
+
+model WebhookNotificationRule {
+  id        String          @id @default(cuid())
+  webhookID String          @map("webhook_id")
+  condition   NotifyCondition
+  values      String[]
+  scopes      NotifyScope[]
+  resourceIDs String[]        @default([]) @map("resource_ids")
+  webhook     Webhook         @relation(fields: [webhookID], references: [id], onDelete: Cascade)
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@unique([webhookID, condition])
+  @@index([webhookID])
+  @@map("webhook_notification_rule")
+}
+
+enum NotifyCondition {
+  STATUS
+}
+
+enum NotifyScope {
+  TEST_LEVEL
+  FOLDER_LEVEL
+  TAG_LEVEL
+}
+
+model WebhookDelivery {
+  id             String       @id @default(cuid())
+  organizationID String       @map("organization_id")
+  webhookID      String       @map("webhook_id")
+  responseStatus Int          @map("response_status")
+  responseBody   Json         @map("response_body")
+  responseTime   Int          @map("response_time")
+  payload        Json         @map("payload")
+  result         String       @map("result")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  resourceID     String       @map("resource_id")
+  resourceType   String       @map("resource_type")
+  runID          String       @map("run_id")
+  organization   Organization @relation(fields: [organizationID], references: [id])
+  webhook        Webhook      @relation(fields: [webhookID], references: [id])
+
+  @@index([organizationID])
+  @@index([webhookID])
+  @@index([createdAt])
+  @@index([runID])
+  @@map("webhook_delivery")
+}
+
+model Notification {
+  id             String           @id @default(cuid())
+  title          String
+  userID         String           @map("user_id")
+  user           User             @relation(fields: [userID], references: [id], onDelete: Cascade)
+  organizationID String           @map("organization_id")
+  organization   Organization     @relation(fields: [organizationID], references: [id])
+  type           NotificationType @default(misc)
+  read           Boolean          @default(false)
+  /// [NotificationPayload]
+  payload        Json             @db.Json
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  @@index([organizationID])
+  @@index([type, createdAt])
+  @@map("notification")
+}
+
+enum NotificationType {
+  misc
+  issue
+  run_completed
+  run_failed
+  // Add more types as needed
+}
+
+model Integration {
+  id                String          @id @default(cuid())
+  organizationID    String          @map("organization_id")
+  type              IntegrationType
+  resourceType      ResourceType?   @map("resource_type")
+  resourceId        String?         @map("resource_id")
+  configuration     Json
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  organization      Organization    @relation(fields: [organizationID], references: [id], onDelete: Cascade)
+  isWebhookFallback Boolean         @default(false) @map("is_webhook_fallback")
+
+  @@index([organizationID])
+  @@index([organizationID, type])
+  @@index([resourceType, resourceId])
+  @@map("integration")
+}
+
+enum FolderRunType {
+  sequential
+  parallel
+
+  @@map("folder_run_type")
+}
+
+enum MethodRequest {
+  GET
+  POST
+}
+
+enum ApplicationType {
+  android
+  ios
+  web
+}
+
+enum LockStatus {
+  unlocked
+  locked
+  locking
+
+  @@map("lock_status")
+}
+
+enum Architecture {
+  web
+  android
+  ios
+}
+
+enum FileType {
+  image
+  document
+  other
+
+  @@map("file_type")
+}
+
+enum StepStatus {
+  passed
+  failed
+  pending
+  running
+  regenerating
+  skipped
+  stopped
+
+  @@map("step_status")
+}
+
+enum TestReviewStatus {
+  pending
+  completed
+  failed
+  skipped
+
+  @@map("test_review_status")
+}
+
+enum FaultType {
+  server
+  user
+  ambiguous
+
+  @@map("fault_type")
+}
+
+enum CommunciationChannel {
+  slack
+
+  @@map("communication_channel")
+}
+
+enum SchedulerJobType {
+  test
+  folder
+  tag
+
+  @@map("scheduler_job_type")
+}
+
+enum SchedulerJobStatus {
+  pending
+  running
+  completed
+  failed
+
+  @@map("scheduler_job_status")
+}
+
+enum ScheduleStatus {
+  stealeable
+  completed
+  running
+  cancelled
+  failed
+  queued
+}
+
+enum ScriptType {
+  curl
+  fetch
+
+  @@map("script_type")
+}
+
+enum VersionTag {
+  main
+  staging
+  other
+
+  @@map("version_tag")
+}
+
+enum IntegrationType {
+  SLACK
+  EXTRA_METADATA
+
+  @@map("integration_type")
+}
+
+enum ResourceType {
+  ORGANIZATION
+  FOLDER
+  TEST
+
+  @@map("resource_type")
+}
+
+model IdempotencyRequest {
+  id         String @id @default(cuid())
+  externalId String @unique @map("external_id")
+
+  requestPath   String @map("request_path")
+  requestMethod String @map("request_method")
+
+  status IdempotencyStatus @default(PROCESSING)
+
+  responseStatus Int?  @map("response_status")
+  responseBody   Json? @map("response_body")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@index([externalId])
+  @@index([expiresAt])
+  @@map("idempotency_request")
+}
+
+enum IdempotencyStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model VercelInstallation {
+  id                   String   @id @default(cuid())
+  vercelInstallationId String   @unique @map("vercel_installation_id")
+  vercelAccountId      String   @map("vercel_account_id")
+  vercelUserId         String   @map("vercel_user_id")
+  organizationId       String   @map("organization_id")
+  userId               String   @map("user_id")
+  status               String   @default("active")
+  usageCount           Int      @default(0)
+  usageLimit           Int      @default(500)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  billingPlanId        String?  @map("billing_plan_id")
+  accessToken          String?  @map("access_token")
+
+  billingPlan        VercelBillingPlan?        @relation(fields: [billingPlanId], references: [id])
+  organization       Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user               User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectConnections VercelProjectConnection[]
+  resources          VercelResource[]
+  billingPeriods     VercelBillingPeriod[]
+  invoices           VercelInvoice[]
+  VercelCheck        VercelCheck[]
+
+  @@map("vercel_installation")
+}
+
+model VercelResource {
+  id                   String   @id @default(cuid())
+  resourceId           String   @unique @map("resource_id")
+  vercelInstallationId String   @map("vercel_installation_id")
+  productId            String   @map("product_id")
+  name                 String
+  status               String   @default("ready")
+  billingPlanId        String?  @map("billing_plan_id")
+  metadata             Json?
+  externalId           String?  @map("external_id")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  installation   VercelInstallation    @relation(fields: [vercelInstallationId], references: [id], onDelete: Cascade)
+  billingPlan    VercelBillingPlan?    @relation(fields: [billingPlanId], references: [id])
+  billingPeriods VercelBillingPeriod[]
+
+  @@index([vercelInstallationId])
+  @@index([externalId])
+  @@map("vercel_resource")
+}
+
+model VercelBillingPlan {
+  id                     String   @id @default(cuid())
+  name                   String   @unique
+  type                   String   @default("subscription")
+  description            String
+  scope                  String   @default("installation")
+  cost                   String
+  initialCharge          String   @default("0") @map("initial_charge")
+  preauthorizationAmount Decimal? @map("preauthorization_amount") @db.Decimal(10, 2)
+  amountOfRuns           Int      @default(0) @map("amount_of_runs")
+  paymentMethodRequired  Boolean  @default(true) @map("payment_method_required")
+  details                Json
+  isDefault              Boolean  @default(false) @map("is_default")
+  level                  Int?
+  maxBillingCycles       Int?     @map("max_billing_cycles")
+  billingCycleDays       Int      @default(30) @map("billing_cycle_days")
+
+  installations  VercelInstallation[]
+  resources      VercelResource[]
+  billingPeriods VercelBillingPeriod[]
+
+  @@map("vercel_billing_plan")
+}
+
+model VercelProjectConnection {
+  id                   String   @id @default(cuid())
+  vercelProjectId      String   @unique @map("vercel_project_id")
+  vercelInstallationId String   @map("vercel_installation_id")
+  vercelProjectName    String   @map("vercel_project_name")
+  applicationId        String   @map("application_id")
+  resourceId           String   @map("resource_id")
+  connectedAt          DateTime @default(now()) @map("connected_at")
+
+  installation   VercelInstallation    @relation(fields: [vercelInstallationId], references: [id], onDelete: Cascade)
+  application    Application           @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  targetMappings VercelTargetMapping[]
+  deployments    VercelDeployment[]
+  VercelCheck    VercelCheck[]
+
+  @@index([vercelInstallationId])
+  @@index([applicationId])
+  @@map("vercel_project_connection")
+}
+
+model VercelTargetMapping {
+  id                  String @id @default(cuid())
+  projectConnectionId String @map("project_connection_id")
+  targetName          String @map("target_name")
+  versionId           String @map("version_id")
+
+  projectConnection VercelProjectConnection @relation(fields: [projectConnectionId], references: [id], onDelete: Cascade)
+  version           ApplicationVersion      @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  deployments       VercelDeployment[]
+  checkTargets      VercelCheckTarget[]
+
+  @@unique([projectConnectionId, targetName])
+  @@index([versionId])
+  @@map("vercel_target_mapping")
+}
+
+model VercelDeployment {
+  id                  String  @id @default(cuid())
+  deploymentId        String  @unique @map("deployment_id")
+  checkId             String? @map("check_id")
+  checkRunId          String? @map("check_run_id")
+  runId               String  @map("run_id")
+  projectConnectionId String  @map("project_connection_id")
+  targetMappingId     String  @map("target_mapping_id")
+  vercelTeamId        String? @map("vercel_team_id")
+  url                 String  @map("url")
+
+  projectConnection VercelProjectConnection @relation(fields: [projectConnectionId], references: [id], onDelete: Cascade)
+  targetMapping     VercelTargetMapping     @relation(fields: [targetMappingId], references: [id], onDelete: Cascade)
+
+  @@map("vercel_deployment")
+}
+
+model VercelBillingPeriod {
+  id             String   @id @default(cuid())
+  installationId String?  @map("installation_id")
+  resourceId     String?  @map("resource_id")
+  planId         String   @map("plan_id")
+  cycleNumber    Int      @default(1) @map("cycle_number")
+  startDate      DateTime @default(now()) @map("start_date")
+  endDate        DateTime @map("end_date")
+  status         String   @default("active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  installation VercelInstallation? @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  resource     VercelResource?     @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  plan         VercelBillingPlan   @relation(fields: [planId], references: [id])
+  invoices     VercelInvoice[]
+
+  @@index([installationId, status])
+  @@index([resourceId, status])
+  @@index([endDate])
+  @@map("vercel_billing_period")
+}
+
+model VercelInvoice {
+  id              String    @id @default(cuid())
+  vercelInvoiceId String    @unique @map("vercel_invoice_id")
+  billingPeriodId String    @map("billing_period_id")
+  installationId  String    @map("installation_id")
+  amount          String
+  status          String    @default("pending")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  paidAt          DateTime? @map("paid_at")
+
+  billingPeriod VercelBillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  installation  VercelInstallation  @relation(fields: [installationId], references: [id], onDelete: Cascade)
+
+  @@index([billingPeriodId])
+  @@index([installationId])
+  @@index([vercelInvoiceId])
+  @@index([status])
+  @@map("vercel_invoice")
+}
+
+model VercelSSOLink {
+  id              String       @id @default(cuid())
+  organizationId  String       @map("organization_id")
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vercelTeamId    String       @map("vercel_team_id")
+  vercelTeamName  String?      @map("vercel_team_name")
+  configurationId String       @map("configuration_id")
+  linkedByUserId  String       @map("linked_by_user_id")
+  linkedByUser    User         @relation(fields: [linkedByUserId], references: [id])
+  linkedAt        DateTime     @default(now()) @map("linked_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  @@unique([organizationId, vercelTeamId])
+  @@index([vercelTeamId])
+  @@index([configurationId])
+  @@map("vercel_sso_link")
+}
+
+model VercelCheck {
+  id                  String   @id @default(cuid())
+  vercelCheckId       String   @unique @map("vercel_check_id")
+  projectConnectionId String   @map("project_connection_id")
+  installationId      String   @map("installation_id")
+  name                String
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  projectConnection VercelProjectConnection @relation(fields: [projectConnectionId], references: [id], onDelete: Cascade)
+  installation      VercelInstallation      @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  targets           VercelCheckTarget[]
+
+  @@index([installationId])
+  @@index([projectConnectionId])
+  @@map("vercel_check")
+}
+
+model VercelCheckTarget {
+  id              String   @id @default(cuid())
+  checkId         String   @map("check_id")
+  targetMappingId String   @map("target_mapping_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  check         VercelCheck         @relation(fields: [checkId], references: [id], onDelete: Cascade)
+  targetMapping VercelTargetMapping @relation(fields: [targetMappingId], references: [id], onDelete: Cascade)
+
+  @@unique([checkId, targetMappingId])
+  @@index([checkId])
+  @@index([targetMappingId])
+  @@map("vercel_check_target")
+}
+
+enum AnnouncementType {
+  BANNER
+  CARD
+
+  @@map("announcement_type")
+}
+
+enum AnnouncementBannerType {
+  INFO
+  ALERT
+  ERROR
+
+  @@map("announcement_banner_type")
+}
+
+enum StickinessEmailType {
+  no_tests
+  has_drafts
+  saved_not_run
+  low_quota
+  first_run
+
+  @@map("stickiness_email_type")
+}
+
+model Announcement {
+  id         String                  @id @default(cuid())
+  title      String?
+  subtitle   String?
+  imageUrl   String?                 @map("image_url")
+  text       String?
+  cta        String?
+  ctaUrl     String?                 @map("cta_url")
+  bannerType AnnouncementBannerType? @map("banner_type")
+  enabled    Boolean                 @default(true)
+  type       AnnouncementType        @default(CARD)
+  createdAt  DateTime                @default(now()) @map("created_at")
+  updatedAt  DateTime                @updatedAt @map("updated_at")
+
+  @@index([enabled])
+  @@map("announcement")
+}
+
+model TestReview {
+  id    String @id @default(cuid())
+  runId String @unique @map("run_id")
+  run   Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  faultType  FaultType @map("fault_type")
+  confidence Float
+  actionable Boolean? // Si el summary es actionable
+
+  classification Json @db.Json
+  summary        Json @db.Json
+
+  // Metadata
+  reviewedAt DateTime         @default(now()) @map("reviewed_at")
+  reviewedBy String           @map("reviewed_by")
+  status     TestReviewStatus @default(completed)
+  error      String?
+  createdAt  DateTime         @default(now()) @map("created_at")
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  @@index([runId])
+  @@index([reviewedAt])
+  @@index([status])
+  @@index([faultType])
+  @@map("test_review")
+}
+
+model AiUsage {
+  id             String       @id @default(cuid())
+  runId          String       @map("run_id")
+  organizationId String       @map("organization_id")
+  architecture   Architecture
+  createdAt      DateTime     @default(now()) @map("created_at")
+  modelId        String       @map("model_id")
+  provider       String
+  modelName      String       @map("model_name")
+  inputTokens    Int          @map("input_tokens")
+  outputTokens   Int          @map("output_tokens")
+  cost           Decimal      @db.Decimal(10, 6)
+  /// [AiUsageDetails]
+  details        Json?
+
+  run          Run          @relation(fields: [runId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([organizationId])
+  @@index([architecture])
+  @@index([createdAt])
+  @@index([modelId])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("ai_usage")
+}
+
+model QuaraConversation {
+  id             String       @id @default(cuid())
+  conversationId String       @unique @map("conversation_id")
+  organizationID String       @map("organization_id")
+  userID         String       @map("user_id")
+
+  prompt         String
+  architecture   Architecture
+  target         String
+
+  /// [QuaraConversationMessages]
+  messages        Json     @default("[]") @db.Json
+  /// [QuaraConversationSteps]
+  steps           Json     @default("[]") @db.Json
+  /// [QuaraConversationStepExecutions]
+  stepExecutions  Json     @default("[]") @map("step_executions") @db.Json
+  /// [QuaraConversationExecutionResult]
+  executionResult Json?    @map("execution_result") @db.Json
+
+  status String @default("started")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(0)
+
+  @@index([organizationID])
+  @@index([userID])
+  @@index([conversationId])
+  @@map("quara_conversation")
+}

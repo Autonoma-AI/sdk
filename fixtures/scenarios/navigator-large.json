@@ -1,0 +1,121 @@
+{
+  "name": "large",
+  "description": "High-volume org for pagination and performance: 8 apps, 40 folders, 120 tests, 500 runs",
+  "entities": {
+    "Organization": {
+      "count": 1,
+      "fields": {
+        "name": "Enterprise Scale Corp [{{testRunId}}]"
+      }
+    },
+    "User": {
+      "count": 8,
+      "fields": {
+        "name": "User {{index1}}",
+        "email": "user-{{index1}}-{{testRunId}}@enterprise-scale.com",
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "Application": {
+      "count": 8,
+      "fields": {
+        "name": "App {{index1}} [{{testRunId}}]",
+        "applicationType": "{{cycle(['web','web','web','android','android','android','ios','ios'])}}",
+        "organizationId": "{{refs.Organization[0].id}}",
+        "applicationMetadata": {}
+      }
+    },
+
+    "ApplicationVersion": {
+      "count": 24,
+      "fields": {
+        "name": "v{{index1}}.0",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "applicationID": "{{refs.Application[0].id}}",
+        "path": "https://app-{{index}}.example.com",
+        "tag": "{{cycle(['main','staging','other'])}}"
+      }
+    },
+
+    "Folder": {
+      "count": 40,
+      "fields": {
+        "name": "Folder {{index1}} [{{testRunId}}]",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "folderRunType": "{{cycle(['parallel','sequential'])}}"
+      }
+    },
+
+    "Tag": {
+      "count": 12,
+      "fields": {
+        "name": "{{cycle(['P0','P1','P2','P3','staging','production','payments','auth','search','onboarding','mobile','accessibility'])}} [{{testRunId}}]",
+        "description": "Tag {{index1}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "color": "{{cycle(['#DC2626','#F97316','#3B82F6','#10B981','#6366F1','#EC4899','#F59E0B','#8B5CF6','#06B6D4','#84CC16','#14B8A6','#A855F7'])}}"
+      }
+    },
+
+    "TestGroup": {
+      "count": 120,
+      "batch": true,
+      "fields": {
+        "name": "Test Group {{index1}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "architecture": "{{cycle(['web','web','web','web','web','android','android','android','android','ios','ios','ios'])}}"
+      }
+    },
+
+    "Script": {
+      "count": 8,
+      "fields": {
+        "name": "Script {{index1}}",
+        "type": "{{cycle(['curl','fetch'])}}",
+        "script": "echo script-{{index1}}",
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "Variable": {
+      "count": 15,
+      "fields": {
+        "key": "VAR_{{index1}}",
+        "value": "value-{{index1}}",
+        "private": false,
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "ApiKey": {
+      "count": 6,
+      "fields": {
+        "hash": "hash_{{index}}_{{testRunId}}",
+        "createdById": "{{refs.User[0].id}}",
+        "organizationId": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "Webhook": {
+      "count": 5,
+      "fields": {
+        "name": "Webhook {{index1}}",
+        "url": "https://hooks.example.com/wh-{{index1}}",
+        "active": true,
+        "organizationID": "{{refs.Organization[0].id}}"
+      }
+    },
+
+    "Notification": {
+      "count": 50,
+      "batch": true,
+      "fields": {
+        "title": "Notification {{index1}}",
+        "userID": "{{refs.User[0].id}}",
+        "organizationID": "{{refs.Organization[0].id}}",
+        "type": "{{cycle(['run_completed','run_failed','misc'])}}",
+        "payload": {}
+      }
+    }
+  }
+}

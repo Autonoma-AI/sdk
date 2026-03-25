@@ -1,0 +1,68 @@
+{
+  "name": "quarita-standard",
+  "description": "Org with admin, web app, test plan, test generation with steps, a test with runs",
+  "create": {
+    "Organization": [{
+      "name": "Acme Testing [{{testRunId}}]",
+      "slug": "acme-{{testRunId}}",
+
+      "members": [{
+        "role": "owner",
+        "users": [{
+          "name": "QA Admin",
+          "email": "admin-{{testRunId}}@acme.dev"
+        }]
+      }],
+
+      "applications": [{
+        "_alias": "webApp",
+        "name": "Marketing Website",
+        "architecture": "WEB",
+
+        "webApplicationData": [{
+          "url": "https://www.acme-marketing.com"
+        }],
+
+        "testPlans": [{
+          "name": "Smoke Tests",
+          "plan": "Basic smoke test coverage for the marketing site",
+
+          "testGenerations": [{
+            "_alias": "gen1",
+            "status": "success",
+            "conversation": "[]",
+
+            "generationSteps": [
+              { "order": 1, "interaction": "click", "params": {}, "output": {} },
+              { "order": 2, "interaction": "assert", "params": {}, "output": {} },
+              { "order": 3, "interaction": "click", "params": {}, "output": {} }
+            ]
+          }]
+        }],
+
+        "tests": [{
+          "name": "Homepage Load and Navigation",
+          "testGenerationId": { "_ref": "gen1" },
+
+          "steps": [
+            { "interaction": "click", "params": {}, "order": 1 },
+            { "interaction": "assert", "params": {}, "order": 2 },
+            { "interaction": "scroll", "params": {}, "order": 3 }
+          ],
+
+          "runs": [
+            {},
+            {},
+            {}
+          ]
+        }]
+      }],
+
+      "tags": [
+        { "name": "P0 - Critical", "color": "#DC2626" },
+        { "name": "P1 - High", "color": "#F97316" },
+        { "name": "Flaky", "color": "#EAB308" }
+      ]
+    }]
+  }
+}
