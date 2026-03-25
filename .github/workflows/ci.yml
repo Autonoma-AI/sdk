@@ -66,4 +66,4 @@ jobs:
         run: npx vitest run tests/integration/quarita/scenarios.test.ts tests/integration/quarita/nested.test.ts --testTimeout 120000
 
       - name: Run integration tests (navigator)
-        run: npx vitest run tests/integration/navigator/e2e.ts --testTimeout 120000
+        run: npx vitest run tests/integration/navigator/e2e.test.ts --testTimeout 120000
