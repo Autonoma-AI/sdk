@@ -57,6 +57,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
+      - name: Generate Prisma clients for integration tests
+        run: |
+          npx prisma generate --schema tests/integration/quarita/prisma/schema.prisma
+          npx prisma generate --schema tests/integration/navigator/prisma/schema.prisma
+
       - name: Run integration tests (quarita)
         run: npx vitest run tests/integration/quarita/scenarios.test.ts tests/integration/quarita/nested.test.ts --testTimeout 120000
 
