@@ -19,6 +19,9 @@
     "autonoma": "./dist/cli.js"
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
