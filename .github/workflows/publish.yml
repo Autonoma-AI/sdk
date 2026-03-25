@@ -35,6 +35,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Wait for registry propagation
+        run: sleep 10
+
       - name: Publish remaining packages
         run: pnpm -r --filter '!@autonoma-ai/sdk' publish --access public --no-git-checks
         env:
