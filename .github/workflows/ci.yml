@@ -24,6 +24,12 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      - uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/turbo
+          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: turbo-${{ runner.os }}-
+
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
@@ -42,11 +48,17 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      - uses: actions/cache@v4
+        with:
+          path: node_modules/.cache/turbo
+          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: turbo-${{ runner.os }}-
+
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
       - name: Run integration tests (quarita)
-        run: npx vitest run tests/integration/quarita/scenarios.test.ts tests/integration/quarita/nested.test.ts --timeout 120000
+        run: npx vitest run tests/integration/quarita/scenarios.test.ts tests/integration/quarita/nested.test.ts --testTimeout 120000
 
       - name: Run integration tests (navigator)
-        run: npx vitest run tests/integration/navigator/e2e.ts --timeout 120000
+        run: npx vitest run tests/integration/navigator/e2e.ts --testTimeout 120000
