@@ -30,6 +30,12 @@ jobs:
 
       - run: pnpm build
 
-      - run: pnpm -r publish --access public --no-git-checks
+      - name: Publish @autonoma-ai/sdk
+        run: pnpm --filter @autonoma-ai/sdk publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish remaining packages
+        run: pnpm -r --filter '!@autonoma-ai/sdk' publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
