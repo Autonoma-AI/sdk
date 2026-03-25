@@ -129,17 +129,17 @@ const result = await checkScenario(adapter, scenario)
 
 ## Documentation
 
-Full documentation: [`docs/web-docs/llms/`](docs/web-docs/llms/)
+Full documentation: [`docs/`](docs/)
 
 | Page | What it covers |
 |------|---------------|
-| [Overview](docs/web-docs/llms/overview.txt) | What the Environment Factory is, scope field, secrets |
-| [Setup Guide](docs/web-docs/llms/setup.txt) | Install, configure, auth callback, verify, deploy |
-| [Scenarios](docs/web-docs/llms/scenarios.txt) | Nested format, nesting, templates, aliases, batch, examples |
-| [Validation](docs/web-docs/llms/validation.txt) | checkScenario, error types, testcontainers, fix loop |
-| [Adapters](docs/web-docs/llms/adapters.txt) | ORM/Server/Auth adapter interfaces for building new adapters |
-| [Agent Prompt](docs/web-docs/llms/agent-prompt.txt) | Complete prompt for an AI agent to set up the SDK in a codebase |
-| [All pages](docs/web-docs/llms/llms-full.txt) | Everything in one file |
+| [Overview](docs/overview.txt) | What the Environment Factory is, scope field, secrets |
+| [Setup Guide](docs/setup.txt) | Install, configure, auth callback, verify, deploy |
+| [Scenarios](docs/scenarios.txt) | Nested format, nesting, templates, aliases, batch, examples |
+| [Validation](docs/validation.txt) | checkScenario, error types, testcontainers, fix loop |
+| [Adapters](docs/adapters.txt) | ORM/Server/Auth adapter interfaces for building new adapters |
+| [Agent Prompt](docs/agent-prompt.txt) | Complete prompt for an AI agent to set up the SDK in a codebase |
+| [All pages](docs/llms-full.txt) | Everything in one file |
 
 ## Development
 
