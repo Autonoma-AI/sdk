@@ -86,4 +86,4 @@ Graph algorithms detect cycles via Kahn's algorithm (remaining nodes) + Tarjan's
 - Fixtures (DMMF mock, sample scenarios) live in `fixtures/` at repo root
 - Integration tests use testcontainers (Postgres) and live in `tests/integration/`
 - Protocol test suites are declarative JSON files in `tests/protocol/suites/`
-- Full architecture guide at `docs/architecture.md`, LLM skill doc at `docs/skill-scenario-generation.md`
+- Full documentation at `docs/` — index at `docs/llms.txt`, all-in-one at `docs/llms-full.txt`
