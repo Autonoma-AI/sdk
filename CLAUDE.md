@@ -74,6 +74,24 @@ Every response (discover/up/down) includes:
 }
 ```
 
+## Multi-Language Rules
+
+This SDK exists in three languages: **TypeScript**, **Python**, and **Elixir**. They are independent implementations that must behave identically, verified by the shared conformance suite.
+
+### Adding features or fixing bugs
+
+- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all three languages**.
+- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all three pass: `cd conformance && npx tsx run.ts`.
+- Run each language's own unit tests after changes.
+
+### Breaking changes and versioning
+
+- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all three handlers:
+  - TypeScript: `sdks/typescript/packages/sdk/src/handler.ts` → `PROTOCOL_VERSION`
+  - Python: `sdks/python/src/autonoma/handler.py` → `PROTOCOL_VERSION`
+  - Elixir: `sdks/elixir/lib/autonoma/handler.ex` → `@protocol_version`
+- Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
+
 ## Key Conventions
 
 - TypeScript: ESM-only, `verbatimModuleSyntax`, no `.js` extensions in imports
