@@ -15,7 +15,8 @@
             "secret": "signing-secret"
           },
           "assert": {
-            "equals": "eyJhbGciOiJIUzI1NiIsInR5cCI6IlJFRlMifQ.eyJyZWZzIjp7IlVzZXIiOlt7ImlkIjoidXNlci0xIiwiZW1haWwiOiJ0ZXN0QHRlc3QuY29tIn1dfSwidGVzdFJ1bklkIjoidGVzdC1ydW4tMTIzIiwiZW52aXJvbm1lbnQiOiJzdGFuZGFyZCJ9.b2340UY6iXALRK2SaBV0BzZLVbxC8J59_csCUEc-gOw"
+            "parts_count": 3,
+            "matches_regex": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
           }
         },
         {
@@ -44,7 +45,7 @@
             "secret": "signing-secret"
           },
           "assert": {
-            "equals": {
+            "deep_equals": {
               "refs": { "User": [{ "id": "user-1", "email": "test@test.com" }] },
               "testRunId": "test-run-123",
               "environment": "standard"

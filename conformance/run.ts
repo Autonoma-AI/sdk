@@ -50,12 +50,32 @@ function callBridge(bridge: BridgeConfig, input: Record<string, unknown>): { ok:
   }
 }
 
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    return a.every((v, i) => deepEqual(v, b[i]))
+  }
+  const keysA = Object.keys(a as Record<string, unknown>).sort()
+  const keysB = Object.keys(b as Record<string, unknown>).sort()
+  if (keysA.length !== keysB.length || keysA.some((k, i) => k !== keysB[i])) return false
+  return keysA.every(k => deepEqual((a as any)[k], (b as any)[k]))
+}
+
 function checkAssert(assert: Record<string, unknown>, result: unknown, result2?: unknown): string[] {
   const errors: string[] = []
 
   if ('equals' in assert) {
     if (JSON.stringify(result) !== JSON.stringify(assert.equals)) {
       errors.push(`Expected ${JSON.stringify(assert.equals)}, got ${JSON.stringify(result)}`)
+    }
+  }
+
+  if ('deep_equals' in assert) {
+    if (!deepEqual(result, assert.deep_equals)) {
+      errors.push(`Expected ${JSON.stringify(assert.deep_equals)}, got ${JSON.stringify(result)}`)
     }
   }
 
