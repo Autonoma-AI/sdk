@@ -26,7 +26,8 @@ defmodule Autonoma.MixProject do
       {:jason, "~> 1.4"},
       {:plug, "~> 1.14", optional: true},
       {:ecto, "~> 3.10", optional: true},
-      {:ecto_sql, "~> 3.10", optional: true}
+      {:ecto_sql, "~> 3.10", optional: true},
+      {:ecto_sqlite3, "~> 0.17", only: :test}
     ]
   end
 end

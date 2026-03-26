@@ -38,3 +38,5 @@ deps/
 __pycache__/
 *.pyc
 *.egg-info/
+.venv/
+*.egg

@@ -38,7 +38,9 @@ mix deps.get && mix test
 ### Python
 ```bash
 cd sdks/python
-pip install -e ".[dev]" && pytest
+poetry install --all-extras && poetry run pytest   # full install + test
+poetry run pytest tests/test_sqlalchemy_adapter.py  # single test file
+poetry run pytest -k "sqlalchemy"                   # tests matching pattern
 ```
 
 ### Conformance (all languages)
@@ -63,6 +65,14 @@ All language SDKs implement the same protocol with the same core modules:
 - **fingerprint** — deterministic sha256-based hash of scenario definitions
 - **ORM adapter** — implements getSchema(), createEntities(), teardown() for a specific ORM
 - **Server adapter** — converts framework-specific request/response to internal types
+
+### Available Adapters
+
+| Language | ORM Adapters | Server Adapters |
+|----------|-------------|-----------------|
+| TypeScript | Prisma, Drizzle | Express, Web (Next/Hono/Deno), Node HTTP |
+| Python | SQLAlchemy, Django | FastAPI, Flask, Django |
+| Elixir | Ecto | Plug (Phoenix) |
 
 ### Protocol Versioning
 
@@ -96,6 +106,6 @@ This SDK exists in three languages: **TypeScript**, **Python**, and **Elixir**. 
 
 - TypeScript: ESM-only, `verbatimModuleSyntax`, no `.js` extensions in imports
 - Elixir: standard mix project conventions
-- Python: src layout, pyproject.toml
+- Python: src layout, Poetry (pyproject.toml), extras for adapters (`autonoma-sdk[sqlalchemy]`, `autonoma-sdk[fastapi]`, etc.)
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites
 - Protocol responses include `version` and `sdk` metadata for traceability

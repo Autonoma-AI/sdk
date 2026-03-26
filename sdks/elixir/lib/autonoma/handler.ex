@@ -8,7 +8,7 @@ defmodule Autonoma.Handler do
   @protocol_version "1.0"
 
   defp build_sdk_meta(config) do
-    adapter_name = if is_map(config.adapter) && Map.has_key?(config.adapter, :name), do: config.adapter.name, else: "unknown"
+    adapter_name = get_adapter_name(config.adapter)
     server_name = Map.get(config, :sdk_server, "unknown")
     %{
       "version" => @protocol_version,
@@ -19,6 +19,10 @@ defmodule Autonoma.Handler do
       }
     }
   end
+
+  defp get_adapter_name(%Autonoma.Ecto.Adapter{}), do: "ecto"
+  defp get_adapter_name(%{name: name}), do: name
+  defp get_adapter_name(_), do: "unknown"
 
   def handle(config, req) do
     try do
@@ -64,7 +68,7 @@ defmodule Autonoma.Handler do
   end
 
   defp handle_discover(config) do
-    schema = config.adapter.get_schema()
+    {schema, _adapter} = adapter_get_schema(config.adapter)
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"schema" => schema})}
   end
 
@@ -73,12 +77,9 @@ defmodule Autonoma.Handler do
     unless create, do: raise(Error.invalid_body("missing \"create\" in request body"))
 
     test_run_id = Map.get(body, "testRunId", generate_uuid())
-    schema = config.adapter.get_schema()
 
-    # Create entities via adapter
-    spec = %{}
     context = %{"testRunId" => test_run_id, "refs" => %{}}
-    {:ok, refs} = config.adapter.create_entities(spec, context)
+    {:ok, refs} = adapter_create_entities(config.adapter, create, context)
 
     refs_token =
       Refs.sign(
@@ -107,9 +108,49 @@ defmodule Autonoma.Handler do
         e -> raise Error.invalid_refs_token(Exception.message(e))
       end
 
-    config.adapter.teardown(payload["testRunId"], payload["refs"])
+    adapter_teardown(config.adapter, payload["testRunId"], payload["refs"])
 
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"ok" => true})}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Adapter dispatch — supports Ecto.Adapter structs and plain maps/modules
+  # ---------------------------------------------------------------------------
+
+  defp adapter_get_schema(%Autonoma.Ecto.Adapter{} = adapter) do
+    Autonoma.Ecto.Adapter.get_schema(adapter)
+  end
+
+  defp adapter_get_schema(%{get_schema: fun}) when is_function(fun, 0) do
+    {fun.(), nil}
+  end
+
+  defp adapter_get_schema(adapter) when is_atom(adapter) do
+    {adapter.get_schema(), nil}
+  end
+
+  defp adapter_create_entities(%Autonoma.Ecto.Adapter{} = adapter, spec, context) do
+    Autonoma.Ecto.Adapter.create_entities(adapter, spec, context)
+  end
+
+  defp adapter_create_entities(%{create_entities: fun}, spec, context) when is_function(fun, 2) do
+    fun.(spec, context)
+  end
+
+  defp adapter_create_entities(adapter, spec, context) when is_atom(adapter) do
+    adapter.create_entities(spec, context)
+  end
+
+  defp adapter_teardown(%Autonoma.Ecto.Adapter{} = adapter, scope_value, refs) do
+    Autonoma.Ecto.Adapter.teardown(adapter, scope_value, refs)
+  end
+
+  defp adapter_teardown(%{teardown: fun}, scope_value, refs) when is_function(fun, 2) do
+    fun.(scope_value, refs)
+  end
+
+  defp adapter_teardown(adapter, scope_value, refs) when is_atom(adapter) do
+    adapter.teardown(scope_value, refs)
   end
 
   defp generate_uuid do
