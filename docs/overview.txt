@@ -4,126 +4,94 @@
 
 Every E2E test needs data. A test for "user adds item to cart" needs a user, products, and a cart. A test for "admin views analytics" needs an organization with users, runs, and history.
 
-Tests can't share data — if one test deletes a product, another test that expects 10 products will fail. When tests run in parallel, this gets worse.
+Tests can't share data -- if one test deletes a product, another test that expects 10 products will fail. When tests run in parallel, this gets worse.
 
 The Environment Factory solves this. It's a single POST endpoint in your backend that the Autonoma platform calls to:
 
-1. **Create** fresh, isolated data before each test run
-2. **Tear down** that data after the test finishes
+1. Create fresh, isolated data before each test run
+2. Tear down that data after the test finishes
 
 Each test run gets its own organization, users, and data. No interference between tests.
 
 ## What the SDK does
 
-The SDK is a set of npm packages that you install in your backend. Together they implement the entire Environment Factory endpoint. You configure it with your database connection, a scope field, two secrets, and an auth callback.
+The Autonoma SDK is a set of packages that you install in your backend. Together they implement the entire Environment Factory endpoint. You configure it with your database connection, a scope field, two secrets, and an auth callback.
 
 The SDK handles everything:
 - Reading your database schema (models, fields, relationships)
 - Creating records in the correct FK order automatically
 - Resolving template expressions in field values (unique emails, distributed enums)
-- Bulk-inserting large datasets efficiently via `createMany`
+- Bulk-inserting large datasets efficiently
 - Tearing down all created data without leaving orphans
 - Verifying incoming request signatures (HMAC-SHA256)
-- Signing teardown tokens (JWT) so nobody can tamper with them
+- Signing teardown tokens so nobody can tamper with them
 - Blocking the endpoint in production by default
 
-You write ~15 lines. The SDK does the rest.
+You write minimal configuration code. The SDK does the rest.
+
+SDKs are available for TypeScript, Python, and Elixir. Each language provides a core protocol library, ORM adapters (for your database layer), and server/framework adapters (for your HTTP framework). You install one of each.
 
 ## The three actions
 
-The endpoint handles three actions via `POST`:
+The endpoint handles three actions via POST:
 
-**`discover`** — The platform asks "what does your database look like?" The SDK reads your ORM schema and returns the models, fields, and relationships. The platform uses this to generate valid scenario data.
+discover -- The platform asks "what does your database look like?" The SDK reads your ORM schema and returns the models, fields, and relationships. The platform uses this to generate valid scenario data.
 
-**`up`** — The platform sends scenario data (a nested tree describing what records to create). The SDK creates them in the correct FK order, resolves templates, and returns auth credentials so the test runner can log in. It also returns a signed token for teardown.
+up -- The platform sends scenario data (a nested tree describing what records to create). The SDK creates them in the correct FK order, resolves templates, and returns auth credentials so the test runner can log in. It also returns a signed token for teardown.
 
-**`down`** — The platform sends the signed token back. The SDK verifies it and deletes everything that was created — in the correct order, without FK constraint violations.
+down -- The platform sends the signed token back. The SDK verifies it and deletes everything that was created -- in the correct order, without FK constraint violations.
 
 ## What you provide
 
-| Config | What it is | Example |
-|--------|-----------|---------|
-| `adapter` | Your ORM adapter with a scope field | `prismaAdapter(prisma, { scopeField: 'organizationId' })` |
-| `sharedSecret` | A secret shared between you and Autonoma — verifies incoming requests | `process.env.AUTONOMA_SHARED_SECRET` |
-| `signingSecret` | A secret only you know — signs the teardown token so nobody can tamper with it | `process.env.AUTONOMA_SIGNING_SECRET` |
-| `auth` | A callback that creates real login credentials for test users | See auth section in setup guide |
+adapter       Your ORM adapter configured with a scope field.
+sharedSecret  A secret shared between you and Autonoma -- verifies incoming requests.
+signingSecret A secret only you know -- signs the teardown token so nobody can tamper with it.
+auth          A callback that creates real login credentials for test users.
 
 ## The scope field
 
-Most multi-tenant apps have a foreign key like `organizationId` on every model. This is the "scope field" — it's how the SDK isolates test data.
+Most multi-tenant apps have a foreign key like organizationId on every model. This is the "scope field" -- it's how the SDK isolates test data.
 
-**During creation**: child records get the organization's ID automatically via nesting. You never set it manually — the SDK reads the FK graph and injects it.
+During creation: child records get the organization's ID automatically via nesting. You never set it manually -- the SDK reads the FK graph and injects it.
 
-**During teardown**: the SDK deletes everything where `organizationId = <the test org's ID>`, in reverse FK order to avoid constraint violations.
+During teardown: the SDK deletes everything where the scope field equals the test organization's ID, in reverse FK order to avoid constraint violations.
 
-**Example**: if your Prisma schema looks like this:
-
-```prisma
-model Organization {
-  id    String @id @default(cuid())
-  name  String
-  users User[]
-  apps  Application[]
-}
-
-model User {
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-}
-
-model Application {
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-}
-```
-
-Then `organizationId` is your scope field. The SDK will:
+Example: if your database has Organization, User, and Application models, and both User and Application have an organizationId column pointing to Organization, then organizationId is your scope field. The SDK will:
 1. Create the Organization first
-2. Create Users and Applications with `organizationId` set to the Organization's ID
+2. Create Users and Applications with organizationId set to the Organization's ID
 3. On teardown, delete Applications, then Users, then the Organization
 
-If your app isn't multi-tenant, you'll need a dedicated field (like `testRunId`) on every model.
+If your app isn't multi-tenant, you'll need a dedicated field (like testRunId) on every model.
 
-**Limitation**: The scope field must be a single column. Compound scope keys (e.g., `organizationId` + `countryId`) are not supported. If your app scopes by multiple fields, use a single root entity with its own ID that child models reference.
+Limitation: The scope field must be a single column. Compound scope keys (e.g., organizationId + countryId) are not supported. If your app scopes by multiple fields, use a single root entity with its own ID that child models reference.
 
 ## The two secrets
 
-You need two **different** secrets. The SDK will throw an error if they are the same.
+You need two different secrets. The SDK will throw an error if they are the same.
 
-**Shared secret** (`AUTONOMA_SHARED_SECRET`): Both you and Autonoma know this. Autonoma signs every request with HMAC-SHA256; your endpoint verifies the signature. This prevents unauthorized calls to your endpoint.
+Shared secret (AUTONOMA_SHARED_SECRET): Both you and Autonoma know this. Autonoma signs every request with HMAC-SHA256; your endpoint verifies the signature. This prevents unauthorized calls to your endpoint.
 
-**Signing secret** (`AUTONOMA_SIGNING_SECRET`): Only you know this. During `up`, the SDK signs a JWT containing the IDs of all created records. During `down`, it verifies the JWT before deleting. Even Autonoma can't forge or modify this token — they just store it and pass it back.
+Signing secret (AUTONOMA_SIGNING_SECRET): Only you know this. During up, the SDK signs a token containing the IDs of all created records. During down, it verifies the token before deleting. Even Autonoma can't forge or modify this token -- they just store it and pass it back.
 
-Generate both with **different** values:
+Generate both with different values:
 
-```bash
-openssl rand -hex 32   # → use as AUTONOMA_SHARED_SECRET
-openssl rand -hex 32   # → use as AUTONOMA_SIGNING_SECRET (must be different!)
-```
+  openssl rand -hex 32   # use as AUTONOMA_SHARED_SECRET
+  openssl rand -hex 32   # use as AUTONOMA_SIGNING_SECRET (must be different!)
 
 ## Handling updates
 
-The platform sends scenario data inline in the `up` request. If your schema changes (you add a model, rename a field), the platform sees the change on the next `discover` call. There are no local files to keep in sync.
+The platform sends scenario data inline in the up request. If your schema changes (you add a model, rename a field), the platform sees the change on the next discover call. There are no local files to keep in sync.
 
-## The packages
+## SDK availability
 
-```
-@autonoma-ai/sdk              Core protocol (shared by all adapters)
-@autonoma-ai/sdk-prisma       Prisma ORM adapter
-@autonoma-ai/sdk-drizzle      Drizzle ORM adapter
-@autonoma-ai/server-web       Web standard adapter (Next.js App Router, Hono, Bun, Deno)
-@autonoma-ai/server-express   Express adapter
-@autonoma-ai/server-node      Node.js http adapter
-```
+SDKs are available for three languages:
 
-Install the core + one ORM adapter + one server adapter. Example for Next.js + Prisma:
+TypeScript -- ORM adapters for Prisma and Drizzle. Server adapters for Web standard (Next.js, Hono, Bun, Deno), Express, and Node.js http.
 
-```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
-```
+Python -- ORM adapters for SQLAlchemy and other Python ORMs. Server adapters for popular Python web frameworks.
 
-Example for Express + Drizzle:
+Elixir -- ORM adapters for Ecto. Server adapters for Phoenix and Plug.
 
-```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-drizzle @autonoma-ai/server-express
-```
+Each language follows the same architecture: a core protocol library plus ORM and server adapter packages. The protocol behavior is identical across languages -- only the package names and syntax differ.
+
+See the language-specific documentation in each SDK directory for installation instructions and code examples.

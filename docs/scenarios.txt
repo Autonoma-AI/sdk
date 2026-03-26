@@ -1,630 +1,414 @@
 # Writing Scenario Data
 
-Scenario data describes what database records to create. The Autonoma platform generates this from your schema, but you'll write it for integration tests and debugging.
+Scenario data describes what database records to create. The Autonoma platform generates this from your schema, but you may write it for integration tests and debugging.
 
 ## Why not raw SQL?
 
-A fair question. You're exposing an endpoint that writes to your database — why not just accept SQL?
-
 The Environment Factory is designed with hard constraints that make it safe by construction:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Environment Factory Safety Model                 │
-│                                                                     │
-│  ┌───────────┐      HMAC-signed request      ┌──────────────────┐   │
-│  │  Autonoma │ ─────────────────────────────▶│  Your Endpoint   │   │
-│  │  Platform │                               │     (SDK)        │   │
-│  └───────────┘                               └──────┬───────────┘   │
-│                                                      │              │
-│                                              ┌───────▼──────────┐   │
-│                                              │  ORM Adapter     |   │
-│                                              └───────┬──────────┘   │
-│                                                      │              │
-│                                              ┌───────▼──────────┐   │
-│                                              │     Database     │   │
-│                                              │  (test env only) │   │
-│                                              └──────────────────┘   │
-│                                                                     │
-│  Safety guarantees:                                                 │
-│                                                                     │
-│  1. BLOCKED IN PRODUCTION                                           │
-│     Endpoint returns 404 when NODE_ENV=production                   │
-│     (unless you explicitly opt in with allowProduction: true)       │
-│                                                                     │
-│  2. UP CAN ONLY CREATE                                              │
-│     The up action calls ORM .create() and .createMany()             │
-│     It cannot UPDATE, DELETE, DROP, TRUNCATE, or run raw SQL        │
-│     The worst it can do is INSERT rows                              │
-│                                                                     │
-│  3. DOWN CAN ONLY DELETE WHAT UP CREATED                            │
-│     During up, the SDK signs a JWT with the IDs of every            │
-│     created record, using YOUR signing secret (not Autonoma's)      │
-│     During down, the SDK verifies that JWT before deleting          │
-│     It deletes ONLY the records listed in the token                 │
-│     Even Autonoma cannot forge or modify this token                 │
-│                                                                     │
-│  4. REQUESTS ARE AUTHENTICATED                                      │
-│     Every request is HMAC-SHA256 signed with the shared secret      │
-│     Unsigned or tampered requests are rejected with 401             │
-│                                                                     │
-│  5. NO RAW SQL — EVER                                               │
-│     All database operations go through your ORM                     │
-│     The SDK uses prisma.user.create(), not SQL strings              │
-│     Schema validation happens at the ORM level                      │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+1. BLOCKED IN PRODUCTION
+   Endpoint returns 404 when the application is in production mode (unless explicitly opted in).
 
-**Contrast with raw SQL**: A raw SQL endpoint could `DROP TABLE`, `DELETE FROM users`, or `UPDATE users SET role = 'admin'`. Even with auth, one malformed query could destroy production data.
+2. UP CAN ONLY CREATE
+   The up action calls ORM create methods. It cannot UPDATE, DELETE, DROP, TRUNCATE, or run raw SQL. The worst it can do is INSERT rows.
 
-**The Environment Factory can't do any of that.** The `up` action can only insert rows through your ORM. The `down` action can only delete the specific rows that `up` created — verified by a cryptographic token that only your server can sign. And in production, the endpoint doesn't even respond.
+3. DOWN CAN ONLY DELETE WHAT UP CREATED
+   During up, the SDK signs a token with the IDs of every created record, using your signing secret (not the shared secret). During down, the SDK verifies that token before deleting. It deletes only the records listed in the token. Even Autonoma cannot forge or modify this token.
 
-This is why scenario data is a structured JSON tree, not SQL. The SDK interprets it as a series of ORM `.create()` calls — nothing more.
+4. REQUESTS ARE AUTHENTICATED
+   Every request is HMAC-SHA256 signed with the shared secret. Unsigned or tampered requests are rejected with 401.
+
+5. NO RAW SQL
+   All database operations go through your ORM. The SDK uses ORM create and delete methods, not SQL strings. Schema validation happens at the ORM level.
+
+Contrast with raw SQL: a raw SQL endpoint could DROP TABLE, DELETE FROM users, or UPDATE users SET role = 'admin'. Even with auth, one malformed query could destroy production data. The Environment Factory can't do any of that.
+
+This is why scenario data is a structured JSON tree, not SQL. The SDK interprets it as a series of ORM create calls -- nothing more.
 
 ## The format
 
-Data is a nested JSON tree. The top-level keys are Prisma model names. Children are nested inside their parents. The SDK reads FK relationships from your schema and wires IDs automatically — you never set FK fields manually.
+Data is a nested JSON tree. The top-level keys are model names from your database schema. Children are nested inside their parents. The SDK reads FK relationships from your ORM schema and wires IDs automatically -- you never set FK fields manually.
 
-Think of it like Protocol Buffers: the schema is shared once (via `discover`), and after that the data contains only values — no field types, no FK directions, no column names. Both sides already know the structure. The platform calls `discover` to learn your schema, then sends scenario data that references models and relation names. Your SDK already has the same schema compiled from your ORM, so it knows exactly how to interpret the nesting and wire the foreign keys. The scenario JSON is compact because the structure is agreed upon, not embedded.
+Think of it like Protocol Buffers: the schema is shared once (via discover), and after that the data contains only values -- no field types, no FK directions, no column names. Both sides already know the structure. The platform calls discover to learn your schema, then sends scenario data that references models and relation names. Your SDK already has the same schema from your ORM, so it knows exactly how to interpret the nesting and wire the foreign keys.
 
 ### Minimal example (org + user)
 
-```json
-{
-  "create": {
-    "Organization": [{
-      "name": "Test Org [{{testRunId}}]",
-      "slug": "test-{{testRunId}}",
-      "members": [{
-        "role": "owner",
-        "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
+  {
+    "create": {
+      "Organization": [{
+        "name": "Test Org [{{testRunId}}]",
+        "slug": "test-{{testRunId}}",
+        "members": [{
+          "role": "owner",
+          "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
+        }]
       }]
-    }]
+    }
   }
-}
-```
 
 This creates:
 1. One Organization
 2. One User (created first because Member holds the FK to it)
-3. One Member with `organizationId` set to the Organization's ID and `userId` set to the User's ID
+3. One Member with organizationId set to the Organization's ID and userId set to the User's ID
 
-**How does the SDK know that `"members"` maps to `organizationId` and not `orgFK` or `org_id`?**
+### How does the SDK know which FK to set?
 
-It doesn't guess. The ORM adapter reads your schema metadata at runtime and extracts every model, field, and relationship — including the exact FK column names. For example, given this schema:
+It doesn't guess. The ORM adapter reads your schema metadata at runtime and extracts every model, field, and relationship -- including the exact FK column names.
 
-```prisma
-model Organization {
-  members  Member[]   // ← list relation, no FK column here
-}
-
-model Member {
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  userId         String
-  user           User @relation(fields: [userId], references: [id])
-}
-```
+For example, given a schema where:
+- Organization has a one-to-many relation to Member
+- Member has a column organizationId pointing to Organization.id
+- Member has a column userId pointing to User.id
 
 The adapter extracts:
-- `Organization.members` is a relation to `Member`
-- `Member` holds the FK column `organizationId` pointing to `Organization.id`
-- `Member.user` is a relation to `User`
-- `Member` holds the FK column `userId` pointing to `User.id`
+- Organization.members is a relation to Member
+- Member holds the FK column organizationId pointing to Organization.id
+- Member.user is a relation to User
+- Member holds the FK column userId pointing to User.id
 
-Each ORM adapter reads this metadata differently — Prisma embeds it in the generated client, Drizzle exports it as plain JavaScript objects — but they all produce the same result. The SDK receives a standardized schema map and uses it to wire every nested object automatically.
+Each ORM adapter reads this metadata differently -- Prisma embeds it in the generated client, Drizzle exports it as plain objects, SQLAlchemy exposes it via inspection, Ecto reads it from schema modules -- but they all produce the same result. The SDK receives a standardized schema map and uses it to wire every nested object automatically.
 
-The FK column name comes directly from your schema definition — whether you called it `organizationId`, `orgId`, `tenant_fk`, or anything else. No string matching, no conventions, no guessing.
+The FK column name comes directly from your schema definition -- whether you called it organizationId, orgId, tenant_fk, or anything else. No string matching, no conventions, no guessing.
 
 ### Realistic example (org with apps, tests, runs)
 
-```json
-{
-  "create": {
-    "Organization": [{
-      "name": "Acme [{{testRunId}}]",
-      "slug": "acme-{{testRunId}}",
+  {
+    "create": {
+      "Organization": [{
+        "name": "Acme [{{testRunId}}]",
+        "slug": "acme-{{testRunId}}",
 
-      "members": [
-        { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
-        { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] }
-      ],
+        "members": [
+          { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
+          { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] }
+        ],
 
-      "applications": [
-        {
-          "_alias": "webApp",
-          "name": "Marketing Website",
-          "architecture": "WEB",
-          "webApplicationData": [{ "url": "https://acme.com" }],
-          "tags": [
-            { "name": "Critical", "color": "#DC2626" },
-            { "name": "Flaky", "color": "#EAB308" }
-          ]
-        },
-        {
-          "name": "Android App",
-          "architecture": "ANDROID",
-          "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.apk" }]
-        }
-      ]
-    }]
+        "applications": [
+          {
+            "_alias": "webApp",
+            "name": "Marketing Website",
+            "architecture": "WEB",
+            "webApplicationData": [{ "url": "https://acme.com" }],
+            "tags": [
+              { "name": "Critical", "color": "#DC2626" },
+              { "name": "Flaky", "color": "#EAB308" }
+            ]
+          },
+          {
+            "name": "Android App",
+            "architecture": "ANDROID",
+            "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.apk" }]
+          }
+        ]
+      }]
+    }
   }
-}
-```
 
 ## How nesting works
 
-The SDK reads the Prisma schema's relations to know what each nested key means. **The nested key must be the exact Prisma relation field name from the parent model.**
+The SDK reads your ORM schema's relations to know what each nested key means. The nested key must be the exact relation field name from the parent model in your ORM schema.
 
 ### Finding the right relation name
 
-Open your Prisma schema and look at the parent model:
+Look at the parent model in your ORM schema. The relation field names on the parent are the keys you use in scenario nesting. For example, if Organization has relation fields named members, applications, and invitations, use those exact names in your scenario JSON.
 
-```prisma
-model Organization {
-  id           String        @id @default(cuid())
-  name         String
-  members      Member[]       // ← "members" is the relation name
-  applications Application[]  // ← "applications" is the relation name
-  invitations  Invitation[]   // ← "invitations" is the relation name
-}
-```
-
-Use those exact names in your scenario:
-
-```json
-{
-  "Organization": [{
-    "name": "...",
-    "members": [{ ... }],        // matches Organization.members
-    "applications": [{ ... }],   // matches Organization.applications
-    "invitations": [{ ... }]     // matches Organization.invitations
-  }]
-}
-```
-
-**Warning**: Some schemas use PascalCase for relation names (e.g., `Application` instead of `applications`). Always check your schema.
+Warning: some schemas use PascalCase for relation names (e.g., Application instead of applications). Always check your ORM schema.
 
 ### FK direction: child FK vs parent FK
 
 The SDK handles both FK directions:
 
-**FK on child** (most common): `Application.organizationId → Organization`
+FK on child (most common): Application.organizationId points to Organization.
 - Parent (Organization) is created first
-- Child (Application) is created after, with `organizationId` set automatically
-- In the scenario, nest Application under Organization:
+- Child (Application) is created after, with organizationId set automatically
+- In the scenario, nest Application under Organization
 
-```json
-"Organization": [{
-  "applications": [{ "name": "My App" }]
-}]
-```
+FK on parent (reverse): Member.userId points to User.
+- The FK (userId) is on Member, but User is the child in the nesting
+- The SDK detects this: creates User first, then sets Member.userId
+- In the scenario, nest User under Member
 
-**FK on parent** (reverse): `Member.userId → User`
-- The FK (`userId`) is on Member, but User is the child in our nesting
-- The SDK detects this: creates User first, then sets `Member.userId`
-- In the scenario, nest User under Member:
-
-```json
-"members": [{
-  "role": "owner",
-  "user": [{ "name": "Alice", "email": "alice@test.com" }]
-}]
-```
-
-This is how you solve the "member-user distribution" problem — each member gets its own user, correctly wired.
+This is how you solve the "member-user distribution" problem -- each member gets its own user, correctly wired.
 
 ## What to include in fields
 
-**Required**: Every field marked as required in your Prisma schema that does NOT have `@default(...)`, `@updatedAt`, or `@id @default(...)`.
+Required: every field marked as required in your schema that does NOT have a default value, is not auto-generated, and is not an auto-updated timestamp.
 
-**Unique fields**: Must include `{{testRunId}}` or `{{index}}` to avoid collisions when tests run in parallel.
+Unique fields: must include {{testRunId}} or {{index}} to avoid collisions when tests run in parallel.
 
-```json
-{
-  "name": "Acme [{{testRunId}}]",
-  "slug": "acme-{{testRunId}}",
-  "email": "admin-{{testRunId}}@test.com"
-}
-```
+  { "name": "Acme [{{testRunId}}]", "slug": "acme-{{testRunId}}", "email": "admin-{{testRunId}}@test.com" }
 
 ## What to omit
 
-- **`id`** — auto-generated by the database
-- **Fields with `@default(...)`** — the SDK skips them (`@default(cuid())`, `@default(now())`, etc.)
-- **Fields with `@updatedAt`** — handled by Prisma automatically
-- **FK fields handled by nesting** — if you nest Application under Organization, don't set `organizationId` manually
-- **The scope field** — the SDK injects it automatically for models that have it
+- id -- auto-generated by the database
+- Fields with default values -- the database or ORM handles them
+- Auto-updated timestamp fields -- handled by the ORM automatically
+- FK fields handled by nesting -- if you nest Application under Organization, don't set organizationId manually
+- The scope field -- the SDK injects it automatically for models that have it
 
-**Example**: Given this Prisma schema:
+Example: given a model with fields id (auto-generated), name (required), architecture (required enum), organizationId (FK), createdAt (default now), and updatedAt (auto-updated), you only provide name and architecture:
 
-```prisma
-model Application {
-  id             String       @id @default(cuid())
-  name           String
-  architecture   Architecture
-  organizationId String
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-}
-```
+  { "name": "My App", "architecture": "WEB" }
 
-You only provide `name` and `architecture`:
-```json
-{ "name": "My App", "architecture": "WEB" }
-```
-
-The SDK handles `id`, `organizationId`, `createdAt`, and `updatedAt`.
+The SDK handles id, organizationId, createdAt, and updatedAt.
 
 ## Template expressions
 
 Templates make values unique across parallel test runs and generate dynamic data.
 
-| Expression | Resolves to | Use for |
-|---|---|---|
-| `{{testRunId}}` | A unique string per test run (UUID) | Emails, slugs, names — anything that must be unique |
-| `{{index}}` | 0, 1, 2, 3... (0-based) | Array positioning |
-| `{{index1}}` | 1, 2, 3, 4... (1-based) | Human-readable numbering ("Product 1", "Product 2") |
-| `{{cycle(['a','b','c'])}}` | Cycles through values by index | Distributing enum values evenly |
-| `{{pick(['a','b','c'])}}` | Random item from array | Random but constrained values |
-| `{{random.int(1,100)}}` | Random integer in range | Numeric data |
-| `{{random.float(0.0,1.0)}}` | Random float in range | Decimal data |
-| `{{now()}}` | Current ISO timestamp | Date fields |
-| `{{daysAgo(7)}}` | ISO timestamp 7 days ago | Historical dates |
+  Expression                Type     Use for
+  {{testRunId}}             string   Unique values per run (emails, slugs)
+  {{index}}                 number   0-based instance index
+  {{index1}}                number   1-based ("Product 1", "Product 2")
+  {{cycle(['a','b','c'])}}  string   Distributing enum values evenly
+  {{pick(['a','b','c'])}}   string   Random item from array
+  {{random.int(min,max)}}   number   Random integers
+  {{random.float(a,b)}}     number   Random floats
+  {{now()}}                 string   Current ISO timestamp
+  {{daysAgo(n)}}            string   Historical ISO timestamp
 
 ### Type preservation
 
-When a template is the **entire** value, the SDK preserves the return type:
-- `"{{random.int(1,100)}"` → number (not string)
-- `"{{index}}"` → number
-- `"{{now()}}"` → string (ISO date)
+When a template is the entire value, the SDK preserves the return type:
+- "{{random.int(1,100)}}" resolves to a number, not a string
+- "{{index}}" resolves to a number
+- "{{now()}}" resolves to a string (ISO date)
 
-When a template is **part of** a string, it's interpolated as a string:
-- `"Product {{index1}}"` → `"Product 1"` (string)
-- `"user-{{testRunId}}@test.com"` → `"user-abc123@test.com"` (string)
+When a template is part of a string, it's interpolated as a string:
+- "Product {{index1}}" resolves to "Product 1" (string)
+- "user-{{testRunId}}@test.com" resolves to "user-abc123@test.com" (string)
 
 ### Examples
 
-**Unique emails**:
-```json
-{ "email": "user-{{testRunId}}@test.com" }
-```
+Unique emails:
+  { "email": "user-{{testRunId}}@test.com" }
 
-**Numbered items**:
-```json
-{ "name": "Product {{index1}}" }
-```
-→ "Product 1", "Product 2", "Product 3"...
+Numbered items:
+  { "name": "Product {{index1}}" }
+  -> "Product 1", "Product 2", "Product 3"...
 
-**Distributed enum values**:
-```json
-{ "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }
-```
-→ "WEB", "ANDROID", "IOS", "WEB", "ANDROID", "IOS"...
+Distributed enum values:
+  { "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }
+  -> "WEB", "ANDROID", "IOS", "WEB", "ANDROID", "IOS"...
 
-**Random data**:
-```json
-{ "score": "{{random.int(0,100)}}", "weight": "{{random.float(0.1,1.0)}}" }
-```
+Random data:
+  { "score": "{{random.int(0,100)}}", "weight": "{{random.float(0.1,1.0)}}" }
 
-**Dates**:
-```json
-{ "createdAt": "{{daysAgo(30)}}", "expiresAt": "{{now()}}" }
-```
+Dates:
+  { "createdAt": "{{daysAgo(30)}}", "expiresAt": "{{now()}}" }
 
 ## Cross-branch references (_alias / _ref)
 
-When a record needs a FK to something in a different branch of the tree, use `_alias` to name a node and `_ref` to reference it.
+When a record needs a FK to something in a different branch of the tree, use _alias to name a node and _ref to reference it.
 
 ### Problem: TestGeneration needs applicationId
 
-TestGeneration is nested under TestPlan, but it also needs `applicationId` which points to the Application (a different branch):
+TestGeneration is nested under TestPlan, but it also needs applicationId which points to the Application (a different branch):
 
-```
-Organization
-├── Application (webApp)       ← need to reference this
-│   └── TestPlan
-│       └── TestGeneration     ← needs applicationId = webApp.id
-```
+  Organization
+  +-- Application (webApp)       <- need to reference this
+  |   +-- TestPlan
+  |       +-- TestGeneration     <- needs applicationId = webApp.id
 
 ### Solution: _alias + _ref
 
-```json
-{
-  "applications": [{
-    "_alias": "webApp",
-    "name": "Marketing Website",
-    "architecture": "WEB",
+  {
+    "applications": [{
+      "_alias": "webApp",
+      "name": "Marketing Website",
+      "architecture": "WEB",
 
-    "testPlans": [{
-      "name": "Smoke Plan",
-      "plan": "content",
-      "testGenerations": [{
-        "_alias": "gen1",
-        "conversation": "[]",
-        "status": "success",
-        "applicationId": { "_ref": "webApp" }
+      "testPlans": [{
+        "name": "Smoke Plan",
+        "plan": "content",
+        "testGenerations": [{
+          "_alias": "gen1",
+          "conversation": "[]",
+          "status": "success",
+          "applicationId": { "_ref": "webApp" }
+        }]
+      }],
+
+      "tests": [{
+        "name": "Homepage Test",
+        "testGenerationId": { "_ref": "gen1" },
+        "steps": [
+          { "order": 1, "interaction": "click", "params": {} }
+        ]
       }]
-    }],
-
-    "tests": [{
-      "name": "Homepage Test",
-      "testGenerationId": { "_ref": "gen1" },
-      "steps": [
-        { "order": 1, "interaction": "click", "params": {} }
-      ]
     }]
-  }]
-}
-```
+  }
 
-**Rules**:
-- `_alias` is a string name you choose. It must be unique across the entire scenario.
-- `_ref` resolves to the `id` of the aliased node after it's created.
-- The aliased node must appear **before** the `_ref` in tree traversal order (depth-first). If it doesn't, you'll get: `_ref "xyz" not found`.
+Rules:
+- _alias is a string name you choose. It must be unique across the entire scenario.
+- _ref resolves to the id of the aliased node after it's created.
+- The aliased node must appear before the _ref in tree traversal order (depth-first). If it doesn't, you'll get: _ref "xyz" not found.
 - You can chain references: alias a node, then reference it from multiple places.
 
 ### Another example: Invitation with inviterId
 
-```json
-{
-  "Organization": [{
-    "name": "Org",
-    "members": [{
-      "role": "owner",
-      "user": [{
-        "_alias": "inviter",
-        "name": "Alice",
-        "email": "alice-{{testRunId}}@test.com"
-      }]
-    }],
-    "invitations": [
-      { "email": "bob@test.com", "inviterId": { "_ref": "inviter" }, "role": "admin", "expiresAt": "{{now()}}" },
-      { "email": "carol@test.com", "inviterId": { "_ref": "inviter" }, "role": "member", "expiresAt": "{{now()}}" }
-    ]
-  }]
-}
-```
+  {
+    "Organization": [{
+      "name": "Org",
+      "members": [{
+        "role": "owner",
+        "user": [{
+          "_alias": "inviter",
+          "name": "Alice",
+          "email": "alice-{{testRunId}}@test.com"
+        }]
+      }],
+      "invitations": [
+        { "email": "bob@test.com", "inviterId": { "_ref": "inviter" }, "role": "admin", "expiresAt": "{{now()}}" },
+        { "email": "carol@test.com", "inviterId": { "_ref": "inviter" }, "role": "member", "expiresAt": "{{now()}}" }
+      ]
+    }]
+  }
 
 ### Another example: TestTag (join table)
 
-```json
-{
-  "applications": [{
-    "tags": [
-      { "_alias": "tag1", "name": "Critical", "color": "#FF0000" },
-      { "_alias": "tag2", "name": "High", "color": "#FF8800" }
-    ],
-    "tests": [{
-      "name": "Test",
-      "testTags": [
-        { "tagId": { "_ref": "tag1" } },
-        { "tagId": { "_ref": "tag2" } }
-      ]
+  {
+    "applications": [{
+      "tags": [
+        { "_alias": "tag1", "name": "Critical", "color": "#FF0000" },
+        { "_alias": "tag2", "name": "High", "color": "#FF8800" }
+      ],
+      "tests": [{
+        "name": "Test",
+        "testTags": [
+          { "tagId": { "_ref": "tag1" } },
+          { "tagId": { "_ref": "tag2" } }
+        ]
+      }]
     }]
-  }]
-}
-```
+  }
 
 ## Bulk data (_count and _batch)
 
-For creating many records of the same type, use `_count` instead of writing each one manually. Add `_batch: true` for bulk insert performance.
+For creating many records of the same type, use _count instead of writing each one manually. Add _batch: true for bulk insert performance.
 
 ### Basic _count (array shorthand)
 
 Instead of writing 100 objects:
-```json
-"applications": [{ "_count": 100, "name": "App {{index1}}", "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }]
-```
+
+  "applications": [{ "_count": 100, "name": "App {{index1}}", "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }]
 
 This creates 100 Application records:
 - App 1 (WEB), App 2 (ANDROID), App 3 (IOS), App 4 (WEB), ...
 
-Each record gets its own `{{index}}` value (0-99) and `{{index1}}` value (1-100).
+Each record gets its own {{index}} value (0-99) and {{index1}} value (1-100).
 
 ### _batch for performance
 
-Add `_batch: true` to use bulk insert (single SQL `INSERT` statement). This is **much faster** for large counts:
+Add _batch: true to use bulk insert (single SQL INSERT statement). This is much faster for large counts:
 
-```json
-"runs": [{ "_count": 10000, "_batch": true }]
-```
+  "runs": [{ "_count": 10000, "_batch": true }]
 
-**Without _batch**: 10,000 individual `INSERT` statements (~30 seconds)
-**With _batch**: 1 `INSERT` with 10,000 rows (~2 seconds)
+Without _batch: 10,000 individual INSERT statements (~30 seconds)
+With _batch: 1 INSERT with 10,000 rows (~2 seconds)
 
 ### _count + _batch with field templates
 
-```json
-"tags": [{ "_count": 200, "_batch": true, "name": "Tag {{index1}}", "color": "{{cycle(['#F00','#0F0','#00F'])}}" }]
-```
+  "tags": [{ "_count": 200, "_batch": true, "name": "Tag {{index1}}", "color": "{{cycle(['#F00','#0F0','#00F'])}}" }]
 
 Creates 200 tags with names "Tag 1" through "Tag 200", cycling through 3 colors.
 
 ### _count + _batch as an object (not array)
 
-You can also use the object form — both work:
+You can also use the object form -- both work:
 
-```json
-"folders": { "_count": 20, "_batch": true, "name": "Folder {{index1}}" }
-```
+  "folders": { "_count": 20, "_batch": true, "name": "Folder {{index1}}" }
 
 ### _batch limitations
 
-- **Batched records cannot be referenced by `_ref`**. Batch insert uses `createMany` which doesn't return individual IDs. If another record needs to reference one of these, don't use `_batch`.
-- **Use `_batch` only at leaf nodes** — records that nothing else references.
+- Batched records cannot be referenced by _ref. Batch insert uses bulk create which doesn't return individual IDs. If another record needs to reference one of these, don't use _batch.
+- Use _batch only at leaf nodes -- records that nothing else references.
 
 ### Examples of when to use _batch
 
-| Good (_batch OK) | Bad (_batch breaks things) |
-|---|---|
-| `runs: { _count: 10000, _batch: true }` | `applications: { _count: 5, _batch: true }` if tests reference an app |
-| `tags: { _count: 200, _batch: true, ... }` | `users: { _count: 10, _batch: true }` if members reference users |
-| `folders: { _count: 50, _batch: true, ... }` | `testGenerations: { _count: 3, _batch: true }` if tests reference them |
-
-### Full example: large scenario with batch
-
-```json
-{
-  "create": {
-    "Organization": [{
-      "name": "Load Test Org [{{testRunId}}]",
-      "slug": "load-{{testRunId}}",
-      "members": [{
-        "role": "owner",
-        "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
-      }],
-      "applications": [{
-        "_alias": "app",
-        "name": "App",
-        "architecture": "WEB",
-
-        "tags": { "_count": 30, "_batch": true, "name": "Tag {{index1}}", "color": "#333" },
-        "folders": { "_count": 20, "_batch": true, "name": "Folder {{index1}}" },
-
-        "testPlans": [{
-          "name": "Plan",
-          "plan": "content",
-          "testGenerations": [{
-            "_alias": "gen1",
-            "conversation": "[]",
-            "status": "success",
-            "applicationId": { "_ref": "app" }
-          }]
-        }],
-
-        "tests": [{
-          "name": "Load Test",
-          "testGenerationId": { "_ref": "gen1" },
-          "steps": [{ "_count": 500, "_batch": true, "order": "{{index1}}", "interaction": "{{cycle(['click','type','assert'])}}", "params": {} }],
-          "runs": [{ "_count": 10000, "_batch": true }]
-        }]
-      }]
-    }]
-  }
-}
-```
-
-This creates: 1 org, 1 user, 1 member, 1 app, 30 tags, 20 folders, 1 plan, 1 generation, 1 test, 500 steps, 10,000 runs.
+  Good (_batch OK)                                       Bad (_batch breaks things)
+  runs: { _count: 10000, _batch: true }                  applications: { _count: 5, _batch: true } if tests reference an app
+  tags: { _count: 200, _batch: true, ... }               users: { _count: 10, _batch: true } if members reference users
+  folders: { _count: 50, _batch: true, ... }              testGenerations: { _count: 3, _batch: true } if tests reference them
 
 ## The three standard scenarios
 
 When writing scenarios for a project, create three:
 
-### empty — Org + user only
+### empty -- Org + user only
 Tests empty states, onboarding flows, "no data yet" screens.
 
-```json
-{
-  "create": {
-    "Organization": [{
-      "name": "Empty Org [{{testRunId}}]",
-      "slug": "empty-{{testRunId}}",
-      "members": [{ "role": "owner", "user": [{ "name": "Solo User", "email": "solo-{{testRunId}}@test.com" }] }]
-    }]
+  {
+    "create": {
+      "Organization": [{
+        "name": "Empty Org [{{testRunId}}]",
+        "slug": "empty-{{testRunId}}",
+        "members": [{ "role": "owner", "user": [{ "name": "Solo User", "email": "solo-{{testRunId}}@test.com" }] }]
+      }]
+    }
   }
-}
-```
 
-### standard — Realistic variety
+### standard -- Realistic variety
 Enough data to test every filter, status, and category. Use descriptive names ("Marketing Website", not "App 1"). Include at least one entity per enum value.
 
-```json
-{
-  "create": {
-    "Organization": [{
-      "name": "Acme [{{testRunId}}]",
-      "slug": "acme-{{testRunId}}",
-      "members": [
-        { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
-        { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] },
-        { "role": "viewer", "user": [{ "name": "Carol", "email": "carol-{{testRunId}}@test.com" }] }
-      ],
-      "applications": [
-        {
-          "_alias": "webApp",
-          "name": "Marketing Website",
+  {
+    "create": {
+      "Organization": [{
+        "name": "Acme [{{testRunId}}]",
+        "slug": "acme-{{testRunId}}",
+        "members": [
+          { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
+          { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] },
+          { "role": "viewer", "user": [{ "name": "Carol", "email": "carol-{{testRunId}}@test.com" }] }
+        ],
+        "applications": [
+          {
+            "_alias": "webApp",
+            "name": "Marketing Website",
+            "architecture": "WEB",
+            "tags": [
+              { "name": "Critical", "color": "#DC2626" },
+              { "name": "P1 - High", "color": "#F97316" },
+              { "name": "Flaky", "color": "#EAB308" }
+            ]
+          },
+          { "name": "Android App", "architecture": "ANDROID" },
+          { "name": "iOS App", "architecture": "IOS" }
+        ]
+      }]
+    }
+  }
+
+### large -- High volume
+Exceeds pagination thresholds. Uses _batch at leaf nodes. Tests pagination, sort stability, filter performance.
+
+  {
+    "create": {
+      "Organization": [{
+        "name": "Load Test [{{testRunId}}]",
+        "slug": "load-{{testRunId}}",
+        "members": [{ "role": "owner", "user": [{ "name": "User", "email": "load-{{testRunId}}@test.com" }] }],
+        "applications": [{
+          "_alias": "app",
+          "name": "App",
           "architecture": "WEB",
-          "webApplicationData": [{ "url": "https://acme.com" }],
-          "tags": [
-            { "name": "Critical", "color": "#DC2626" },
-            { "name": "P1 - High", "color": "#F97316" },
-            { "name": "Flaky", "color": "#EAB308" }
-          ],
-          "folders": [
-            { "name": "Smoke Tests" },
-            { "name": "Regression" }
-          ],
+          "tags": { "_count": 50, "_batch": true, "name": "Tag {{index1}}", "color": "#333" },
+          "folders": { "_count": 40, "_batch": true, "name": "Folder {{index1}}" },
           "testPlans": [{
-            "name": "Smoke Plan",
-            "plan": "Basic smoke tests",
+            "name": "Plan",
+            "plan": "x",
             "testGenerations": [{
               "_alias": "gen1",
               "conversation": "[]",
-              "status": "success",
-              "applicationId": { "_ref": "webApp" }
+              "applicationId": { "_ref": "app" }
             }]
           }],
           "tests": [{
-            "name": "Homepage Test",
+            "name": "Test",
             "testGenerationId": { "_ref": "gen1" },
-            "steps": [
-              { "order": 1, "interaction": "click", "params": {} },
-              { "order": 2, "interaction": "type", "params": {} },
-              { "order": 3, "interaction": "assert", "params": {} }
-            ],
-            "runs": [{}, {}, {}, {}, {}]
+            "runs": [{ "_count": 10000, "_batch": true }]
           }]
-        },
-        {
-          "name": "Android App",
-          "architecture": "ANDROID",
-          "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.apk" }]
-        },
-        {
-          "name": "iOS App",
-          "architecture": "IOS",
-          "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.ipa" }]
-        }
-      ]
-    }]
-  }
-}
-```
-
-### large — High volume
-Exceeds pagination thresholds. Uses `_batch` at leaf nodes. Tests pagination, sort stability, filter performance.
-
-```json
-{
-  "create": {
-    "Organization": [{
-      "name": "Load Test [{{testRunId}}]",
-      "slug": "load-{{testRunId}}",
-      "members": [{ "role": "owner", "user": [{ "name": "User", "email": "load-{{testRunId}}@test.com" }] }],
-      "applications": [{
-        "_alias": "app",
-        "name": "App",
-        "architecture": "WEB",
-        "tags": { "_count": 50, "_batch": true, "name": "Tag {{index1}}", "color": "#333" },
-        "folders": { "_count": 40, "_batch": true, "name": "Folder {{index1}}" },
-        "testPlans": [{
-          "name": "Plan",
-          "plan": "x",
-          "testGenerations": [{
-            "_alias": "gen1",
-            "conversation": "[]",
-            "applicationId": { "_ref": "app" }
-          }]
-        }],
-        "tests": [{
-          "name": "Test",
-          "testGenerationId": { "_ref": "gen1" },
-          "runs": [{ "_count": 10000, "_batch": true }]
         }]
       }]
-    }]
+    }
   }
-}
-```

@@ -1,0 +1,154 @@
+{
+  "module": "template",
+  "functions": [
+    {
+      "name": "resolveTemplate",
+      "cases": [
+        {
+          "description": "resolves testRunId (full value replacement)",
+          "input": {
+            "value": "{{testRunId}}",
+            "ctx": { "testRunId": "run-abc123", "index": 0 }
+          },
+          "assert": { "equals": "run-abc123", "type": "string" }
+        },
+        {
+          "description": "resolves index (preserves number type)",
+          "input": {
+            "value": "{{index}}",
+            "ctx": { "testRunId": "x", "index": 2 }
+          },
+          "assert": { "equals": 2, "type": "number" }
+        },
+        {
+          "description": "resolves index1 (1-based)",
+          "input": {
+            "value": "{{index1}}",
+            "ctx": { "testRunId": "x", "index": 2 }
+          },
+          "assert": { "equals": 3, "type": "number" }
+        },
+        {
+          "description": "interpolates in strings (coerces to string)",
+          "input": {
+            "value": "admin-{{testRunId}}@autonoma.dev",
+            "ctx": { "testRunId": "run-abc123", "index": 0 }
+          },
+          "assert": { "equals": "admin-run-abc123@autonoma.dev", "type": "string" }
+        },
+        {
+          "description": "index interpolation coerces to string",
+          "input": {
+            "value": "item-{{index}}",
+            "ctx": { "testRunId": "x", "index": 5 }
+          },
+          "assert": { "equals": "item-5", "type": "string" }
+        },
+        {
+          "description": "resolves cycle with modulo",
+          "input": {
+            "value": "{{cycle(['active','inactive','draft'])}}",
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "equals": "active" }
+        },
+        {
+          "description": "resolves cycle at index 1",
+          "input": {
+            "value": "{{cycle(['active','inactive','draft'])}}",
+            "ctx": { "testRunId": "x", "index": 1 }
+          },
+          "assert": { "equals": "inactive" }
+        },
+        {
+          "description": "resolves cycle wraps around",
+          "input": {
+            "value": "{{cycle(['active','inactive','draft'])}}",
+            "ctx": { "testRunId": "x", "index": 4 }
+          },
+          "assert": { "equals": "inactive" }
+        },
+        {
+          "description": "passes through non-template strings",
+          "input": {
+            "value": "plain string",
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "equals": "plain string" }
+        },
+        {
+          "description": "passes through numbers",
+          "input": {
+            "value": 42,
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "equals": 42, "type": "number" }
+        },
+        {
+          "description": "passes through booleans",
+          "input": {
+            "value": true,
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "equals": true, "type": "boolean" }
+        },
+        {
+          "description": "passes through null",
+          "input": {
+            "value": null,
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "equals": null }
+        },
+        {
+          "description": "resolves nested objects",
+          "input": {
+            "value": { "name": "User {{index1}}", "runId": "{{testRunId}}" },
+            "ctx": { "testRunId": "run-abc123", "index": 2 }
+          },
+          "assert": { "equals": { "name": "User 3", "runId": "run-abc123" } }
+        },
+        {
+          "description": "resolves arrays",
+          "input": {
+            "value": ["{{testRunId}}", "{{index}}", "static"],
+            "ctx": { "testRunId": "run-1", "index": 0 }
+          },
+          "assert": { "equals": ["run-1", 0, "static"] }
+        },
+        {
+          "description": "now() returns ISO string",
+          "input": {
+            "value": "{{now()}}",
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "type": "string", "matches_regex": "^\\d{4}-\\d{2}-\\d{2}T" }
+        },
+        {
+          "description": "random.int returns integer in range",
+          "input": {
+            "value": "{{random.int(1,100)}}",
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "type": "number", "gte": 1, "lte": 100 }
+        },
+        {
+          "description": "random.float returns float in range",
+          "input": {
+            "value": "{{random.float(0,1)}}",
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "type": "number", "gte": 0, "lte": 1 }
+        },
+        {
+          "description": "pick returns one of the given items",
+          "input": {
+            "value": "{{pick(['a','b','c'])}}",
+            "ctx": { "testRunId": "x", "index": 0 }
+          },
+          "assert": { "one_of": ["a", "b", "c"] }
+        }
+      ]
+    }
+  ]
+}

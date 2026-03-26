@@ -1,0 +1,71 @@
+{
+  "module": "hmac",
+  "functions": [
+    {
+      "name": "signBody",
+      "cases": [
+        {
+          "description": "signs a JSON body deterministically",
+          "input": { "body": "{\"action\":\"discover\"}", "secret": "test-secret-key" },
+          "assert": { "equals": "2c5588170f06ff28479566d72d45969927913c56bcba01d36c3122f2284cbba2" }
+        },
+        {
+          "description": "signs an empty body",
+          "input": { "body": "", "secret": "test-secret-key" },
+          "assert": { "equals": "d1011b593027040df27a8cdd7a95af3021523909894a214033c69b508fcb9b05" }
+        },
+        {
+          "description": "produces different signature with different secret",
+          "input": { "body": "{\"action\":\"up\",\"environment\":\"standard\"}", "secret": "another-secret" },
+          "assert": { "equals": "ef2e8267e43842c889f86b436a407d62d3d29e43a82005b1f21a0b49d6e584c8" }
+        },
+        {
+          "description": "produces 64-char hex string",
+          "input": { "body": "any body", "secret": "any-secret" },
+          "assert": { "matches_regex": "^[a-f0-9]{64}$" }
+        }
+      ]
+    },
+    {
+      "name": "verifySignature",
+      "cases": [
+        {
+          "description": "verifies a valid signature",
+          "input": {
+            "body": "{\"action\":\"discover\"}",
+            "signature": "2c5588170f06ff28479566d72d45969927913c56bcba01d36c3122f2284cbba2",
+            "secret": "test-secret-key"
+          },
+          "assert": { "equals": true }
+        },
+        {
+          "description": "rejects an invalid signature",
+          "input": {
+            "body": "{\"action\":\"discover\"}",
+            "signature": "0000000000000000000000000000000000000000000000000000000000000000",
+            "secret": "test-secret-key"
+          },
+          "assert": { "equals": false }
+        },
+        {
+          "description": "rejects signature with wrong secret",
+          "input": {
+            "body": "{\"action\":\"discover\"}",
+            "signature": "2c5588170f06ff28479566d72d45969927913c56bcba01d36c3122f2284cbba2",
+            "secret": "wrong-secret"
+          },
+          "assert": { "equals": false }
+        },
+        {
+          "description": "rejects signature for different body",
+          "input": {
+            "body": "{\"action\":\"up\"}",
+            "signature": "2c5588170f06ff28479566d72d45969927913c56bcba01d36c3122f2284cbba2",
+            "secret": "test-secret-key"
+          },
+          "assert": { "equals": false }
+        }
+      ]
+    }
+  ]
+}

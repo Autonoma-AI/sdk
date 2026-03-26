@@ -15,6 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    defaults:
+      run:
+        working-directory: sdks/typescript
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +27,7 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile

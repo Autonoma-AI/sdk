@@ -1,0 +1,182 @@
+# Autonoma Environment Factory Protocol
+
+## Overview
+
+The Environment Factory protocol defines how the Autonoma platform communicates with your backend to create and destroy isolated test data. It is a simple request-response protocol over HTTP POST with HMAC-SHA256 authentication.
+
+Protocol version: 1.0
+
+## Transport
+
+All communication happens over a single HTTP POST endpoint. The URL is chosen by you (e.g., /api/autonoma). The platform sends JSON requests and expects JSON responses.
+
+## Authentication
+
+Every request is authenticated with HMAC-SHA256. The platform computes the signature over the raw request body using the shared secret and includes it in the x-signature header.
+
+The SDK verifies the signature before processing any request. If the signature is missing or invalid, the request is rejected with a 401 status.
+
+### The two secrets
+
+The protocol uses two separate secrets. They must be different values.
+
+Shared secret: Known by both the Autonoma platform and your backend. Used for HMAC-SHA256 request signing. The platform signs; your SDK verifies.
+
+Signing secret: Known only by your backend. Used to sign the refs token during up and verify it during down. The platform stores this token opaquely and passes it back -- it cannot read or modify it.
+
+## Request format
+
+Every request is an HTTP POST with:
+- Content-Type: application/json
+- x-signature: HMAC-SHA256 hex digest of the raw body, keyed with the shared secret
+
+The request body is a JSON object with an "action" field that determines the operation.
+
+## Response format
+
+Every response is a JSON object. Successful responses include metadata fields:
+
+  version   The protocol version string (currently "1.0").
+  sdk       An object with language, orm, and server fields identifying the SDK implementation.
+
+Error responses include:
+
+  error     A human-readable error message.
+  code      A machine-readable error code string.
+
+## Actions
+
+### discover
+
+Request:
+
+  {
+    "action": "discover"
+  }
+
+Response (200):
+
+  {
+    "version": "1.0",
+    "sdk": { "language": "typescript", "orm": "prisma", "server": "web" },
+    "schema": {
+      "models": [ ... ],
+      "edges": [ ... ],
+      "relations": [ ... ],
+      "scopeField": "organizationId"
+    }
+  }
+
+The schema object contains:
+- models: list of all database models with their fields (name, type, required, id, hasDefault)
+- edges: list of all FK relationships (from model, to model, local field, foreign field, nullable)
+- relations: named relation mappings used for scenario nesting
+- scopeField: the field name used for test data isolation
+
+### up
+
+Request:
+
+  {
+    "action": "up",
+    "testRunId": "optional-uuid",
+    "create": {
+      "ModelName": [{ "field": "value", ... }]
+    }
+  }
+
+If testRunId is omitted, the SDK generates a random UUID.
+
+The create field contains a nested JSON tree describing what records to create. See scenarios.txt for the full format.
+
+Response (200):
+
+  {
+    "version": "1.0",
+    "sdk": { "language": "typescript", "orm": "prisma", "server": "web" },
+    "auth": { "token": "...", "cookies": [...], "credentials": {...} },
+    "refs": {
+      "ModelName": [{ "id": "...", "field": "value", ... }]
+    },
+    "refsToken": "header.payload.signature"
+  }
+
+- auth: credentials for the test runner to authenticate (format depends on auth callback)
+- refs: all created records, keyed by model name
+- refsToken: a signed token encoding the created record IDs, used for teardown
+
+### down
+
+Request:
+
+  {
+    "action": "down",
+    "refsToken": "header.payload.signature"
+  }
+
+The refsToken is the exact token returned by the up response.
+
+Response (200):
+
+  {
+    "version": "1.0",
+    "sdk": { "language": "typescript", "orm": "prisma", "server": "web" },
+    "ok": true
+  }
+
+## The scope field
+
+The scope field is a single column name (e.g., organizationId) present on most models in the database. It references a root entity (e.g., Organization) that acts as the isolation boundary for test data.
+
+During up: the SDK creates the root entity first, then injects the scope field value into all child records.
+
+During teardown: the SDK deletes all records matching the scope field value, in reverse topological order to respect FK constraints. Records on models without the scope field are deleted by their individual IDs from the refs token.
+
+## The refs token
+
+The refs token is a JWT-like structure (header.payload.signature) signed with the signing secret. It contains:
+- The test run ID (scope value)
+- All created record IDs, keyed by model name
+
+The token is signed by the SDK during up and verified during down. Because only your backend knows the signing secret, the token cannot be forged or modified by the platform or any external party. This ensures that down can only delete records that up created.
+
+## Safety model
+
+The protocol enforces hard safety constraints:
+
+1. BLOCKED IN PRODUCTION
+   The endpoint returns 404 when the application is running in production mode (unless explicitly opted in with an allowProduction flag). This prevents accidental use against production databases.
+
+2. UP CAN ONLY CREATE
+   The up action uses the ORM's create operations. It cannot update, delete, drop, truncate, or execute raw SQL. The worst it can do is insert rows.
+
+3. DOWN CAN ONLY DELETE WHAT UP CREATED
+   During up, the SDK signs a token with the IDs of every created record using your signing secret. During down, the SDK verifies that token before deleting. It deletes only the records listed in the token. Even the Autonoma platform cannot forge or modify this token.
+
+4. REQUESTS ARE AUTHENTICATED
+   Every request is HMAC-SHA256 signed with the shared secret. Unsigned or tampered requests are rejected with 401.
+
+5. NO RAW SQL
+   All database operations go through the ORM layer. The SDK calls ORM create and delete methods, never raw SQL strings. Schema validation happens at the ORM level.
+
+## Error codes
+
+  Code                  HTTP Status  Meaning
+  INVALID_SIGNATURE     401          HMAC signature missing or does not match
+  INVALID_BODY          400          Request body is not valid JSON, or missing required fields
+  UNKNOWN_ACTION        400          The action field is not discover, up, or down
+  UNKNOWN_ENVIRONMENT   400          The requested environment name does not exist
+  INVALID_REFS_TOKEN    403          The refs token is missing, malformed, or signature verification failed
+  PRODUCTION_BLOCKED    404          Endpoint is disabled in production mode
+  SAME_SECRETS          500          sharedSecret and signingSecret are the same value
+  INTERNAL_ERROR        500          Unexpected server error
+
+## HMAC signature computation
+
+The signature is computed as:
+
+  HMAC-SHA256(raw_request_body_bytes, shared_secret) -> hex digest
+
+The platform sends this as the x-signature header value. The SDK recomputes the HMAC over the raw body string (before JSON parsing) and compares using a constant-time comparison.
+
+Important: the signature is computed over the exact bytes of the request body. The server adapter must extract the raw body as a string before any JSON parsing or middleware transformation.
