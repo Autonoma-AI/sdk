@@ -41,8 +41,8 @@ model Member {
 Present your findings and ask for confirmation:
 
 > "I've detected:
-> - Framework: **[detected]** → will use `@autonoma/server-[web|express|node]`
-> - ORM: **[detected]** → will use `@autonoma/sdk-[prisma|drizzle]`
+> - Framework: **[detected]** → will use `@autonoma-ai/server-[web|express|node]`
+> - ORM: **[detected]** → will use `@autonoma-ai/sdk-[prisma|drizzle]`
 > - Scope field: `[field]` on most models, referencing `[Model]`
 > - Auth: found `[auth mechanism]` in `[file path]`
 >
@@ -59,16 +59,16 @@ Based on the detected stack, install three packages:
 
 ```bash
 # Next.js + Prisma:
-pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-web
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
 
 # Express + Prisma:
-pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-express
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-express
 
 # Hono/Bun/Deno + Drizzle:
-pnpm add @autonoma/sdk @autonoma/sdk-drizzle @autonoma/server-web
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-drizzle @autonoma-ai/server-web
 
 # Node.js http + Prisma:
-pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-node
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-node
 ```
 
 Use the project's package manager (pnpm, npm, yarn, bun).
@@ -96,8 +96,8 @@ If `.env.example` exists, add placeholder entries there too.
 
 ```typescript
 // app/api/autonoma/route.ts
-import { createHandler } from '@autonoma/server-web'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { createHandler } from '@autonoma-ai/server-web'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '@/lib/db'  // use the project's existing prisma import
 
 export const POST = createHandler({
@@ -114,8 +114,8 @@ export const POST = createHandler({
 
 ```typescript
 // routes/autonoma.ts (or wherever the project puts routes)
-import { createExpressHandler } from '@autonoma/server-express'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { createExpressHandler } from '@autonoma-ai/server-express'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '../db'  // use the project's existing prisma import
 
 app.post('/api/autonoma', createExpressHandler({
@@ -131,7 +131,7 @@ app.post('/api/autonoma', createExpressHandler({
 ### Drizzle variant:
 
 ```typescript
-import { drizzleAdapter } from '@autonoma/sdk-drizzle'
+import { drizzleAdapter } from '@autonoma-ai/sdk-drizzle'
 import { db } from '../db'
 import * as schema from '../db/schema'
 
@@ -269,8 +269,8 @@ Create the validation test harness:
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import { PrismaClient } from '@prisma/client'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
-import { checkScenario } from '@autonoma/sdk'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { checkScenario } from '@autonoma-ai/sdk'
 import { execSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'

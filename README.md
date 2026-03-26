@@ -4,8 +4,8 @@ Isolated test data for every E2E test run. Install the SDK, point it at your dat
 
 ```typescript
 // app/api/autonoma/route.ts
-import { createHandler } from '@autonoma/server-web'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { createHandler } from '@autonoma-ai/server-web'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '@/lib/db'
 
 export const POST = createHandler({
@@ -46,17 +46,17 @@ Autonoma Platform                        Your Backend
 Install the core + one ORM adapter + one server adapter:
 
 ```bash
-pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-web
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
 ```
 
 | Package | What it does |
 |---------|-------------|
-| `@autonoma/sdk` | Core protocol — HMAC verification, JWT refs, template engine, FK graph |
-| `@autonoma/sdk-prisma` | Prisma adapter — schema introspection, entity creation, scoped teardown |
-| `@autonoma/sdk-drizzle` | Drizzle adapter — same contract, different ORM |
-| `@autonoma/server-web` | Web standard adapter — Next.js App Router, Hono, Bun, Deno |
-| `@autonoma/server-express` | Express adapter |
-| `@autonoma/server-node` | Node.js http adapter |
+| `@autonoma-ai/sdk` | Core protocol — HMAC verification, JWT refs, template engine, FK graph |
+| `@autonoma-ai/sdk-prisma` | Prisma adapter — schema introspection, entity creation, scoped teardown |
+| `@autonoma-ai/sdk-drizzle` | Drizzle adapter — same contract, different ORM |
+| `@autonoma-ai/server-web` | Web standard adapter — Next.js App Router, Hono, Bun, Deno |
+| `@autonoma-ai/server-express` | Express adapter |
+| `@autonoma-ai/server-node` | Node.js http adapter |
 
 ## Scenario data
 
@@ -108,7 +108,7 @@ Features:
 Validate scenarios against a real database before deploying:
 
 ```typescript
-import { checkScenario } from '@autonoma/sdk'
+import { checkScenario } from '@autonoma-ai/sdk'
 
 const result = await checkScenario(adapter, scenario)
 // result.valid    → true/false

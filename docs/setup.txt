@@ -12,36 +12,36 @@ Pick the packages that match your stack:
 
 **Next.js App Router + Prisma** (most common):
 ```bash
-pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-web
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
 ```
 
 **Express + Prisma**:
 ```bash
-pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-express
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-express
 ```
 
 **Hono / Bun / Deno + Drizzle**:
 ```bash
-pnpm add @autonoma/sdk @autonoma/sdk-drizzle @autonoma/server-web
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-drizzle @autonoma-ai/server-web
 ```
 
 **Node.js http + Prisma**:
 ```bash
-pnpm add @autonoma/sdk @autonoma/sdk-prisma @autonoma/server-node
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-node
 ```
 
 ### Package reference
 
 | Your ORM | Package |
 |----------|---------|
-| Prisma | `@autonoma/sdk-prisma` |
-| Drizzle | `@autonoma/sdk-drizzle` |
+| Prisma | `@autonoma-ai/sdk-prisma` |
+| Drizzle | `@autonoma-ai/sdk-drizzle` |
 
 | Your Framework | Package |
 |----------------|---------|
-| Next.js App Router, Hono, Bun, Deno | `@autonoma/server-web` |
-| Express, Fastify | `@autonoma/server-express` |
-| Node.js http | `@autonoma/server-node` |
+| Next.js App Router, Hono, Bun, Deno | `@autonoma-ai/server-web` |
+| Express, Fastify | `@autonoma-ai/server-express` |
+| Node.js http | `@autonoma-ai/server-node` |
 
 ## 2. Find your scope field
 
@@ -97,8 +97,8 @@ AUTONOMA_SIGNING_SECRET=
 
 ```typescript
 // app/api/autonoma/route.ts
-import { createHandler } from '@autonoma/server-web'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { createHandler } from '@autonoma-ai/server-web'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '@/lib/db'
 
 export const POST = createHandler({
@@ -120,8 +120,8 @@ export const POST = createHandler({
 
 ```typescript
 // routes/autonoma.ts
-import { createExpressHandler } from '@autonoma/server-express'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { createExpressHandler } from '@autonoma-ai/server-express'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '../db'
 
 app.post('/api/autonoma', createExpressHandler({
@@ -139,8 +139,8 @@ app.post('/api/autonoma', createExpressHandler({
 
 ```typescript
 // src/routes/autonoma.ts
-import { createHandler } from '@autonoma/server-web'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { createHandler } from '@autonoma-ai/server-web'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '../db'
 
 const handler = createHandler({
@@ -159,8 +159,8 @@ app.post('/api/autonoma', (c) => handler(c.req.raw))
 ### Drizzle + Express
 
 ```typescript
-import { createExpressHandler } from '@autonoma/server-express'
-import { drizzleAdapter } from '@autonoma/sdk-drizzle'
+import { createExpressHandler } from '@autonoma-ai/server-express'
+import { drizzleAdapter } from '@autonoma-ai/sdk-drizzle'
 import { db } from '../db'
 import * as schema from '../db/schema'
 
@@ -178,8 +178,8 @@ app.post('/api/autonoma', createExpressHandler({
 ### Node.js http
 
 ```typescript
-import { createNodeHandler } from '@autonoma/server-node'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
+import { createNodeHandler } from '@autonoma-ai/server-node'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
 import { prisma } from './db'
 
 const handler = createNodeHandler({
@@ -361,8 +361,8 @@ pnpm add -D vitest testcontainers @testcontainers/postgresql
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import { PrismaClient } from '@prisma/client'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
-import { checkScenario } from '@autonoma/sdk'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { checkScenario } from '@autonoma-ai/sdk'
 import { execSync } from 'node:child_process'
 
 describe('environment factory', () => {

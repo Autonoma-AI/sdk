@@ -4,12 +4,12 @@ The SDK has three adapter types: ORM, Server, and Auth. Each is a separate npm p
 
 ## ORM Adapter
 
-Connects the SDK to a database ORM. Existing adapters: `@autonoma/sdk-prisma`, `@autonoma/sdk-drizzle`.
+Connects the SDK to a database ORM. Existing adapters: `@autonoma-ai/sdk-prisma`, `@autonoma-ai/sdk-drizzle`.
 
 ### The interface
 
 ```typescript
-// Defined in @autonoma/sdk/types.ts
+// Defined in @autonoma-ai/sdk/types.ts
 interface OrmAdapter {
   getSchema(): SchemaInfo
   createEntities(
@@ -127,7 +127,7 @@ async createEntities(spec, context) {
 Delete all data created during a test run. The SDK provides both the scope value and the full refs.
 
 **Implementation rules**:
-1. Import `topoSort` and `findDeferrableEdge` from `@autonoma/sdk/graph`.
+1. Import `topoSort` and `findDeferrableEdge` from `@autonoma-ai/sdk/graph`.
 2. Get the FK graph from `getSchema()`.
 3. **Break circular FKs first**: if the graph has cycles, find a nullable FK in the cycle and `UPDATE SET fk = null` before deleting.
 4. **Delete scoped models**: for each model that has the scope FK (e.g., `organizationId`), delete all records where `scopeField = scopeValue`, in **reverse topological order** (children before parents).
@@ -177,7 +177,7 @@ async teardown(scopeValue, refs) {
 
 ## Server Adapter
 
-Converts between a framework's request/response and the SDK's internal format. Existing adapters: `@autonoma/server-web`, `@autonoma/server-express`, `@autonoma/server-node`.
+Converts between a framework's request/response and the SDK's internal format. Existing adapters: `@autonoma-ai/server-web`, `@autonoma-ai/server-express`, `@autonoma-ai/server-node`.
 
 ### The internal format
 
@@ -200,14 +200,14 @@ interface HandlerResponse {
 A server adapter is ~15 lines. It:
 1. Reads the raw request body as a **string** (not parsed JSON — HMAC needs the exact bytes)
 2. Extracts headers as a flat `Record<string, string>` with lowercase keys
-3. Calls `handleRequest(config, { body, headers })` from `@autonoma/sdk`
+3. Calls `handleRequest(config, { body, headers })` from `@autonoma-ai/sdk`
 4. Writes the status code and JSON body to the framework's response
 
 ### Example: Web standard (Next.js, Hono, Bun, Deno)
 
 ```typescript
-import { handleRequest } from '@autonoma/sdk'
-import type { HandlerConfig } from '@autonoma/sdk'
+import { handleRequest } from '@autonoma-ai/sdk'
+import type { HandlerConfig } from '@autonoma-ai/sdk'
 
 export function createHandler(config: HandlerConfig) {
   return async (req: Request): Promise<Response> => {
@@ -229,8 +229,8 @@ export function createHandler(config: HandlerConfig) {
 ### Example: Express
 
 ```typescript
-import { handleRequest } from '@autonoma/sdk'
-import type { HandlerConfig } from '@autonoma/sdk'
+import { handleRequest } from '@autonoma-ai/sdk'
+import type { HandlerConfig } from '@autonoma-ai/sdk'
 
 export function createExpressHandler(config: HandlerConfig) {
   return async (req, res) => {
@@ -254,10 +254,10 @@ export function createExpressHandler(config: HandlerConfig) {
 Not yet formalized as a separate package. Customers implement the `auth` callback directly in the handler config. See the Setup Guide, section 5.
 
 Planned packages for common auth providers:
-- `@autonoma/auth-betterauth`
-- `@autonoma/auth-lucia`
-- `@autonoma/auth-workos`
-- `@autonoma/auth-auth0`
+- `@autonoma-ai/auth-betterauth`
+- `@autonoma-ai/auth-lucia`
+- `@autonoma-ai/auth-workos`
+- `@autonoma-ai/auth-auth0`
 
 ### Planned interface
 
@@ -283,7 +283,7 @@ interface AuthResult {
 An auth adapter wraps the auth provider's API. You'd use it like:
 
 ```typescript
-import { betterAuthAdapter } from '@autonoma/auth-betterauth'
+import { betterAuthAdapter } from '@autonoma-ai/auth-betterauth'
 
 export const POST = createHandler({
   adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),

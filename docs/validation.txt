@@ -10,7 +10,7 @@ The typical workflow: generate a scenario JSON file (by hand or via LLM), then p
 
 ```typescript
 import { readFileSync } from 'node:fs'
-import { checkScenario } from '@autonoma/sdk'
+import { checkScenario } from '@autonoma-ai/sdk'
 
 // Read the scenario file that was just generated
 const scenario = JSON.parse(readFileSync('./scenarios/standard.json', 'utf-8'))
@@ -163,8 +163,8 @@ This test is designed as a reusable harness: generate your scenario JSON files (
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import { PrismaClient } from '@prisma/client'
-import { prismaAdapter } from '@autonoma/sdk-prisma'
-import { checkScenario } from '@autonoma/sdk'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { checkScenario } from '@autonoma-ai/sdk'
 import { execSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -233,7 +233,7 @@ Later, once deployed, the Autonoma platform validates scenarios against your liv
 ## Check multiple scenarios at once
 
 ```typescript
-import { checkAllScenarios } from '@autonoma/sdk'
+import { checkAllScenarios } from '@autonoma-ai/sdk'
 
 const results = await checkAllScenarios(adapter, [
   emptyScenario,
