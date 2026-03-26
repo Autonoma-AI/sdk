@@ -1,0 +1,59 @@
+# @autonoma-ai/server-node
+
+Node.js `http` server adapter for the Autonoma SDK.
+
+## Install
+
+```bash
+pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-node
+```
+
+## Usage
+
+```typescript
+import http from 'node:http'
+import { createNodeHandler } from '@autonoma-ai/server-node'
+import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prisma } from './db'
+
+const handler = createNodeHandler({
+  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user) => {
+    const session = await createSession(user.id as string)
+    return { token: session.token }
+  },
+})
+
+http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/api/autonoma') {
+    return handler(req, res)
+  }
+  res.writeHead(404).end()
+}).listen(3000)
+```
+
+## Auth callback
+
+The `auth` callback receives the first `User` created during setup and must return real credentials that the test runner can use to log in:
+
+```typescript
+// Session cookie
+auth: async (user) => {
+  const session = await createSession(user.id as string)
+  return {
+    cookies: [{ name: 'session', value: session.token, httpOnly: true, sameSite: 'lax', path: '/' }],
+  }
+}
+
+// Bearer token
+auth: async (user) => {
+  const token = jwt.sign({ sub: user.id }, SECRET)
+  return { token }
+}
+```
+
+## Documentation
+
+Full docs: [docs/](../../docs/) — see [setup guide](../../docs/setup.txt).
