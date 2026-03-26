@@ -11,6 +11,13 @@ export interface OrmAdapter {
 
   /** Delete all data scoped to a value. Refs are provided for targeted cleanup of un-scoped models. */
   teardown(scopeValue: string, refs?: Record<string, Record<string, unknown>[]>): Promise<void>
+
+  /**
+   * Update a single record by ID. Used to backfill nullable FKs in circular
+   * dependency cycles (e.g. Application.mainBranchId after Branch is created).
+   * Optional — only required when circular FK relationships exist in the schema.
+   */
+  updateEntity?(model: string, id: string, fields: Record<string, unknown>): Promise<void>
 }
 
 export interface SchemaInfo {

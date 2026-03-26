@@ -11,9 +11,25 @@ export interface CreateOp {
   batch: boolean
 }
 
+/**
+ * A deferred FK update — emitted when a _ref points to a node that hasn't
+ * been created yet (circular dependency). Resolved after all creates.
+ */
+export interface DeferredUpdate {
+  /** Temp ID of the record that needs to be updated */
+  targetTempId: string
+  /** Model name of the record to update */
+  model: string
+  /** Field on the record that holds the deferred FK */
+  field: string
+  /** Alias that will resolve to the FK value once created */
+  refAlias: string
+}
+
 /** Result of resolving a tree scenario */
 export interface ResolvedTree {
   ops: CreateOp[]
+  deferredUpdates: DeferredUpdate[]
   aliases: Map<string, string>
 }
 
@@ -29,6 +45,10 @@ export interface RefNode {
  * Handles both directions:
  *   - FK on child (Application.organizationId → Organization): set child FK to parent ID
  *   - FK on parent (Member.userId → User): create child first, set parent FK to child ID
+ *
+ * Circular FK cycles (e.g. Application.mainBranchId ↔ Branch.applicationId) are handled
+ * transparently: the nullable FK is omitted on the first create and emitted as a
+ * DeferredUpdate to be applied via UPDATE after all records exist.
  */
 export function resolveTree(
   create: Record<string, Record<string, unknown>[]>,
@@ -55,6 +75,7 @@ export function resolveTree(
 
   const aliases = new Map<string, string>()
   const ops: CreateOp[] = []
+  const deferredUpdates: DeferredUpdate[] = []
   let tempCounter = 0
 
   function makeTempId(model: string): string {
@@ -95,7 +116,11 @@ export function resolveTree(
         const refAlias = (value as RefNode)._ref
         const refTempId = aliases.get(refAlias)
         if (!refTempId) {
-          throw new Error(`_ref "${refAlias}" not found. Ensure the referenced node has _alias and is created before this one.`)
+          // Alias not created yet — defer this FK as an UPDATE after all creates.
+          // This handles circular FK cycles (e.g. Application.mainBranchId → Branch
+          // where Branch.applicationId → Application).
+          deferredUpdates.push({ targetTempId: tempId, model: modelName, field: key, refAlias })
+          continue
         }
         fields[key] = refTempId
         continue
@@ -159,5 +184,5 @@ export function resolveTree(
     }
   }
 
-  return { ops, aliases }
+  return { ops, deferredUpdates, aliases }
 }

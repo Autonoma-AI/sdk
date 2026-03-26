@@ -46,6 +46,13 @@ export function drizzleAdapter(
       const { eq } = await import('drizzle-orm')
       return teardown(db, tableMap, schemaInfo, scopeValue, eq)
     },
+
+    async updateEntity(model: string, id: string, fields: Record<string, unknown>) {
+      const table = tableMap.get(model)
+      if (!table) throw new Error(`Model "${model}" not found in Drizzle schema`)
+      const { eq } = await import('drizzle-orm')
+      await db.update(table).set(fields).where(eq((table as any).id, id))
+    },
   }
 }
 

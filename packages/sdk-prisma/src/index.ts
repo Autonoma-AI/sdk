@@ -41,5 +41,10 @@ export function prismaAdapter(
       const schema = this.getSchema()
       return teardown(prisma, schema, scopeValue, refs)
     },
+
+    async updateEntity(model: string, id: string, fields: Record<string, unknown>) {
+      const delegate = prisma[model.charAt(0).toLowerCase() + model.slice(1)]
+      await delegate.update({ where: { id }, data: fields })
+    },
   }
 }

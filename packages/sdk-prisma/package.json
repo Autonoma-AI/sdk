@@ -1,6 +1,6 @@
 {
   "name": "@autonoma-ai/sdk-prisma",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Prisma adapter for Autonoma SDK",
   "type": "module",
   "exports": {

@@ -227,21 +227,22 @@ describe('resolveTree', () => {
     expect(result.ops[0]!.fields.name).toBe('Org [xyz-123]')
   })
 
-  it('throws on missing _ref', () => {
-    expect(() =>
-      resolveTree(
-        {
-          Organization: [{
-            name: 'Acme',
-            applications: [{
-              name: 'App',
-              versions: [{ name: 'v1', applicationId: { _ref: 'nope' } }],
-            }],
+  it('defers unresolved _ref as a DeferredUpdate instead of throwing', () => {
+    const result = resolveTree(
+      {
+        Organization: [{
+          name: 'Acme',
+          applications: [{
+            name: 'App',
+            versions: [{ name: 'v1', applicationId: { _ref: 'nope' } }],
           }],
-        },
-        schema,
-        'run',
-      ),
-    ).toThrow('_ref "nope" not found')
+        }],
+      },
+      schema,
+      'run',
+    )
+    expect(result.deferredUpdates).toHaveLength(1)
+    expect(result.deferredUpdates[0]!.refAlias).toBe('nope')
+    expect(result.deferredUpdates[0]!.field).toBe('applicationId')
   })
 })

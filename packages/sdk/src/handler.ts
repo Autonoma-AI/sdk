@@ -134,6 +134,28 @@ async function handleUp(
     i++
   }
 
+  // Resolve deferred FK updates (circular dependency cycles)
+  for (const deferred of tree.deferredUpdates) {
+    const realTargetId = idMap.get(deferred.targetTempId)
+    const refTempId = tree.aliases.get(deferred.refAlias)
+    const realRefId = refTempId ? idMap.get(refTempId) : undefined
+
+    if (!realTargetId || !realRefId) {
+      throw new Error(
+        `_ref "${deferred.refAlias}" could not be resolved. Ensure the referenced node has _alias defined in the scenario.`,
+      )
+    }
+
+    if (!config.adapter.updateEntity) {
+      throw new Error(
+        `Circular FK detected (${deferred.model}.${deferred.field}), but the ORM adapter does not implement updateEntity. ` +
+        `Upgrade @autonoma-ai/sdk-prisma or @autonoma-ai/sdk-drizzle to a version that supports circular FK resolution.`,
+      )
+    }
+
+    await config.adapter.updateEntity(deferred.model, realTargetId, { [deferred.field]: realRefId })
+  }
+
   const scopeValue = detectScopeValue(refs, schema.scopeField) ?? testRunId
 
   const firstUser = findFirstUser(refs)

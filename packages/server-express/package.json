@@ -1,6 +1,6 @@
 {
   "name": "@autonoma-ai/server-express",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Express/Fastify server adapter for Autonoma SDK",
   "type": "module",
   "exports": {
