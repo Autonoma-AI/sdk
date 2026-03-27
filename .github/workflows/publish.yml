@@ -53,13 +53,15 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # ---------------------------------------------------------------------------
-  # Python → PyPI
+  # Python → PyPI (Trusted Publishing via OIDC — no token needed)
   # ---------------------------------------------------------------------------
   pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
+    environment: pypi
     permissions:
       contents: read
+      id-token: write
     defaults:
       run:
         working-directory: sdks/python
@@ -77,9 +79,9 @@ jobs:
         run: poetry build
 
       - name: Publish to PyPI
-        run: poetry publish --no-interaction
-        env:
-          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_TOKEN }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdks/python/dist/
 
   # ---------------------------------------------------------------------------
   # Elixir → Hex
