@@ -174,7 +174,7 @@ defmodule Autonoma.Ecto.Adapter do
     end)
   end
 
-  defp introspect_edges(mod, model_name, adapter) do
+  defp introspect_edges(mod, model_name, _adapter) do
     associations = mod.__schema__(:associations)
 
     associations

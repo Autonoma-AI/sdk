@@ -43,7 +43,7 @@ defmodule Autonoma.Graph do
 
     # First pass: standard Kahn's
     queue = in_degree |> Enum.filter(fn {_, d} -> d == 0 end) |> Enum.map(fn {n, _} -> n end) |> Enum.sort()
-    {sorted, in_degree} = kahns_loop(queue, adj, in_degree, [])
+    {sorted, _in_degree} = kahns_loop(queue, adj, in_degree, [])
 
     # Find unsorted nodes
     unsorted = Enum.filter(nodes, fn n -> n not in sorted end)
