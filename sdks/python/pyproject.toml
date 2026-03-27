@@ -1,25 +1,57 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
 
-[project]
-name = "autonoma-sdk"
+[tool.poetry]
+name = "autonoma-ai"
 version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = []
+description = "Autonoma SDK — automate the Autonoma Environment Factory endpoint"
+authors = ["Autonoma AI <eng@autonoma.ai>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://autonoma.ai"
+repository = "https://github.com/Autonoma-AI/sdk"
+keywords = ["testing", "e2e", "environment", "factory", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Testing",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+packages = [
+    { include = "autonoma", from = "src" },
+    { include = "autonoma_sqlalchemy", from = "src" },
+    { include = "autonoma_flask", from = "src" },
+    { include = "autonoma_fastapi", from = "src" },
+    { include = "autonoma_django", from = "src" },
+]
 
-[project.optional-dependencies]
-sqlalchemy = ["sqlalchemy>=2.0"]
-flask = ["flask>=3.0"]
-fastapi = ["fastapi>=0.100", "uvicorn"]
-django = ["django>=4.2"]
-postgres = ["psycopg2-binary>=2.9"]
-testcontainers = ["testcontainers[postgres]>=4.0", "psycopg2-binary>=2.9"]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "testcontainers[postgres]>=4.0", "psycopg2-binary>=2.9"]
-all = ["sqlalchemy>=2.0", "flask>=3.0", "fastapi>=0.100", "uvicorn", "django>=4.2", "psycopg2-binary>=2.9"]
+[tool.poetry.extras]
+sqlalchemy = ["sqlalchemy"]
+flask = ["flask"]
+fastapi = ["fastapi", "uvicorn"]
+django = ["django"]
+postgres = ["psycopg2-binary"]
+all = ["sqlalchemy", "flask", "fastapi", "uvicorn", "django", "psycopg2-binary"]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/autonoma", "src/autonoma_sqlalchemy", "src/autonoma_flask", "src/autonoma_fastapi", "src/autonoma_django"]
+[tool.poetry.dependencies]
+python = ">=3.10"
+sqlalchemy = { version = ">=2.0", optional = true }
+flask = { version = ">=3.0", optional = true }
+fastapi = { version = ">=0.100", optional = true }
+uvicorn = { version = "*", optional = true }
+django = { version = ">=4.2", optional = true }
+psycopg2-binary = { version = ">=2.9", optional = true }
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0"
+pytest-asyncio = ">=0.21"
+testcontainers = { version = ">=4.0", extras = ["postgres"] }
+psycopg2-binary = ">=2.9"
+httpx = "*"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

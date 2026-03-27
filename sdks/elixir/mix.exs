@@ -1,14 +1,26 @@
 defmodule Autonoma.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @source_url "https://github.com/Autonoma-AI/sdk"
+
   def project do
     [
       app: :autonoma,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      elixirc_paths: elixirc_paths(Mix.env())
+      elixirc_paths: elixirc_paths(Mix.env()),
+
+      # Hex
+      description: "Autonoma SDK — automate the Autonoma Environment Factory endpoint",
+      package: package(),
+      source_url: @source_url,
+
+      # Docs
+      name: "Autonoma",
+      docs: docs()
     ]
   end
 
@@ -27,9 +39,32 @@ defmodule Autonoma.MixProject do
       {:plug, "~> 1.14", optional: true},
       {:ecto, "~> 3.10", optional: true},
       {:ecto_sql, "~> 3.10", optional: true},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:ecto_sqlite3, "~> 0.17", only: :test},
       {:postgrex, "~> 0.19", only: :test},
       {:testcontainers, "~> 1.11", only: :test}
+    ]
+  end
+
+  defp package do
+    [
+      name: "autonoma",
+      licenses: ["MIT"],
+      links: %{
+        "GitHub" => @source_url,
+        "Homepage" => "https://autonoma.ai"
+      },
+      maintainers: ["Autonoma AI"],
+      files: ~w(lib mix.exs README.md LICENSE)
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md"],
+      source_ref: "v#{@version}",
+      source_url: @source_url
     ]
   end
 end
