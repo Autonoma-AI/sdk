@@ -9,10 +9,9 @@ export default defineConfig({
     },
   },
   test: {
-    exclude: [
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/integration.test.*',
-    ],
+    include: ['**/integration.test.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**'],
+    hookTimeout: 120_000,
+    testTimeout: 120_000,
   },
 })

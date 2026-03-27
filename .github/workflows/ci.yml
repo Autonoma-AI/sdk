@@ -79,7 +79,7 @@ jobs:
           npx prisma generate --schema packages/sdk-prisma/test/prisma/schema.prisma
 
       - name: Run adapter integration tests (Prisma + Drizzle)
-        run: npx vitest run packages/sdk-prisma/test/integration.test.ts packages/sdk-drizzle/test/integration.test.ts --testTimeout 120000
+        run: npx vitest run packages/sdk-prisma/test/integration.test.ts packages/sdk-drizzle/test/integration.test.ts --config vitest.integration.config.ts
 
       - name: Run integration tests (quarita)
         run: npx vitest run tests/integration/quarita/scenarios.test.ts tests/integration/quarita/nested.test.ts --testTimeout 120000
