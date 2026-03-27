@@ -5,7 +5,7 @@ import { signBody, verifySignature } from '../../sdks/typescript/packages/sdk/sr
 import { signRefs, verifyRefs } from '../../sdks/typescript/packages/sdk/src/refs'
 import { fingerprint } from '../../sdks/typescript/packages/sdk/src/fingerprint'
 
-const input = JSON.parse(readFileSync('/dev/stdin', 'utf-8'))
+const input = JSON.parse(readFileSync(0, 'utf-8'))
 
 async function main() {
   try {
