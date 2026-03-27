@@ -3,24 +3,24 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Optional
+from typing import Any, Optional
 
 
-def topo_sort(nodes: list[str], edges: list[dict]) -> dict:
+def topo_sort(nodes: list[str], edges: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Topological sort of nodes by FK dependency edges.
     Returns {"sorted": [...], "cycles": [[...]]}.
     """
     # Filter to only edges between known nodes, skip self-referential
-    node_set = set(nodes)
-    relevant_edges = [
+    node_set: set[str] = set(nodes)
+    relevant_edges: list[dict[str, Any]] = [
         e for e in edges
         if e["from"] != e["to"] and e["from"] in node_set and e["to"] in node_set
     ]
 
     # Build in-degree map and adjacency list
-    in_degree = {n: 0 for n in nodes}
-    adj = defaultdict(list)
+    in_degree: dict[str, int] = {n: 0 for n in nodes}
+    adj: dict[str, list[str]] = defaultdict(list)
 
     for e in relevant_edges:
         # e["from"] depends on e["to"] (from has the FK pointing to to)
@@ -28,11 +28,11 @@ def topo_sort(nodes: list[str], edges: list[dict]) -> dict:
         in_degree[e["from"]] = in_degree.get(e["from"], 0) + 1
 
     # First pass: standard Kahn's
-    queue = sorted([n for n, d in in_degree.items() if d == 0])
-    sorted_nodes = []
+    queue: list[str] = sorted([n for n, d in in_degree.items() if d == 0])
+    sorted_nodes: list[str] = []
 
     while queue:
-        node = queue.pop(0)
+        node: str = queue.pop(0)
         sorted_nodes.append(node)
         for neighbor in adj.get(node, []):
             in_degree[neighbor] -= 1
@@ -41,34 +41,34 @@ def topo_sort(nodes: list[str], edges: list[dict]) -> dict:
         queue.sort()
 
     # Find unsorted nodes
-    unsorted = [n for n in nodes if n not in sorted_nodes]
+    unsorted: list[str] = [n for n in nodes if n not in sorted_nodes]
 
     if not unsorted:
         return {"sorted": sorted_nodes, "cycles": []}
 
-    cycles = _find_sccs(unsorted, relevant_edges)
+    cycles: list[list[str]] = _find_sccs(unsorted, relevant_edges)
 
     if not cycles:
         return {"sorted": sorted_nodes, "cycles": []}
 
     # Second pass: treat cycle nodes as resolved and re-sort remaining
-    cycle_nodes = set()
+    cycle_nodes: set[str] = set()
     for c in cycles:
         cycle_nodes.update(c)
 
-    still_unsorted = [n for n in unsorted if n not in cycle_nodes]
+    still_unsorted: list[str] = [n for n in unsorted if n not in cycle_nodes]
 
     if still_unsorted:
-        in_deg2 = {n: 0 for n in still_unsorted}
-        adj2 = defaultdict(list)
-        still_set = set(still_unsorted)
+        in_deg2: dict[str, int] = {n: 0 for n in still_unsorted}
+        adj2: dict[str, list[str]] = defaultdict(list)
+        still_set: set[str] = set(still_unsorted)
 
         for e in relevant_edges:
             if e["from"] in still_set and e["to"] in still_set:
                 adj2[e["to"]].append(e["from"])
                 in_deg2[e["from"]] = in_deg2.get(e["from"], 0) + 1
 
-        queue2 = sorted([n for n, d in in_deg2.items() if d == 0])
+        queue2: list[str] = sorted([n for n, d in in_deg2.items() if d == 0])
         while queue2:
             node = queue2.pop(0)
             sorted_nodes.append(node)
@@ -81,23 +81,23 @@ def topo_sort(nodes: list[str], edges: list[dict]) -> dict:
     return {"sorted": sorted_nodes, "cycles": cycles}
 
 
-def _find_sccs(nodes: list[str], edges: list[dict]) -> list[list[str]]:
+def _find_sccs(nodes: list[str], edges: list[dict[str, Any]]) -> list[list[str]]:
     """Tarjan's SCC algorithm to identify exact cycles among remaining nodes."""
-    node_set = set(nodes)
-    adj = defaultdict(list)
+    node_set: set[str] = set(nodes)
+    adj: dict[str, list[str]] = defaultdict(list)
 
     for e in edges:
         if e["from"] in node_set and e["to"] in node_set:
             adj[e["to"]].append(e["from"])
 
-    index_counter = [0]
-    stack = []
-    on_stack = set()
-    indices = {}
-    lowlinks = {}
-    sccs = []
+    index_counter: list[int] = [0]
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    indices: dict[str, int] = {}
+    lowlinks: dict[str, int] = {}
+    sccs: list[list[str]] = []
 
-    def strong_connect(v):
+    def strong_connect(v: str) -> None:
         indices[v] = index_counter[0]
         lowlinks[v] = index_counter[0]
         index_counter[0] += 1
@@ -112,7 +112,7 @@ def _find_sccs(nodes: list[str], edges: list[dict]) -> list[list[str]]:
                 lowlinks[v] = min(lowlinks[v], indices[w])
 
         if lowlinks[v] == indices[v]:
-            scc = []
+            scc: list[str] = []
             while True:
                 w = stack.pop()
                 on_stack.discard(w)
@@ -129,9 +129,9 @@ def _find_sccs(nodes: list[str], edges: list[dict]) -> list[list[str]]:
     return sccs
 
 
-def find_deferrable_edge(cycle: list[str], edges: list[dict]) -> Optional[dict]:
+def find_deferrable_edge(cycle: list[str], edges: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """Find a nullable FK edge in a cycle that can be deferred."""
-    cycle_set = set(cycle)
+    cycle_set: set[str] = set(cycle)
     for e in edges:
         if (
             e["from"] in cycle_set

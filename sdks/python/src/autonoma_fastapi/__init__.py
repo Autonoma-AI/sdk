@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -11,12 +11,9 @@ from fastapi.responses import JSONResponse
 from autonoma.handler import handle_request
 from autonoma.types import HandlerConfig, HandlerRequest
 
-if TYPE_CHECKING:
-    pass
-
 
 def _enrich_config(config: HandlerConfig, server_name: str) -> HandlerConfig:
-    enriched = copy.copy(config)
+    enriched: HandlerConfig = copy.copy(config)
     enriched.sdk_server = server_name  # type: ignore[attr-defined]
     return enriched
 
@@ -30,17 +27,17 @@ def create_fastapi_handler(config: HandlerConfig) -> APIRouter:
         router = create_fastapi_handler(config)
         app.include_router(router, prefix="/api/autonoma")
     """
-    router = APIRouter()
-    enriched = _enrich_config(config, "fastapi")
+    router: APIRouter = APIRouter()
+    enriched: HandlerConfig = _enrich_config(config, "fastapi")
 
     @router.post("/")
     async def autonoma_handler(request: Request) -> JSONResponse:
-        body = await request.body()
-        body_str = body.decode("utf-8")
-        headers = {k.lower(): v for k, v in request.headers.items()}
+        body: bytes = await request.body()
+        body_str: str = body.decode("utf-8")
+        headers: dict[str, str] = {k.lower(): v for k, v in request.headers.items()}
 
-        req = HandlerRequest(body=body_str, headers=headers)
-        result = await handle_request(enriched, req)
+        req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
+        result: dict[str, Any] = await handle_request(enriched, req)
 
         return JSONResponse(status_code=result["status"], content=result["body"])
 
@@ -49,13 +46,13 @@ def create_fastapi_handler(config: HandlerConfig) -> APIRouter:
 
 async def fastapi_handler(config: HandlerConfig, request: Request) -> JSONResponse:
     """Standalone async handler for use in custom routes."""
-    enriched = _enrich_config(config, "fastapi")
+    enriched: HandlerConfig = _enrich_config(config, "fastapi")
 
-    body = await request.body()
-    body_str = body.decode("utf-8")
-    headers = {k.lower(): v for k, v in request.headers.items()}
+    body: bytes = await request.body()
+    body_str: str = body.decode("utf-8")
+    headers: dict[str, str] = {k.lower(): v for k, v in request.headers.items()}
 
-    req = HandlerRequest(body=body_str, headers=headers)
-    result = await handle_request(enriched, req)
+    req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
+    result: dict[str, Any] = await handle_request(enriched, req)
 
     return JSONResponse(status_code=result["status"], content=result["body"])

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 
 @dataclass
@@ -48,11 +48,11 @@ class SchemaInfo:
 
 @dataclass
 class HandlerConfig:
-    adapter: "OrmAdapter"
+    adapter: OrmAdapter
     shared_secret: str
     signing_secret: str
     allow_production: bool = False
-    auth: Optional[callable] = None
+    auth: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None
 
 
 @dataclass
@@ -64,11 +64,11 @@ class HandlerRequest:
 @dataclass
 class HandlerResponse:
     status: int
-    body: dict
+    body: dict[str, Any]
 
 
 @runtime_checkable
 class OrmAdapter(Protocol):
-    def get_schema(self) -> dict: ...
-    async def create_entities(self, spec: dict, context: dict) -> dict: ...
-    async def teardown(self, scope_value: str, refs: Optional[dict] = None) -> None: ...
+    def get_schema(self) -> dict[str, Any]: ...
+    async def create_entities(self, spec: dict[str, Any], context: dict[str, Any]) -> dict[str, list[dict[str, Any]]]: ...
+    async def teardown(self, scope_value: str, refs: Optional[dict[str, Any]] = None) -> None: ...

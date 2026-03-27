@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Session
 
 from autonoma.graph import topo_sort, find_deferrable_edge
 
@@ -20,24 +21,24 @@ class SQLAlchemyAdapter:
 
     name = "sqlalchemy"
 
-    def __init__(self, session_factory, models: list, scope_field: str = "organization_id"):
+    def __init__(self, session_factory: Any, models: list[type[Any]], scope_field: str = "organization_id") -> None:
         self._session_factory = session_factory
-        self._models = models
-        self._scope_field = scope_field
-        self._model_map: dict[str, Any] = {m.__name__: m for m in models}
-        self._cached_schema: Optional[dict] = None
+        self._models: list[type[Any]] = models
+        self._scope_field: str = scope_field
+        self._model_map: dict[str, type[Any]] = {m.__name__: m for m in models}
+        self._cached_schema: Optional[dict[str, Any]] = None
 
-    def get_schema(self) -> dict:
+    def get_schema(self) -> dict[str, Any]:
         if self._cached_schema is not None:
             return self._cached_schema
 
-        models_info = []
-        edges = []
-        relations = []
+        models_info: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        relations: list[dict[str, str]] = []
 
         for model in self._models:
             mapper = sa_inspect(model)
-            fields = []
+            fields: list[dict[str, Any]] = []
             for col in mapper.columns:
                 fields.append({
                     "name": col.name,
@@ -61,8 +62,8 @@ class SQLAlchemyAdapter:
                     local_col = local_cols[0]
                     remote_col = remote_cols[0]
                     # Find the target model name (PascalCase) from the table name
-                    target_table = remote_col.column.table.name
-                    target_model_name = self._table_to_model_name(target_table)
+                    target_table: str = remote_col.column.table.name
+                    target_model_name: str = self._table_to_model_name(target_table)
                     edges.append({
                         "from": model.__name__,
                         "to": target_model_name,
@@ -77,7 +78,7 @@ class SQLAlchemyAdapter:
                     # This model holds the FK
                     local_pairs = list(rel.local_columns)
                     if local_pairs:
-                        local_col_name = list(rel.local_columns)[0].name
+                        local_col_name: str = list(rel.local_columns)[0].name
                         relations.append({
                             "parentModel": model.__name__,
                             "childModel": rel.mapper.class_.__name__,
@@ -93,18 +94,18 @@ class SQLAlchemyAdapter:
         }
         return self._cached_schema
 
-    async def create_entities(self, spec: dict, context: dict) -> dict:
+    async def create_entities(self, spec: dict[str, Any], context: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         """Create entities in the database. spec maps model names to {fields: [...], batch: bool}."""
-        session = self._session_factory()
-        results: dict[str, list[dict]] = {}
+        session: Session = self._session_factory()
+        results: dict[str, list[dict[str, Any]]] = {}
 
         try:
             for model_name, entity_spec in spec.items():
-                model_cls = self._model_map.get(model_name)
+                model_cls: type[Any] | None = self._model_map.get(model_name)
                 if model_cls is None:
                     raise ValueError(f"Unknown model: {model_name}")
 
-                created = []
+                created: list[dict[str, Any]] = []
                 for field_data in entity_spec.get("fields", []):
                     instance = model_cls(**field_data)
                     session.add(instance)
@@ -122,16 +123,16 @@ class SQLAlchemyAdapter:
 
         return results
 
-    async def teardown(self, scope_value: str, refs: Optional[dict] = None) -> None:
+    async def teardown(self, scope_value: str, refs: Optional[dict[str, Any]] = None) -> None:
         """Delete all data scoped to scope_value in reverse topological order."""
-        schema = self.get_schema()
-        model_names = [m["name"] for m in schema["models"]]
-        result = topo_sort(model_names, schema["edges"])
-        sorted_models = result["sorted"]
-        cycles = result["cycles"]
+        schema: dict[str, Any] = self.get_schema()
+        model_names: list[str] = [m["name"] for m in schema["models"]]
+        result: dict[str, Any] = topo_sort(model_names, schema["edges"])
+        sorted_models: list[str] = result["sorted"]
+        cycles: list[list[str]] = result["cycles"]
 
         # Find scope root model (model that scope FK points TO)
-        scope_root = None
+        scope_root: str | None = None
         for edge in schema["edges"]:
             if edge["localField"] == self._scope_field and edge["to"] != edge["from"]:
                 scope_root = edge["to"]
@@ -144,14 +145,14 @@ class SQLAlchemyAdapter:
                 if edge["to"] == scope_root and edge["from"] != scope_root:
                     scope_fk_by_model[edge["from"]] = edge["localField"]
 
-        session = self._session_factory()
+        session: Session = self._session_factory()
         try:
             # Break cycles by nullifying deferrable edges
             for cycle in cycles:
                 edge = find_deferrable_edge(cycle, schema["edges"])
                 if edge:
                     model_cls = self._model_map.get(edge["from"])
-                    scope_fk = scope_fk_by_model.get(edge["from"])
+                    scope_fk: str | None = scope_fk_by_model.get(edge["from"])
                     if model_cls and scope_fk:
                         session.query(model_cls).filter(
                             getattr(model_cls, scope_fk) == scope_value
@@ -182,20 +183,26 @@ class SQLAlchemyAdapter:
         finally:
             session.close()
 
-    def _delete_model(self, session, model_name: str, scope_value: str,
-                      scope_fk_by_model: dict, scope_root: Optional[str],
-                      refs: Optional[dict]) -> None:
-        model_cls = self._model_map.get(model_name)
+    def _delete_model(
+        self,
+        session: Session,
+        model_name: str,
+        scope_value: str,
+        scope_fk_by_model: dict[str, str],
+        scope_root: str | None,
+        refs: Optional[dict[str, Any]],
+    ) -> None:
+        model_cls: type[Any] | None = self._model_map.get(model_name)
         if not model_cls:
             return
 
-        scope_fk = scope_fk_by_model.get(model_name)
+        scope_fk: str | None = scope_fk_by_model.get(model_name)
         if scope_fk:
             session.query(model_cls).filter(
                 getattr(model_cls, scope_fk) == scope_value
             ).delete()
         elif refs and model_name in refs:
-            ids = [r.get("id") for r in refs[model_name] if r.get("id")]
+            ids: list[Any] = [r.get("id") for r in refs[model_name] if r.get("id")]
             if ids:
                 pk_col = sa_inspect(model_cls).primary_key[0]
                 session.query(model_cls).filter(pk_col.in_(ids)).delete()
@@ -207,7 +214,7 @@ class SQLAlchemyAdapter:
                 return model.__name__
         return table_name
 
-    def _instance_to_dict(self, instance) -> dict:
+    def _instance_to_dict(self, instance: Any) -> dict[str, Any]:
         """Convert a SQLAlchemy model instance to a dict."""
         mapper = sa_inspect(type(instance))
         return {col.name: getattr(instance, col.name) for col in mapper.columns}

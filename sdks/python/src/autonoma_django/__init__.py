@@ -27,23 +27,23 @@ class DjangoAdapter:
 
     name = "django"
 
-    def __init__(self, models: list, scope_field: str = "organization_id"):
-        self._models = models
-        self._scope_field = scope_field
-        self._model_map: dict[str, Any] = {m.__name__: m for m in models}
-        self._cached_schema: Optional[dict] = None
+    def __init__(self, models: list[type[Any]], scope_field: str = "organization_id") -> None:
+        self._models: list[type[Any]] = models
+        self._scope_field: str = scope_field
+        self._model_map: dict[str, type[Any]] = {m.__name__: m for m in models}
+        self._cached_schema: Optional[dict[str, Any]] = None
 
-    def get_schema(self) -> dict:
+    def get_schema(self) -> dict[str, Any]:
         if self._cached_schema is not None:
             return self._cached_schema
 
-        models_info = []
-        edges = []
-        relations = []
+        models_info: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        relations: list[dict[str, str]] = []
 
         for model in self._models:
             meta = model._meta
-            fields = []
+            fields: list[dict[str, Any]] = []
 
             for field in meta.get_fields():
                 # Skip reverse relations
@@ -65,7 +65,7 @@ class DjangoAdapter:
 
                 # FK edges
                 if field.is_relation and hasattr(field, "related_model") and field.related_model:
-                    target_model = field.related_model
+                    target_model: type[Any] = field.related_model
                     if target_model.__name__ in self._model_map:
                         edges.append({
                             "from": model.__name__,
@@ -85,22 +85,22 @@ class DjangoAdapter:
         }
         return self._cached_schema
 
-    async def create_entities(self, spec: dict, context: dict) -> dict:
+    async def create_entities(self, spec: dict[str, Any], context: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         from asgiref.sync import sync_to_async
         return await sync_to_async(self._create_entities_sync)(spec, context)
 
-    def _create_entities_sync(self, spec: dict, context: dict) -> dict:
+    def _create_entities_sync(self, spec: dict[str, Any], context: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         from django.db import transaction
 
-        results: dict[str, list[dict]] = {}
+        results: dict[str, list[dict[str, Any]]] = {}
 
         with transaction.atomic():
             for model_name, entity_spec in spec.items():
-                model_cls = self._model_map.get(model_name)
+                model_cls: type[Any] | None = self._model_map.get(model_name)
                 if model_cls is None:
                     raise ValueError(f"Unknown model: {model_name}")
 
-                created = []
+                created: list[dict[str, Any]] = []
                 for field_data in entity_spec.get("fields", []):
                     instance = model_cls(**field_data)
                     instance.save()
@@ -110,20 +110,20 @@ class DjangoAdapter:
 
         return results
 
-    async def teardown(self, scope_value: str, refs: Optional[dict] = None) -> None:
+    async def teardown(self, scope_value: str, refs: Optional[dict[str, Any]] = None) -> None:
         from asgiref.sync import sync_to_async
         return await sync_to_async(self._teardown_sync)(scope_value, refs)
 
-    def _teardown_sync(self, scope_value: str, refs: Optional[dict] = None) -> None:
+    def _teardown_sync(self, scope_value: str, refs: Optional[dict[str, Any]] = None) -> None:
         from django.db import transaction
 
-        schema = self.get_schema()
-        model_names = [m["name"] for m in schema["models"]]
-        result = topo_sort(model_names, schema["edges"])
-        sorted_models = result["sorted"]
-        cycles = result["cycles"]
+        schema: dict[str, Any] = self.get_schema()
+        model_names: list[str] = [m["name"] for m in schema["models"]]
+        result: dict[str, Any] = topo_sort(model_names, schema["edges"])
+        sorted_models: list[str] = result["sorted"]
+        cycles: list[list[str]] = result["cycles"]
 
-        scope_root = None
+        scope_root: str | None = None
         for edge in schema["edges"]:
             if edge["localField"] == self._scope_field and edge["to"] != edge["from"]:
                 scope_root = edge["to"]
@@ -140,8 +140,8 @@ class DjangoAdapter:
             for cycle in cycles:
                 edge = find_deferrable_edge(cycle, schema["edges"])
                 if edge:
-                    model_cls = self._model_map.get(edge["from"])
-                    scope_fk = scope_fk_by_model.get(edge["from"])
+                    model_cls: type[Any] | None = self._model_map.get(edge["from"])
+                    scope_fk: str | None = scope_fk_by_model.get(edge["from"])
                     if model_cls and scope_fk:
                         model_cls.objects.filter(**{scope_fk: scope_value}).update(**{edge["localField"]: None})
 
@@ -162,27 +162,32 @@ class DjangoAdapter:
                 if model_cls:
                     model_cls.objects.filter(pk=scope_value).delete()
 
-    def _delete_model(self, model_name: str, scope_value: str,
-                      scope_fk_by_model: dict, scope_root: Optional[str],
-                      refs: Optional[dict]) -> None:
-        model_cls = self._model_map.get(model_name)
+    def _delete_model(
+        self,
+        model_name: str,
+        scope_value: str,
+        scope_fk_by_model: dict[str, str],
+        scope_root: str | None,
+        refs: Optional[dict[str, Any]],
+    ) -> None:
+        model_cls: type[Any] | None = self._model_map.get(model_name)
         if not model_cls:
             return
 
-        scope_fk = scope_fk_by_model.get(model_name)
+        scope_fk: str | None = scope_fk_by_model.get(model_name)
         if scope_fk:
             model_cls.objects.filter(**{scope_fk: scope_value}).delete()
         elif refs and model_name in refs:
-            ids = [r.get("id") for r in refs[model_name] if r.get("id")]
+            ids: list[Any] = [r.get("id") for r in refs[model_name] if r.get("id")]
             if ids:
                 model_cls.objects.filter(pk__in=ids).delete()
 
-    def _instance_to_dict(self, instance) -> dict:
-        result = {}
+    def _instance_to_dict(self, instance: Any) -> dict[str, Any]:
+        result: dict[str, Any] = {}
         for field in instance._meta.get_fields():
             if field.is_relation and not field.concrete:
                 continue
-            col = field.column if hasattr(field, "column") else field.name
+            col: str = field.column if hasattr(field, "column") else field.name
             result[col] = getattr(instance, field.attname if hasattr(field, "attname") else field.name, None)
         return result
 
@@ -192,12 +197,12 @@ class DjangoAdapter:
 # ---------------------------------------------------------------------------
 
 def _enrich_config(config: HandlerConfig, server_name: str) -> HandlerConfig:
-    enriched = copy.copy(config)
+    enriched: HandlerConfig = copy.copy(config)
     enriched.sdk_server = server_name  # type: ignore[attr-defined]
     return enriched
 
 
-def create_django_handler(config: HandlerConfig):
+def create_django_handler(config: HandlerConfig) -> Any:
     """Create a Django view function for the Autonoma protocol endpoint.
 
     Usage::
@@ -209,22 +214,22 @@ def create_django_handler(config: HandlerConfig):
     from django.views.decorators.csrf import csrf_exempt
     from django.views.decorators.http import require_POST
 
-    enriched = _enrich_config(config, "django")
+    enriched: HandlerConfig = _enrich_config(config, "django")
 
     @csrf_exempt
     @require_POST
-    def handler(request):
-        body_str = request.body.decode("utf-8")
-        headers = {}
+    def handler(request: Any) -> JsonResponse:
+        body_str: str = request.body.decode("utf-8")
+        headers: dict[str, str] = {}
         for key, value in request.META.items():
             if key.startswith("HTTP_"):
-                header_name = key[5:].lower().replace("_", "-")
+                header_name: str = key[5:].lower().replace("_", "-")
                 headers[header_name] = value
         if "CONTENT_TYPE" in request.META:
             headers["content-type"] = request.META["CONTENT_TYPE"]
 
-        req = HandlerRequest(body=body_str, headers=headers)
-        result = asyncio.run(handle_request(enriched, req))
+        req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
+        result: dict[str, Any] = asyncio.run(handle_request(enriched, req))
 
         return JsonResponse(result["body"], status=result["status"])
 
