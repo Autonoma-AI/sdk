@@ -5,4 +5,5 @@ Application.put_env(:autonoma, Autonoma.TestRepo, database: ":memory:", pool_siz
 # Run migrations
 Autonoma.TestMigrations.up(Autonoma.TestRepo)
 
-ExUnit.start()
+# Exclude postgres integration tests by default (run with: mix test --include postgres)
+ExUnit.start(exclude: [:postgres])

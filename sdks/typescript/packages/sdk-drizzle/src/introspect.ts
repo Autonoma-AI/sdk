@@ -61,19 +61,32 @@ export function introspectDrizzle(
     models.push({ name: tableName, fields })
   }
 
-  // Extract relations from the schema
+  // Extract FK edges from column-level references() and relations API
+  for (const [key, table] of tables) {
+    const tableName = getTableName(table, key)
+    const fkEdges = extractForeignKeys(table, tableName)
+    edges.push(...fkEdges)
+  }
+
   for (const [key, value] of Object.entries(schema)) {
     if (isRelations(value)) {
       const rels = extractRelations(value)
       for (const rel of rels) {
         if (rel.columns?.length && rel.foreignColumns?.length) {
-          edges.push({
-            from: getRelationSourceTable(key, tables),
-            to: rel.referencedTableName,
-            localField: rel.columns[0]!.name,
-            foreignField: rel.foreignColumns[0]!.name,
-            nullable: !rel.isNullable,
-          })
+          const from = getRelationSourceTable(key, tables)
+          // Skip if we already have this edge from column-level references
+          const exists = edges.some(
+            (e) => e.from === from && e.localField === rel.columns![0]!.name,
+          )
+          if (!exists) {
+            edges.push({
+              from,
+              to: rel.referencedTableName,
+              localField: rel.columns[0]!.name,
+              foreignField: rel.foreignColumns[0]!.name,
+              nullable: !rel.isNullable,
+            })
+          }
         }
       }
     }
@@ -116,6 +129,42 @@ function getTableColumns(table: DrizzleTable): Record<string, DrizzleColumn> {
     }
   }
   return cols
+}
+
+/**
+ * Extract FK edges from a Drizzle table's column-level references().
+ * Uses getTableConfig() from drizzle-orm/pg-core when available,
+ * falls back to checking column foreignKeys for other dialects.
+ */
+function extractForeignKeys(table: DrizzleTable, tableName: string): FKEdge[] {
+  const edges: FKEdge[] = []
+  try {
+    // Try pg-core's getTableConfig
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getTableConfig } = require('drizzle-orm/pg-core')
+    const config = getTableConfig(table)
+    if (config?.foreignKeys) {
+      for (const fk of config.foreignKeys) {
+        const ref = fk.reference()
+        if (ref.columns?.length && ref.foreignColumns?.length) {
+          const foreignTableName =
+            ref.foreignTable?.[Symbol.for('drizzle:Name')] ??
+            ref.foreignTable?._?.name ??
+            'unknown'
+          edges.push({
+            from: tableName,
+            to: foreignTableName,
+            localField: ref.columns[0].name,
+            foreignField: ref.foreignColumns[0].name,
+            nullable: !ref.columns[0].notNull,
+          })
+        }
+      }
+    }
+  } catch {
+    // getTableConfig not available (e.g. mysql/sqlite dialect) — skip
+  }
+  return edges
 }
 
 function extractRelations(_value: unknown): DrizzleRelation[] {
