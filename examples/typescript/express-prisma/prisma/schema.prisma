@@ -1,0 +1,70 @@
+// =============================================================================
+// Database Schema
+// =============================================================================
+// This is a typical multi-tenant SaaS schema. The key concept for Autonoma is
+// the "scope field" — a field that exists on every model and ties all data to
+// a specific tenant. Autonoma uses this to isolate test data and clean it up.
+//
+// In this example, `organizationId` is our scope field. Every model has it,
+// and Autonoma will use it to scope test data creation and teardown.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// The root tenant model — everything belongs to an Organization
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  // Relations: an Organization has many Users and Projects
+  users    User[]
+  projects Project[]
+}
+
+// A user belongs to an Organization
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  name           String
+  organizationId String
+  createdAt      DateTime @default(now())
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id])
+  tasks        Task[]
+}
+
+// A project belongs to an Organization
+model Project {
+  id             String   @id @default(uuid())
+  name           String
+  organizationId String
+  createdAt      DateTime @default(now())
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id])
+  tasks        Task[]
+}
+
+// A task belongs to a Project and is assigned to a User
+// This model demonstrates a many-to-one relationship with two foreign keys
+model Task {
+  id             String   @id @default(uuid())
+  title          String
+  status         String   @default("todo")
+  organizationId String
+  projectId      String
+  assigneeId     String
+  createdAt      DateTime @default(now())
+
+  // Relations
+  project  Project @relation(fields: [projectId], references: [id])
+  assignee User    @relation(fields: [assigneeId], references: [id])
+}
