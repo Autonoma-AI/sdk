@@ -19,6 +19,7 @@ export async function createEntities(
   columnMaps: Map<string, Map<string, string>>,
   spec: Record<string, ResolvedEntitySpec>,
   _context: CreateContext,
+  enumTypeMaps: Map<string, Map<string, string>> = new Map(),
 ): Promise<Record<string, Record<string, unknown>[]>> {
   const results: Record<string, Record<string, unknown>[]> = {}
 
@@ -26,13 +27,14 @@ export async function createEntities(
     const dbTable = tableMap.get(model)
     if (!dbTable) throw new Error(`Unknown model "${model}". Not found in database tables.`)
     const colMap = columnMaps.get(model) ?? new Map<string, string>()
+    const enumTypeMap = enumTypeMaps.get(model) ?? new Map<string, string>()
 
     if (entitySpec.batch && entitySpec.fields.length > 0) {
-      results[model] = await insertBatch(executor, dialect, dbTable, colMap, entitySpec.fields)
+      results[model] = await insertBatch(executor, dialect, dbTable, colMap, enumTypeMap, entitySpec.fields)
     } else {
       const created: Record<string, unknown>[] = []
       for (const fields of entitySpec.fields) {
-        const [record] = await insertOne(executor, dialect, dbTable, colMap, fields)
+        const [record] = await insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields)
         if (record) created.push(record)
       }
       results[model] = created
@@ -53,10 +55,12 @@ export async function updateEntity(
   model: string,
   id: string,
   fields: Record<string, unknown>,
+  enumTypeMaps: Map<string, Map<string, string>> = new Map(),
 ): Promise<void> {
   const dbTable = tableMap.get(model)
   if (!dbTable) throw new Error(`Unknown model "${model}" for update.`)
   const colMap = columnMaps.get(model) ?? new Map<string, string>()
+  const enumTypeMap = enumTypeMaps.get(model) ?? new Map<string, string>()
 
   const setClauses: string[] = []
   const params: unknown[] = []
@@ -64,7 +68,7 @@ export async function updateEntity(
 
   for (const [fieldName, value] of Object.entries(fields)) {
     const dbCol = colMap.get(fieldName) ?? fieldName
-    setClauses.push(`${dialect.quoteId(dbCol)} = ${dialect.param(paramIdx)}`)
+    setClauses.push(`${dialect.quoteId(dbCol)} = ${castParam(dialect, paramIdx, enumTypeMap, fieldName)}`)
     params.push(serializeValue(value, dialect))
     paramIdx++
   }
@@ -83,6 +87,7 @@ async function insertOne(
   dialect: Dialect,
   dbTable: string,
   colMap: Map<string, string>,
+  enumTypeMap: Map<string, string>,
   fields: Record<string, unknown>,
 ): Promise<Record<string, unknown>[]> {
   // Always generate a client-side ID when none is provided.
@@ -109,7 +114,7 @@ async function insertOne(
   for (const [fieldName, value] of entries) {
     const dbCol = colMap.get(fieldName) ?? fieldName
     dbCols.push(dialect.quoteId(dbCol))
-    placeholders.push(dialect.param(paramIdx))
+    placeholders.push(castParam(dialect, paramIdx, enumTypeMap, fieldName))
     params.push(serializeValue(value, dialect))
     paramIdx++
   }
@@ -145,6 +150,7 @@ async function insertBatch(
   dialect: Dialect,
   dbTable: string,
   colMap: Map<string, string>,
+  enumTypeMap: Map<string, string>,
   fieldsArr: Record<string, unknown>[],
 ): Promise<Record<string, unknown>[]> {
   if (fieldsArr.length === 0) return []
@@ -168,7 +174,7 @@ async function insertBatch(
   for (const fields of fieldsArr) {
     const placeholders: string[] = []
     for (const fieldName of fieldNames) {
-      placeholders.push(dialect.param(paramIdx))
+      placeholders.push(castParam(dialect, paramIdx, enumTypeMap, fieldName))
       params.push(serializeValue(fields[fieldName], dialect))
       paramIdx++
     }
@@ -224,6 +230,24 @@ function reverseGet(map: Map<string, string>, dbName: string): string | null {
     if (val === dbName) return key
   }
   return null
+}
+
+/**
+ * Build a parameter placeholder with an optional Postgres enum cast.
+ * e.g. `$1::"ApplicationArchitecture"` for enum fields, or just `$1` otherwise.
+ */
+function castParam(
+  dialect: Dialect,
+  paramIdx: number,
+  enumTypeMap: Map<string, string>,
+  fieldName: string,
+): string {
+  const placeholder = dialect.param(paramIdx)
+  if (dialect.name === 'postgres') {
+    const enumType = enumTypeMap.get(fieldName)
+    if (enumType) return `${placeholder}::${dialect.quoteId(enumType)}`
+  }
+  return placeholder
 }
 
 /**

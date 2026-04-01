@@ -95,7 +95,7 @@ async function handleUp(
   if (!create) throw Errors.invalidBody('missing "create" in request body')
 
   const testRunId = (body.testRunId as string) ?? crypto.randomUUID()
-  const { schema, tableMap, columnMaps } = await getIntrospection(config)
+  const { schema, tableMap, columnMaps, enumTypeMaps } = await getIntrospection(config)
   const dialect = getDialect(config.dialect)
 
   const tree = resolveTree(create, schema, testRunId)
@@ -152,7 +152,7 @@ async function handleUp(
       }
 
       const context = { testRunId, refs }
-      const created = await createEntities(tx, dialect, tableMap, columnMaps, spec, context)
+      const created = await createEntities(tx, dialect, tableMap, columnMaps, spec, context, enumTypeMaps)
       const records = created[model] ?? []
 
       if (!refs[model]) refs[model] = []
@@ -180,7 +180,7 @@ async function handleUp(
         )
       }
 
-      await updateEntity(tx, dialect, tableMap, columnMaps, deferred.model, realTargetId, { [deferred.field]: realRefId })
+      await updateEntity(tx, dialect, tableMap, columnMaps, deferred.model, realTargetId, { [deferred.field]: realRefId }, enumTypeMaps)
     }
   })
 

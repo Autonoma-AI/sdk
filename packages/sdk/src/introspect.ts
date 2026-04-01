@@ -8,6 +8,8 @@ export interface IntrospectionResult {
   tableMap: Map<string, string>
   /** model name → (field name → DB column name) */
   columnMaps: Map<string, Map<string, string>>
+  /** model name → (field name → Postgres enum type name). Only populated for Postgres. */
+  enumTypeMaps: Map<string, Map<string, string>>
 }
 
 interface TableRow { table_name: string }
@@ -117,6 +119,7 @@ export async function introspectDatabase(
   // Build column maps and model info
   const models: ModelInfo[] = []
   const columnMaps = new Map<string, Map<string, string>>()
+  const enumTypeMaps = new Map<string, Map<string, string>>()
 
   // Group columns by table
   const columnsByTable = new Map<string, ColumnRow[]>()
@@ -146,6 +149,12 @@ export async function introspectDatabase(
       const type = enumVals
         ? `enum(${enumVals.join(',')})`
         : mapDataType(col.data_type, col.udt_name, dialect.name)
+
+      // Track Postgres enum type names for SQL casting
+      if (enumVals && dialect.name === 'postgres') {
+        if (!enumTypeMaps.has(modelName)) enumTypeMaps.set(modelName, new Map())
+        enumTypeMaps.get(modelName)!.set(fieldName, col.udt_name)
+      }
 
       fields.push({
         name: fieldName,
@@ -187,11 +196,20 @@ export async function introspectDatabase(
   //   2. Child-side:  on the "from" model, a field pointing to "to" model (e.g., Member.organization)
   const relations: SchemaRelation[] = []
   for (const edge of edges) {
+    // Detect one-to-one: if the FK column is the sole PK of the child table,
+    // the relationship is one-to-one (e.g., WebApplicationData.applicationId is
+    // both PK and FK → Application has singular webApplicationData, not plural).
+    const fromDbTable = tableMap.get(edge.from)!
+    const fromColMap = columnMaps.get(edge.from) ?? new Map<string, string>()
+    const fkDbCol = fromColMap.get(edge.localField) ?? edge.localField
+    const fromPks = pksByTable.get(fromDbTable)
+    const isOneToOne = fromPks !== undefined && fromPks.size === 1 && fromPks.has(fkDbCol)
+
     // Parent-side: "to" model has a collection/reference to "from" model
     relations.push({
       parentModel: edge.to,
       childModel: edge.from,
-      parentField: pluralCamelCase(edge.from),
+      parentField: isOneToOne ? lowerFirst(edge.from) : pluralCamelCase(edge.from),
       childField: edge.localField,
     })
 
@@ -208,6 +226,7 @@ export async function introspectDatabase(
     schema: { models, edges, relations, scopeField: config.scopeField },
     tableMap,
     columnMaps,
+    enumTypeMaps,
   }
 }
 
