@@ -139,7 +139,7 @@ async function handleUp(
           for (const field of modelInfo.fields) {
             if (field.isRequired && !field.hasDefault && !field.isId && !(field.name in fields)) {
               if (field.type === 'DateTime') {
-                fields[field.name] = new Date().toISOString()
+                fields[field.name] = new Date()
               }
             }
           }
