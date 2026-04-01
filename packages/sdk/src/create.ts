@@ -171,35 +171,44 @@ async function insertBatch(
 
   const fieldNames = Object.keys(fieldsArr[0]!)
   const dbCols = fieldNames.map((f) => dialect.quoteId(colMap.get(f) ?? f))
-
-  const params: unknown[] = []
-  const valueTuples: string[] = []
-  let paramIdx = 1
-
-  for (const fields of fieldsArr) {
-    const placeholders: string[] = []
-    for (const fieldName of fieldNames) {
-      placeholders.push(castParam(dialect, paramIdx, enumTypeMap, fieldName))
-      params.push(serializeValue(fields[fieldName], dialect))
-      paramIdx++
-    }
-    valueTuples.push(`(${placeholders.join(', ')})`)
-  }
-
   const colList = dbCols.join(', ')
-  const valList = valueTuples.join(', ')
 
-  if (dialect.supportsReturning) {
-    const sql = `INSERT INTO ${dialect.quoteId(dbTable)} (${colList}) VALUES ${valList} RETURNING *`
-    return mapRowsBack(await executor.query(sql, params), colMap)
+  // Postgres has a max of 32,767 bind variables per statement.
+  // Chunk large batches to stay within this limit.
+  const MAX_PARAMS = 32_000
+  const chunkSize = Math.max(1, Math.floor(MAX_PARAMS / fieldNames.length))
+  const allResults: Record<string, unknown>[] = []
+
+  for (let offset = 0; offset < fieldsArr.length; offset += chunkSize) {
+    const chunk = fieldsArr.slice(offset, offset + chunkSize)
+    const params: unknown[] = []
+    const valueTuples: string[] = []
+    let paramIdx = 1
+
+    for (const fields of chunk) {
+      const placeholders: string[] = []
+      for (const fieldName of fieldNames) {
+        placeholders.push(castParam(dialect, paramIdx, enumTypeMap, fieldName))
+        params.push(serializeValue(fields[fieldName], dialect))
+        paramIdx++
+      }
+      valueTuples.push(`(${placeholders.join(', ')})`)
+    }
+
+    const valList = valueTuples.join(', ')
+
+    if (dialect.supportsReturning) {
+      const sql = `INSERT INTO ${dialect.quoteId(dbTable)} (${colList}) VALUES ${valList} RETURNING *`
+      allResults.push(...mapRowsBack(await executor.query(sql, params), colMap))
+    } else {
+      await executor.query(
+        `INSERT INTO ${dialect.quoteId(dbTable)} (${colList}) VALUES ${valList}`,
+        params,
+      )
+    }
   }
 
-  // MySQL: batch insert, no rows returned (same as old Prisma createMany behavior)
-  await executor.query(
-    `INSERT INTO ${dialect.quoteId(dbTable)} (${colList}) VALUES ${valList}`,
-    params,
-  )
-  return []
+  return allResults
 }
 
 /**
