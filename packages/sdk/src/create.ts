@@ -90,12 +90,14 @@ async function insertOne(
   enumTypeMap: Map<string, string>,
   fields: Record<string, unknown>,
 ): Promise<Record<string, unknown>[]> {
-  // Always generate a client-side ID when none is provided.
+  // Generate a client-side ID when none is provided and the table has an 'id' column.
   // Many ORMs (e.g. Prisma's @default(cuid())) generate IDs in the application
   // layer, not as DB-level defaults. Without this, INSERT would send NULL for
   // the PK column and fail with a NOT NULL violation.
-  const idFieldName = reverseGet(colMap, findIdCol(colMap)) ?? 'id'
-  if (fields[idFieldName] === undefined) {
+  // Tables whose PK is not named 'id' (e.g. WebApplicationData uses applicationId
+  // as its PK) already have their PK set via FK wiring, so we skip injection.
+  const idFieldName = reverseGet(colMap, findIdCol(colMap))
+  if (idFieldName && fields[idFieldName] === undefined) {
     fields = { ...fields, [idFieldName]: randomUUID() }
   }
 
@@ -134,7 +136,7 @@ async function insertOne(
   )
 
   const idCol = findIdCol(colMap)
-  const id = fields[idFieldName]
+  const id = fields[idFieldName ?? 'id']
 
   return mapRowsBack(
     await executor.query(
@@ -155,14 +157,17 @@ async function insertBatch(
 ): Promise<Record<string, unknown>[]> {
   if (fieldsArr.length === 0) return []
 
-  // Generate client-side IDs for batch records, same as insertOne
-  const idFieldName = reverseGet(colMap, findIdCol(colMap)) ?? 'id'
-  fieldsArr = fieldsArr.map((fields) => {
-    if (fields[idFieldName] === undefined) {
-      return { ...fields, [idFieldName]: randomUUID() }
-    }
-    return fields
-  })
+  // Generate client-side IDs for batch records, same as insertOne.
+  // Only inject if the table actually has an 'id' column.
+  const idFieldName = reverseGet(colMap, findIdCol(colMap))
+  if (idFieldName) {
+    fieldsArr = fieldsArr.map((fields) => {
+      if (fields[idFieldName] === undefined) {
+        return { ...fields, [idFieldName]: randomUUID() }
+      }
+      return fields
+    })
+  }
 
   const fieldNames = Object.keys(fieldsArr[0]!)
   const dbCols = fieldNames.map((f) => dialect.quoteId(colMap.get(f) ?? f))
@@ -259,10 +264,11 @@ function castParam(
 function serializeValue(value: unknown, dialect: Dialect): unknown {
   if (value === null || value === undefined) return value
 
-  // JSON: MySQL needs a string, Postgres accepts objects via jsonb
+  // JSON: Both MySQL and Postgres need stringified JSON when using parameterized
+  // queries with explicit casts (e.g. $1::jsonb). Postgres $queryRawUnsafe cannot
+  // pass JS objects directly as parameters.
   if (typeof value === 'object' && !(value instanceof Date)) {
-    if (dialect.name === 'mysql') return JSON.stringify(value)
-    return value
+    return JSON.stringify(value)
   }
 
   // DateTime: MySQL doesn't accept ISO 8601 with 'T' and 'Z'

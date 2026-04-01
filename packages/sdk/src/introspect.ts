@@ -150,10 +150,16 @@ export async function introspectDatabase(
         ? `enum(${enumVals.join(',')})`
         : mapDataType(col.data_type, col.udt_name, dialect.name)
 
-      // Track Postgres enum type names for SQL casting
-      if (enumVals && dialect.name === 'postgres') {
-        if (!enumTypeMaps.has(modelName)) enumTypeMaps.set(modelName, new Map())
-        enumTypeMaps.get(modelName)!.set(fieldName, col.udt_name)
+      // Track Postgres types that need explicit parameter casting (enums, jsonb)
+      if (dialect.name === 'postgres') {
+        if (enumVals) {
+          if (!enumTypeMaps.has(modelName)) enumTypeMaps.set(modelName, new Map())
+          enumTypeMaps.get(modelName)!.set(fieldName, col.udt_name)
+        } else if (col.data_type === 'jsonb' || col.udt_name === 'jsonb' || col.data_type === 'json' || col.udt_name === 'json') {
+          if (!enumTypeMaps.has(modelName)) enumTypeMaps.set(modelName, new Map())
+          const jsonType = (col.data_type === 'json' || col.udt_name === 'json') ? 'json' : 'jsonb'
+          enumTypeMaps.get(modelName)!.set(fieldName, jsonType)
+        }
       }
 
       fields.push({
