@@ -99,14 +99,24 @@ export function resolveTree(
     for (const [key, value] of Object.entries(node)) {
       if (RESERVED_KEYS.has(key)) continue
 
-      // Look up relation by exact key, then try with model name prefix.
-      // Prisma often uses abbreviated names: Test.steps instead of Test.testSteps,
-      // Run.steps instead of Run.runSteps. The introspection generates the full
-      // prefixed form, so we try both.
+      // Look up relation by exact key, then try fallbacks:
+      // 1. Model name prefix: Test.steps → Test.testSteps (Prisma abbreviated names)
+      // 2. Child model name: Organization.Application → Organization.applications
+      //    (scenarios using PascalCase model names as relation keys)
       const exactKey = `${modelName}.${key}`
       const prefixedKey = `${modelName}.${modelName.charAt(0).toLowerCase()}${modelName.slice(1)}${key.charAt(0).toUpperCase()}${key.slice(1)}`
-      const relation = relationByParentField.get(exactKey) ?? relationByParentField.get(prefixedKey)
-      const matchedKey = relationByParentField.has(exactKey) ? exactKey : prefixedKey
+      let relation = relationByParentField.get(exactKey) ?? relationByParentField.get(prefixedKey) ?? undefined
+      let matchedKey = relationByParentField.has(exactKey) ? exactKey : prefixedKey
+      if (!relation) {
+        // Fallback: match by child model name (PascalCase keys like Application, Tag)
+        for (const [relKey, rel] of relationByParentField) {
+          if (relKey.startsWith(`${modelName}.`) && rel.childModel.toLowerCase() === key.toLowerCase()) {
+            relation = rel
+            matchedKey = relKey
+            break
+          }
+        }
+      }
       if (relation) {
         const isOnParent = fkOnParent.has(matchedKey)
         if (isOnParent) {
