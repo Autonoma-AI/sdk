@@ -9,6 +9,8 @@ export { resolveTree } from './tree'
 export { checkScenario, checkAllScenarios } from './check'
 export { introspectDatabase } from './introspect'
 export { getDialect } from './dialect'
+export { createEntities } from './create'
+export { teardown } from './teardown'
 
 // Types
 export type {

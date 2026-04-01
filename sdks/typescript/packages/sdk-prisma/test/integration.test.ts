@@ -3,14 +3,19 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { execSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
-import { prismaAdapter } from '../src/index'
+import { prismaExecutor } from '../src/index'
+import { introspectDatabase, getDialect, createEntities, teardown } from '@autonoma-ai/sdk'
+import type { SQLExecutor, ResolvedEntitySpec } from '@autonoma-ai/sdk'
 
 const SCHEMA_PATH = resolve(import.meta.dirname, 'prisma/schema.prisma')
 
 let container: StartedPostgreSqlContainer
 let prisma: any // PrismaClient — dynamically imported after generation
+let executor: SQLExecutor
 
-describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, () => {
+const dialect = getDialect('postgres')
+
+describe('Prisma executor + PostgreSQL (testcontainers)', { timeout: 120_000 }, () => {
   beforeAll(async () => {
     // Start PostgreSQL container
     container = await new PostgreSqlContainer('postgres:16-alpine').start()
@@ -36,6 +41,8 @@ describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, (
     const { PrismaClient } = rootRequire('@prisma/client')
     prisma = new PrismaClient({ datasourceUrl: url })
     await prisma.$connect()
+
+    executor = prismaExecutor(prisma)
   })
 
   afterAll(async () => {
@@ -52,9 +59,9 @@ describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, (
     ])
   })
 
-  it('introspects schema from a real Prisma client', () => {
-    const adapter = prismaAdapter(prisma, { scopeField: 'testRunId' })
-    const schema = adapter.getSchema()
+  it('introspects schema via SQL executor', async () => {
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
+    const schema = result.schema
 
     const modelNames = schema.models.map((m: any) => m.name).sort()
     expect(modelNames).toEqual(['Application', 'Organization', 'User'])
@@ -66,9 +73,9 @@ describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, (
     expect(fieldNames).toContain('organizationId')
   })
 
-  it('detects FK edges', () => {
-    const adapter = prismaAdapter(prisma, { scopeField: 'testRunId' })
-    const schema = adapter.getSchema()
+  it('detects FK edges', async () => {
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
+    const schema = result.schema
 
     const userToOrg = schema.edges.find(
       (e: any) => e.from === 'User' && e.to === 'Organization',
@@ -79,13 +86,13 @@ describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, (
   })
 
   it('creates entities in Postgres', async () => {
-    const adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
 
-    const spec = {
+    const spec: Record<string, ResolvedEntitySpec> = {
       Organization: { count: 1, fields: [{ id: 'org-1', name: 'Test Org' }] },
       User: { count: 1, fields: [{ id: 'user-1', email: 'test@test.com', organizationId: 'org-1' }] },
     }
-    const results = await adapter.createEntities(spec, { testRunId: 'test-1', refs: {} })
+    const results = await createEntities(executor, dialect, result.tableMap, result.columnMaps, spec, { testRunId: 'test-1', refs: {} }, result.enumTypeMaps)
 
     expect(results.Organization).toHaveLength(1)
     expect(results.Organization[0].id).toBe('org-1')
@@ -99,19 +106,19 @@ describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, (
   })
 
   it('enforces FK constraints', async () => {
-    const adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
 
-    const spec = {
+    const spec: Record<string, ResolvedEntitySpec> = {
       User: { count: 1, fields: [{ id: 'orphan', email: 'x@y.com', organizationId: 'nonexistent' }] },
     }
-    await expect(adapter.createEntities(spec, { testRunId: 'test-1', refs: {} })).rejects.toThrow()
+    await expect(createEntities(executor, dialect, result.tableMap, result.columnMaps, spec, { testRunId: 'test-1', refs: {} }, result.enumTypeMaps)).rejects.toThrow()
   })
 
   it('tears down scoped data', async () => {
-    const adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
 
     // Create two orgs with users
-    const spec = {
+    const spec: Record<string, ResolvedEntitySpec> = {
       Organization: { count: 2, fields: [
         { id: 'org-a', name: 'Org A' },
         { id: 'org-b', name: 'Org B' },
@@ -121,10 +128,10 @@ describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, (
         { id: 'u-b', email: 'b@b.com', organizationId: 'org-b' },
       ] },
     }
-    await adapter.createEntities(spec, { testRunId: 'test-1', refs: {} })
+    await createEntities(executor, dialect, result.tableMap, result.columnMaps, spec, { testRunId: 'test-1', refs: {} }, result.enumTypeMaps)
 
     // Teardown only org-a
-    await adapter.teardown('org-a')
+    await teardown(executor, dialect, result.tableMap, result.columnMaps, result.schema, 'org-a')
 
     // org-b and its user should remain
     expect(await prisma.organization.count()).toBe(1)
@@ -134,14 +141,13 @@ describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, (
   })
 
   it('full round-trip: introspect → create → teardown', async () => {
-    const adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
 
     // Introspect
-    const schema = adapter.getSchema()
-    expect(schema.models.length).toBe(3)
+    expect(result.schema.models.length).toBe(3)
 
     // Create
-    const spec = {
+    const spec: Record<string, ResolvedEntitySpec> = {
       Organization: { count: 1, fields: [{ id: 'org-rt', name: 'Roundtrip' }] },
       User: { count: 2, fields: [
         { id: 'u1', email: 'u1@test.com', organizationId: 'org-rt' },
@@ -149,14 +155,14 @@ describe('Prisma adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, (
       ] },
       Application: { count: 1, fields: [{ id: 'a1', name: 'MyApp', organizationId: 'org-rt' }] },
     }
-    const refs = await adapter.createEntities(spec, { testRunId: 'test-1', refs: {} })
+    const refs = await createEntities(executor, dialect, result.tableMap, result.columnMaps, spec, { testRunId: 'test-1', refs: {} }, result.enumTypeMaps)
 
     expect(await prisma.organization.count()).toBe(1)
     expect(await prisma.user.count()).toBe(2)
     expect(await prisma.application.count()).toBe(1)
 
     // Teardown
-    await adapter.teardown('org-rt', refs)
+    await teardown(executor, dialect, result.tableMap, result.columnMaps, result.schema, 'org-rt', refs)
 
     expect(await prisma.organization.count()).toBe(0)
     expect(await prisma.user.count()).toBe(0)

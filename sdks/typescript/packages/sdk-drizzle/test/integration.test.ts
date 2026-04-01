@@ -1,42 +1,21 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import pg from 'pg'
-import { pgTable, text, varchar } from 'drizzle-orm/pg-core'
-import { drizzle } from 'drizzle-orm/node-postgres'
-import { sql } from 'drizzle-orm'
-import { drizzleAdapter } from '../src/index'
-
-// Define test schema using Drizzle's pgTable
-export const organizations = pgTable('Organization', {
-  id: varchar('id').primaryKey(),
-  name: text('name').notNull(),
-  organizationId: varchar('organizationId'),
-})
-
-export const users = pgTable('User', {
-  id: varchar('id').primaryKey(),
-  email: text('email').notNull(),
-  organizationId: varchar('organizationId').notNull().references(() => organizations.id),
-})
-
-export const applications = pgTable('Application', {
-  id: varchar('id').primaryKey(),
-  name: text('name').notNull(),
-  organizationId: varchar('organizationId').notNull().references(() => organizations.id),
-})
-
-const schema = { organizations, users, applications }
+import { drizzleExecutor } from '../src/index'
+import { introspectDatabase, getDialect, createEntities, teardown } from '@autonoma-ai/sdk'
+import type { SQLExecutor, ResolvedEntitySpec } from '@autonoma-ai/sdk'
 
 let container: StartedPostgreSqlContainer
 let pool: pg.Pool
-let db: ReturnType<typeof drizzle>
+let executor: SQLExecutor
 
-describe('Drizzle adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, () => {
+const dialect = getDialect('postgres')
+
+describe('Drizzle executor + PostgreSQL (testcontainers)', { timeout: 120_000 }, () => {
   beforeAll(async () => {
     container = await new PostgreSqlContainer('postgres:16-alpine').start()
 
     pool = new pg.Pool({ connectionString: container.getConnectionUri() })
-    db = drizzle(pool, { schema })
 
     // Create tables via raw SQL
     await pool.query(`
@@ -60,6 +39,37 @@ describe('Drizzle adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, 
         "organizationId" VARCHAR NOT NULL REFERENCES "Organization"(id)
       )
     `)
+
+    // Create a raw pg-based executor to test drizzleExecutor
+    // drizzleExecutor expects a Drizzle DB, but for testing we use a pg.Pool wrapper
+    // that mimics the Drizzle execute interface
+    const drizzleDb = {
+      execute(query: { sql: string; params: unknown[] }) {
+        return pool.query(query.sql, query.params).then((r) => ({ rows: r.rows }))
+      },
+      async transaction<T>(fn: (tx: typeof drizzleDb) => Promise<T>): Promise<T> {
+        const client = await pool.connect()
+        try {
+          await client.query('BEGIN')
+          const txDb = {
+            execute(query: { sql: string; params: unknown[] }) {
+              return client.query(query.sql, query.params).then((r) => ({ rows: r.rows }))
+            },
+            transaction: (innerFn: any) => innerFn(txDb),
+          }
+          const result = await fn(txDb as any)
+          await client.query('COMMIT')
+          return result
+        } catch (err) {
+          await client.query('ROLLBACK')
+          throw err
+        } finally {
+          client.release()
+        }
+      },
+    }
+
+    executor = drizzleExecutor(drizzleDb as any)
   })
 
   afterAll(async () => {
@@ -68,14 +78,14 @@ describe('Drizzle adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, 
   })
 
   afterEach(async () => {
-    await db.execute(sql`DELETE FROM "Application"`)
-    await db.execute(sql`DELETE FROM "User"`)
-    await db.execute(sql`DELETE FROM "Organization"`)
+    await pool.query('DELETE FROM "Application"')
+    await pool.query('DELETE FROM "User"')
+    await pool.query('DELETE FROM "Organization"')
   })
 
-  it('introspects schema from Drizzle tables', () => {
-    const adapter = drizzleAdapter(db, schema, { scopeField: 'organizationId' })
-    const schemaInfo = adapter.getSchema()
+  it('introspects schema from Drizzle executor', async () => {
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
+    const schemaInfo = result.schema
 
     const modelNames = schemaInfo.models.map((m: any) => m.name).sort()
     expect(modelNames).toEqual(['Application', 'Organization', 'User'])
@@ -88,13 +98,13 @@ describe('Drizzle adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, 
   })
 
   it('creates entities in Postgres', async () => {
-    const adapter = drizzleAdapter(db, schema, { scopeField: 'organizationId' })
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
 
-    const spec = {
+    const spec: Record<string, ResolvedEntitySpec> = {
       Organization: { count: 1, fields: [{ id: 'org-1', name: 'Test Org', organizationId: 'org-1' }] },
       User: { count: 1, fields: [{ id: 'user-1', email: 'test@test.com', organizationId: 'org-1' }] },
     }
-    const results = await adapter.createEntities(spec, { testRunId: 'test-1', refs: {} })
+    const results = await createEntities(executor, dialect, result.tableMap, result.columnMaps, spec, { testRunId: 'test-1', refs: {} }, result.enumTypeMaps)
 
     expect(results.Organization).toHaveLength(1)
     expect(results.Organization[0].id).toBe('org-1')
@@ -106,18 +116,18 @@ describe('Drizzle adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, 
   })
 
   it('enforces FK constraints', async () => {
-    const adapter = drizzleAdapter(db, schema, { scopeField: 'organizationId' })
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
 
-    const spec = {
+    const spec: Record<string, ResolvedEntitySpec> = {
       User: { count: 1, fields: [{ id: 'orphan', email: 'x@y.com', organizationId: 'nonexistent' }] },
     }
-    await expect(adapter.createEntities(spec, { testRunId: 'test-1', refs: {} })).rejects.toThrow()
+    await expect(createEntities(executor, dialect, result.tableMap, result.columnMaps, spec, { testRunId: 'test-1', refs: {} }, result.enumTypeMaps)).rejects.toThrow()
   })
 
   it('tears down scoped data', async () => {
-    const adapter = drizzleAdapter(db, schema, { scopeField: 'organizationId' })
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
 
-    const spec = {
+    const spec: Record<string, ResolvedEntitySpec> = {
       Organization: { count: 2, fields: [
         { id: 'org-a', name: 'Org A', organizationId: 'org-a' },
         { id: 'org-b', name: 'Org B', organizationId: 'org-b' },
@@ -127,9 +137,9 @@ describe('Drizzle adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, 
         { id: 'u-b', email: 'b@b.com', organizationId: 'org-b' },
       ] },
     }
-    await adapter.createEntities(spec, { testRunId: 'test-1', refs: {} })
+    await createEntities(executor, dialect, result.tableMap, result.columnMaps, spec, { testRunId: 'test-1', refs: {} }, result.enumTypeMaps)
 
-    await adapter.teardown('org-a')
+    await teardown(executor, dialect, result.tableMap, result.columnMaps, result.schema, 'org-a')
 
     const { rows: orgRows } = await pool.query('SELECT count(*) FROM "Organization"')
     expect(Number(orgRows[0].count)).toBe(1)
@@ -138,12 +148,12 @@ describe('Drizzle adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, 
   })
 
   it('full round-trip: introspect → create → teardown', async () => {
-    const adapter = drizzleAdapter(db, schema, { scopeField: 'organizationId' })
+    const result = await introspectDatabase(executor, dialect, { scopeField: 'organizationId' })
 
-    const schemaInfo = adapter.getSchema()
+    const schemaInfo = result.schema
     expect(schemaInfo.models.length).toBe(3)
 
-    const spec = {
+    const spec: Record<string, ResolvedEntitySpec> = {
       Organization: { count: 1, fields: [{ id: 'org-rt', name: 'Roundtrip', organizationId: 'org-rt' }] },
       User: { count: 2, fields: [
         { id: 'u1', email: 'u1@test.com', organizationId: 'org-rt' },
@@ -151,12 +161,12 @@ describe('Drizzle adapter + PostgreSQL (testcontainers)', { timeout: 120_000 }, 
       ] },
       Application: { count: 1, fields: [{ id: 'a1', name: 'MyApp', organizationId: 'org-rt' }] },
     }
-    await adapter.createEntities(spec, { testRunId: 'test-1', refs: {} })
+    await createEntities(executor, dialect, result.tableMap, result.columnMaps, spec, { testRunId: 'test-1', refs: {} }, result.enumTypeMaps)
 
     const { rows: before } = await pool.query('SELECT count(*) FROM "User"')
     expect(Number(before[0].count)).toBe(2)
 
-    await adapter.teardown('org-rt')
+    await teardown(executor, dialect, result.tableMap, result.columnMaps, result.schema, 'org-rt')
 
     const { rows: after } = await pool.query('SELECT count(*) FROM "Organization"')
     expect(Number(after[0].count)).toBe(0)
