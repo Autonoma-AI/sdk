@@ -1,4 +1,4 @@
-import type { SQLExecutor, SchemaInfo, ModelInfo, FieldInfo, FKEdge } from './types'
+import type { SQLExecutor, SchemaInfo, SchemaRelation, ModelInfo, FieldInfo, FKEdge } from './types'
 import type { Dialect } from './dialect'
 
 /** Internal result including name mapping tables */
