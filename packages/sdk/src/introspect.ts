@@ -150,7 +150,9 @@ export async function introspectDatabase(
         ? `enum(${enumVals.join(',')})`
         : mapDataType(col.data_type, col.udt_name, dialect.name)
 
-      // Track Postgres types that need explicit parameter casting (enums, jsonb)
+      // Track Postgres types that need explicit parameter casting.
+      // Prisma's $queryRawUnsafe sends string params as explicit text type,
+      // preventing Postgres auto-cast for enums, jsonb, and timestamps.
       if (dialect.name === 'postgres') {
         if (enumVals) {
           if (!enumTypeMaps.has(modelName)) enumTypeMaps.set(modelName, new Map())
@@ -159,6 +161,9 @@ export async function introspectDatabase(
           if (!enumTypeMaps.has(modelName)) enumTypeMaps.set(modelName, new Map())
           const jsonType = (col.data_type === 'json' || col.udt_name === 'json') ? 'json' : 'jsonb'
           enumTypeMaps.get(modelName)!.set(fieldName, jsonType)
+        } else if (col.data_type.includes('timestamp') || col.udt_name === 'timestamptz' || col.udt_name === 'timestamp') {
+          if (!enumTypeMaps.has(modelName)) enumTypeMaps.set(modelName, new Map())
+          enumTypeMaps.get(modelName)!.set(fieldName, col.udt_name)
         }
       }
 

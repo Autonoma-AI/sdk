@@ -99,9 +99,16 @@ export function resolveTree(
     for (const [key, value] of Object.entries(node)) {
       if (RESERVED_KEYS.has(key)) continue
 
-      const relation = relationByParentField.get(`${modelName}.${key}`)
+      // Look up relation by exact key, then try with model name prefix.
+      // Prisma often uses abbreviated names: Test.steps instead of Test.testSteps,
+      // Run.steps instead of Run.runSteps. The introspection generates the full
+      // prefixed form, so we try both.
+      const exactKey = `${modelName}.${key}`
+      const prefixedKey = `${modelName}.${modelName.charAt(0).toLowerCase()}${modelName.slice(1)}${key.charAt(0).toUpperCase()}${key.slice(1)}`
+      const relation = relationByParentField.get(exactKey) ?? relationByParentField.get(prefixedKey)
+      const matchedKey = relationByParentField.has(exactKey) ? exactKey : prefixedKey
       if (relation) {
-        const isOnParent = fkOnParent.has(`${modelName}.${key}`)
+        const isOnParent = fkOnParent.has(matchedKey)
         if (isOnParent) {
           // FK is on this model → need to create the child BEFORE this node
           preChildren.push({ relation, value, fkOnParent: true })
