@@ -116,6 +116,7 @@ async function handleUp(
       }
 
       // Replace temp IDs with real IDs in all fields
+      const modelInfo = schema.models.find((m) => m.name === model)
       const resolvedFields = batch.map((b) => {
         const fields = { ...b.fields }
         delete fields.id
@@ -132,6 +133,16 @@ async function handleUp(
         if (scopeEdge && !(scopeEdge.localField in fields)) {
           const scopeVal = detectScopeValue(refs, schema.scopeField)
           if (scopeVal) fields[scopeEdge.localField] = scopeVal
+        }
+        // Auto-populate required fields without DB defaults (e.g. Prisma's @updatedAt)
+        if (modelInfo) {
+          for (const field of modelInfo.fields) {
+            if (field.isRequired && !field.hasDefault && !field.isId && !(field.name in fields)) {
+              if (field.type === 'DateTime') {
+                fields[field.name] = new Date().toISOString()
+              }
+            }
+          }
         }
         return fields
       })

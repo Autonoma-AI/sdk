@@ -149,6 +149,15 @@ async function insertBatch(
 ): Promise<Record<string, unknown>[]> {
   if (fieldsArr.length === 0) return []
 
+  // Generate client-side IDs for batch records, same as insertOne
+  const idFieldName = reverseGet(colMap, findIdCol(colMap)) ?? 'id'
+  fieldsArr = fieldsArr.map((fields) => {
+    if (fields[idFieldName] === undefined) {
+      return { ...fields, [idFieldName]: randomUUID() }
+    }
+    return fields
+  })
+
   const fieldNames = Object.keys(fieldsArr[0]!)
   const dbCols = fieldNames.map((f) => dialect.quoteId(colMap.get(f) ?? f))
 
