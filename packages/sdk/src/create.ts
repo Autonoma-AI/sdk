@@ -85,12 +85,13 @@ async function insertOne(
   colMap: Map<string, string>,
   fields: Record<string, unknown>,
 ): Promise<Record<string, unknown>[]> {
-  // For dialects without RETURNING (MySQL), ensure we have an ID to SELECT back
-  if (!dialect.supportsReturning) {
-    const idFieldName = reverseGet(colMap, findIdCol(colMap)) ?? 'id'
-    if (fields[idFieldName] === undefined) {
-      fields = { ...fields, [idFieldName]: randomUUID() }
-    }
+  // Always generate a client-side ID when none is provided.
+  // Many ORMs (e.g. Prisma's @default(cuid())) generate IDs in the application
+  // layer, not as DB-level defaults. Without this, INSERT would send NULL for
+  // the PK column and fail with a NOT NULL violation.
+  const idFieldName = reverseGet(colMap, findIdCol(colMap)) ?? 'id'
+  if (fields[idFieldName] === undefined) {
+    fields = { ...fields, [idFieldName]: randomUUID() }
   }
 
   const entries = Object.entries(fields)
@@ -128,7 +129,6 @@ async function insertOne(
   )
 
   const idCol = findIdCol(colMap)
-  const idFieldName = reverseGet(colMap, idCol) ?? 'id'
   const id = fields[idFieldName]
 
   return mapRowsBack(
