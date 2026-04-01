@@ -1,294 +1,101 @@
-# Building Adapters
+# Adapters
 
-The SDK has three adapter types: ORM, Server, and Auth. Each is a separate npm package. This page is for developers building **new** adapters (e.g., a Knex ORM adapter or a Fastify server adapter). If you're just using the SDK, you don't need to read this.
+The Autonoma SDK uses two types of adapters: ORM adapters and server adapters. Each adapter is a separate package in the language's ecosystem. This page describes what each adapter must do, independent of any specific language or ORM.
 
 ## ORM Adapter
 
-Connects the SDK to a database ORM. Existing adapters: `@autonoma-ai/sdk-prisma`, `@autonoma-ai/sdk-drizzle`.
+An ORM adapter connects the SDK core to your database through your ORM. It implements three operations and exposes a name property.
 
-### The interface
+### name
 
-```typescript
-// Defined in @autonoma-ai/sdk/types.ts
-interface OrmAdapter {
-  getSchema(): SchemaInfo
-  createEntities(
-    spec: Record<string, ResolvedEntitySpec>,
-    context: CreateContext,
-  ): Promise<Record<string, Record<string, unknown>[]>>
-  teardown(
-    scopeValue: string,
-    refs?: Record<string, Record<string, unknown>[]>,
-  ): Promise<void>
-}
-```
+A string identifying the ORM (e.g., "prisma", "drizzle", "sqlalchemy", "ecto"). The SDK includes this in the sdk metadata field of every response, so the platform knows which ORM is in use.
 
-### getSchema()
+### getSchema
 
-Read your ORM's metadata and return a `SchemaInfo` object. This tells the SDK everything about your database.
+Read the ORM's metadata and return a standardized schema description. This tells the SDK everything about your database: models, fields, FK edges, and named relations.
 
-```typescript
-interface SchemaInfo {
-  models: ModelInfo[]        // all models with their fields
-  edges: FKEdge[]            // all FK relationships
-  relations: SchemaRelation[] // named relation mappings (for tree nesting)
-  scopeField: string         // e.g., 'organizationId'
-}
+What it must return:
+- A list of models, each with its fields (name, type, whether required, whether it's a primary key, whether it has a default value)
+- A list of FK edges (which model holds the FK, which model it points to, the local column name, the foreign column name, whether the FK is nullable)
+- A list of named relations (parent model, child model, relation field name on the parent, FK column name on the child)
+- The scope field name
 
-interface ModelInfo {
-  name: string               // PascalCase model name: 'User', 'Application'
-  fields: FieldInfo[]
-}
+Important details:
+- Auto-updated timestamp fields should be marked as having a default, so they are not required in scenarios.
+- Auto-generated fields (UUIDs, auto-increment) should be marked as having a default.
+- The relation field name (the name used for nesting in scenarios) must match the exact name from the ORM schema. This is what users write in scenario JSON keys.
+- Cache the result -- getSchema is called on every request.
 
-interface FieldInfo {
-  name: string               // field name: 'email', 'organizationId'
-  type: string               // 'String', 'Int', 'DateTime', 'Architecture' (enum name)
-  isRequired: boolean        // NOT NULL
-  isId: boolean              // primary key
-  hasDefault: boolean        // @default, @updatedAt, auto-increment, etc.
-}
+### createEntities
 
-interface FKEdge {
-  from: string               // model that holds the FK column
-  to: string                 // model being referenced
-  localField: string         // FK column name on `from`: 'organizationId'
-  foreignField: string       // referenced column on `to`: 'id'
-  nullable: boolean          // can the FK be NULL?
-}
+Create records in the database from a resolved specification. The SDK calls this once per model group, after all templates have been resolved and all FK values have been set.
 
-interface SchemaRelation {
-  parentModel: string        // 'Organization'
-  childModel: string         // 'Application'
-  parentField: string        // relation field name on parent: 'applications'
-  childField: string         // FK field name: 'organizationId'
-}
-```
+The specification for each model includes:
+- A count of how many records to create
+- An array of field objects (one per record), with all values already resolved
+- A batch flag indicating whether to use bulk insert
 
-**Important details**:
-- Mark `@updatedAt` fields as `hasDefault: true` — Prisma handles them, they shouldn't be required in scenarios.
-- Mark auto-generated fields (like `@default(cuid())`) as `hasDefault: true`.
-- `SchemaRelation.parentField` must match the exact relation field name in the ORM. This is what users write in scenario nesting keys.
-- `scopeField` must be a single column name (e.g., `'organizationId'`). Compound scope keys are not supported.
-- Cache the result — `getSchema()` is called on every request.
+Implementation rules:
+- If batch is true: use the ORM's bulk insert method (e.g., createMany, insert_all, Repo.insert_all). Return an empty collection, since bulk insert typically does not return individual records.
+- If batch is false: create each record individually. Return all created records with their IDs, since subsequent operations may reference them.
+- Wrap everything in a transaction for atomicity.
+- The model name in the specification is PascalCase. Convert to whatever case your ORM expects.
 
-### createEntities()
+### teardown
 
-Create records in the database from a resolved spec.
+Delete all data created during a test run. The SDK provides both the scope value (the root entity's ID) and the full set of created record references.
 
-```typescript
-interface ResolvedEntitySpec {
-  count: number              // how many records to create
-  fields: Record<string, unknown>[]  // one field object per record (already template-resolved)
-  batch?: boolean            // true → use bulk insert (createMany)
-}
+Implementation rules:
+1. Get the FK graph from getSchema.
+2. Break circular FKs first: if the graph has cycles, find a nullable FK in the cycle and set it to null before deleting.
+3. Delete scoped models: for each model that has the scope FK, delete all records where the scope field equals the scope value. Do this in reverse topological order (children before parents) to avoid FK constraint violations.
+4. Delete non-scoped models by ID: some models (like User in a join-table setup) may not have the scope FK directly. Delete them by their individual IDs from the refs.
+5. Delete the scope root entity last.
 
-interface CreateContext {
-  testRunId: string
-  refs: Record<string, Record<string, unknown>[]>  // accumulator of all created records
-}
-```
+The SDK core provides graph utilities (topological sort, cycle detection, deferrable edge finding) that adapters should use for ordering.
 
-The SDK calls this once per model group. The spec is already fully resolved — all templates are replaced, all FKs are set.
+### updateEntity (optional)
 
-**Implementation rules**:
-1. If `batch` is true: use bulk insert (e.g., `prisma.user.createMany`). Return an empty array (bulk insert doesn't return individual records).
-2. If `batch` is false: create each record individually (e.g., `prisma.user.create`). Return all created records with their IDs.
-3. Wrap everything in a transaction for atomicity.
-4. The model name in the spec key is PascalCase. Convert to camelCase for Prisma: `User` → `prisma.user.create(...)`.
+Update a single record by ID. This is needed for circular FK resolution: when two models reference each other, one must be created with a null FK and then updated after the other is created.
 
-**Example** (simplified Prisma implementation):
-
-```typescript
-async createEntities(spec, context) {
-  const results: Record<string, Record<string, unknown>[]> = {}
-
-  for (const [model, entitySpec] of Object.entries(spec)) {
-    const modelClient = (prisma as any)[camelCase(model)]
-
-    if (entitySpec.batch) {
-      await modelClient.createMany({ data: entitySpec.fields })
-      results[model] = []  // createMany doesn't return records
-    } else {
-      const records = []
-      for (const fields of entitySpec.fields) {
-        const record = await modelClient.create({ data: fields })
-        records.push(record)
-      }
-      results[model] = records
-    }
-  }
-
-  return results
-}
-```
-
-### teardown()
-
-Delete all data created during a test run. The SDK provides both the scope value and the full refs.
-
-**Implementation rules**:
-1. Import `topoSort` and `findDeferrableEdge` from `@autonoma-ai/sdk/graph`.
-2. Get the FK graph from `getSchema()`.
-3. **Break circular FKs first**: if the graph has cycles, find a nullable FK in the cycle and `UPDATE SET fk = null` before deleting.
-4. **Delete scoped models**: for each model that has the scope FK (e.g., `organizationId`), delete all records where `scopeField = scopeValue`, in **reverse topological order** (children before parents).
-5. **Delete non-scoped models by ID**: some models (like `User` in a join-table setup) don't have the scope FK directly. Delete them by their IDs from `refs`.
-6. **Delete the scope root last**: the Organization (or whatever the root entity is).
-
-**Example** (simplified):
-
-```typescript
-async teardown(scopeValue, refs) {
-  const schema = this.getSchema()
-  const sorted = topoSort(schema.edges, schema.models.map(m => m.name))
-
-  // Break circular FKs
-  for (const scc of findCycles(schema.edges)) {
-    const edge = findDeferrableEdge(scc, schema.edges)
-    if (edge) {
-      await prisma[camelCase(edge.from)].updateMany({
-        where: { [scopeField]: scopeValue },
-        data: { [edge.localField]: null },
-      })
-    }
-  }
-
-  // Delete in reverse topo order
-  for (const model of [...sorted].reverse()) {
-    if (modelHasScopeField(model)) {
-      await prisma[camelCase(model)].deleteMany({
-        where: { [scopeField]: scopeValue },
-      })
-    } else if (refs?.[model]?.length) {
-      const ids = refs[model].map(r => r.id).filter(Boolean)
-      if (ids.length) {
-        await prisma[camelCase(model)].deleteMany({
-          where: { id: { in: ids } },
-        })
-      }
-    }
-  }
-
-  // Delete scope root
-  await prisma[camelCase(scopeRootModel)].delete({
-    where: { id: scopeValue },
-  })
-}
-```
+If not implemented and the schema has circular FKs, the SDK will raise an error asking for this method.
 
 ## Server Adapter
 
-Converts between a framework's request/response and the SDK's internal format. Existing adapters: `@autonoma-ai/server-web`, `@autonoma-ai/server-express`, `@autonoma-ai/server-node`.
+A server adapter converts between your HTTP framework's request/response types and the SDK's internal format. It is typically very small -- around 15-20 lines of code.
 
-### The internal format
+### What it must do
 
-```typescript
-// Input to handleRequest()
-interface HandlerRequest {
-  body: string                       // raw body as string — needed for HMAC verification
-  headers: Record<string, string>    // lowercase header names
-}
+1. Extract the raw request body as a string. This is critical -- the HMAC signature is computed over the exact bytes of the body. The adapter must get the body before any JSON parsing or middleware transformation.
 
-// Output from handleRequest()
-interface HandlerResponse {
-  status: number
-  body: Record<string, unknown>
-}
-```
+2. Extract request headers as a flat key-value map with lowercase keys.
 
-### How to build one
+3. Call the SDK core's handleRequest function with the configuration and the extracted body + headers.
 
-A server adapter is ~15 lines. It:
-1. Reads the raw request body as a **string** (not parsed JSON — HMAC needs the exact bytes)
-2. Extracts headers as a flat `Record<string, string>` with lowercase keys
-3. Calls `handleRequest(config, { body, headers })` from `@autonoma-ai/sdk`
-4. Writes the status code and JSON body to the framework's response
+4. Write the returned status code and JSON body to the framework's response.
 
-### Example: Web standard (Next.js, Hono, Bun, Deno)
+### Framework-specific considerations
 
-```typescript
-import { handleRequest } from '@autonoma-ai/sdk'
-import type { HandlerConfig } from '@autonoma-ai/sdk'
+Web standard frameworks (Next.js App Router, Hono, Bun, Deno): read the body with req.text(), iterate headers with req.headers.forEach().
 
-export function createHandler(config: HandlerConfig) {
-  return async (req: Request): Promise<Response> => {
-    const body = await req.text()
-    const headers: Record<string, string> = {}
-    req.headers.forEach((value, key) => {
-      headers[key.toLowerCase()] = value
-    })
+Express: if body-parsing middleware is active, the body may already be parsed. Either configure the route to receive the raw body as a string, or re-serialize it (less ideal, since it may not match the original bytes exactly).
 
-    const res = await handleRequest(config, { body, headers })
-    return new Response(JSON.stringify(res.body), {
-      status: res.status,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  }
-}
-```
+Node.js http: collect chunks from the request stream into a buffer, then convert to string.
 
-### Example: Express
+Phoenix/Plug (Elixir): use a custom body reader or Plug.Parsers configuration to preserve the raw body alongside the parsed version.
 
-```typescript
-import { handleRequest } from '@autonoma-ai/sdk'
-import type { HandlerConfig } from '@autonoma-ai/sdk'
+ASGI/WSGI (Python): read the raw body from the request object before any framework-level parsing.
 
-export function createExpressHandler(config: HandlerConfig) {
-  return async (req, res) => {
-    // Important: need raw body as string for HMAC
-    const body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body)
-    const headers: Record<string, string> = {}
-    for (const [key, val] of Object.entries(req.headers)) {
-      if (typeof val === 'string') headers[key.toLowerCase()] = val
-    }
+### The name property
 
-    const result = await handleRequest(config, { body, headers })
-    res.status(result.status).json(result.body)
-  }
-}
-```
+Server adapters also expose a name (e.g., "web", "express", "phoenix", "fastapi") that the SDK includes in response metadata.
 
-**Express gotcha**: If you use `express.json()` middleware, `req.body` is already parsed. The adapter must `JSON.stringify` it back. For best results, use `express.text({ type: 'application/json' })` on this route so the body stays as a string.
+## Language-specific adapter packages
 
-## Auth Adapter (future)
+Each language has its own set of adapter packages. Refer to the language-specific documentation for package names, installation instructions, and code examples:
 
-Not yet formalized as a separate package. Customers implement the `auth` callback directly in the handler config. See the Setup Guide, section 5.
+- TypeScript: sdks/typescript/docs/
+- Python: sdks/python/docs/
+- Elixir: sdks/elixir/docs/
 
-Planned packages for common auth providers:
-- `@autonoma-ai/auth-betterauth`
-- `@autonoma-ai/auth-lucia`
-- `@autonoma-ai/auth-workos`
-- `@autonoma-ai/auth-auth0`
-
-### Planned interface
-
-```typescript
-interface AuthAdapter {
-  authenticate(user: Record<string, unknown>): Promise<AuthResult>
-}
-
-interface AuthResult {
-  token?: string
-  cookies?: Array<{
-    name: string
-    value: string
-    httpOnly?: boolean
-    sameSite?: string
-    path?: string
-  }>
-  headers?: Record<string, string>
-  credentials?: { email: string; password: string }
-}
-```
-
-An auth adapter wraps the auth provider's API. You'd use it like:
-
-```typescript
-import { betterAuthAdapter } from '@autonoma-ai/auth-betterauth'
-
-export const POST = createHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
-  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
-  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: betterAuthAdapter(authClient),
-})
-```
+The protocol behavior is identical across all languages. Only the package names, syntax, and ORM-specific details differ.

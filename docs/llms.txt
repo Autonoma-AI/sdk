@@ -1,29 +1,29 @@
-# Autonoma SDK Docs
+# Autonoma SDK Documentation
 
-> The Autonoma SDK automates the Environment Factory — the backend endpoint that creates and destroys isolated test data for each E2E test run.
+> The Autonoma SDK automates the Environment Factory -- the backend endpoint that creates and destroys isolated test data for each E2E test run. SDKs are available for TypeScript, Python, and Elixir.
 
 ## Reading order
 
-Read the pages in this order. Each page builds on the previous one.
+### 1. overview.txt
+Start here. Explains what the Environment Factory is, the three actions (discover/up/down), the scope field, the two secrets, and SDK availability across languages.
 
-### 1. [Overview](overview.txt)
-Start here. Explains what the Environment Factory is, the three actions (discover/up/down), the scope field, the two secrets, and the package structure. After reading this you'll understand *what* the SDK does and *why*.
+### 2. protocol.txt
+The protocol specification. Request/response formats, HMAC authentication, the three actions in detail, the refs token, the safety model, and error codes. Language-agnostic.
 
-### 2. [Setup Guide](setup.txt)
-Install the packages, create the endpoint, implement the auth callback, generate secrets, and verify everything works. Includes complete examples for Next.js, Express, Hono, Drizzle, and Node.js http. After reading this you'll have a working endpoint.
+### 3. scenarios.txt
+How to describe test data as a nested JSON tree. Nesting rules, template expressions, cross-branch references (_alias/_ref), bulk insert (_count/_batch), and the three standard scenarios (empty, standard, large).
 
-### 3. [Writing Scenario Data](scenarios.txt)
-How to describe test data as a nested JSON tree. Covers: why not raw SQL (safety model), how the SDK reads FK relationships from your schema (no guessing), nesting rules, template expressions, cross-branch references (`_alias`/`_ref`), bulk insert (`_count`/`_batch`), and the three standard scenarios (empty, standard, large). After reading this you'll know how to write any scenario.
+### 4. adapters.txt
+What ORM adapters and server adapters must do. Read this if you are building a new adapter or want to understand the adapter interface. Covers getSchema, createEntities, teardown, and the server adapter pattern.
 
-### 4. [Validation](validation.txt)
-How to validate scenarios before deploying. Covers: `checkScenario` dry-runs against a real database, reading error messages and fix suggestions, common errors and how to fix them, testcontainers setup for local validation, and the fix loop for LLM-generated scenarios. After reading this you'll be able to catch and fix any scenario error.
+## Language-specific documentation
 
-### 5. [Building Adapters](adapters.txt)
-*Only read this if you're building a new ORM adapter, server adapter, or auth adapter.* Covers the `OrmAdapter` interface (`getSchema`, `createEntities`, `teardown`), the server adapter pattern, and the planned auth adapter interface. Not needed for using the SDK — only for extending it.
+Each SDK has its own docs directory with language-specific setup guides, code examples, and package listings:
 
-### 6. [Agent Prompt](agent-prompt.txt)
-*Only read this if you're an AI agent setting up the SDK in a customer's codebase.* Complete step-by-step prompt covering: stack detection, scope field identification, installation, endpoint creation, auth callback implementation, scenario generation with validation loop, and the skill for generating additional scenarios on demand.
+- TypeScript: sdks/typescript/docs/
+- Python: sdks/python/docs/
+- Elixir: sdks/elixir/docs/
 
 ## Complete documentation
 
-- [All pages in one file](llms-full.txt) — every page concatenated, in reading order.
+- llms-full.txt -- all pages above concatenated in reading order

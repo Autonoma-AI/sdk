@@ -1,0 +1,57 @@
+{
+  "module": "fingerprint",
+  "functions": [
+    {
+      "name": "fingerprint",
+      "cases": [
+        {
+          "description": "produces a 16-char hex string",
+          "input": { "value": { "name": "test" } },
+          "assert": {
+            "equals": "7d9fd2051fc32b32",
+            "matches_regex": "^[a-f0-9]{16}$"
+          }
+        },
+        {
+          "description": "is order-independent for object keys",
+          "input_pair": [
+            { "value": { "z": 1, "a": 2, "m": 3 } },
+            { "value": { "a": 2, "m": 3, "z": 1 } }
+          ],
+          "assert": {
+            "pair_equals": true,
+            "first_equals": "ebba85cfdc0a724b"
+          }
+        },
+        {
+          "description": "produces different fingerprints for different data",
+          "input_pair": [
+            { "value": { "a": 1 } },
+            { "value": { "a": 2 } }
+          ],
+          "assert": { "pair_equals": false }
+        },
+        {
+          "description": "handles arrays (order matters)",
+          "input": { "value": [1, 2, 3] },
+          "assert": { "equals": "a615eeaee21de517" }
+        },
+        {
+          "description": "handles strings",
+          "input": { "value": "hello" },
+          "assert": { "equals": "5aa762ae383fbb72" }
+        },
+        {
+          "description": "handles numbers",
+          "input": { "value": 42 },
+          "assert": { "equals": "73475cb40a568e8d" }
+        },
+        {
+          "description": "simple object",
+          "input": { "value": { "a": 1 } },
+          "assert": { "equals": "015abd7f5cc57a2d" }
+        }
+      ]
+    }
+  ]
+}
