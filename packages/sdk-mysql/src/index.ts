@@ -14,6 +14,15 @@ interface MySQL2Connection {
 }
 
 /**
+ * Safely extract rows from a mysql2 query result.
+ * SELECT returns RowDataPacket[], but INSERT/UPDATE/DELETE returns ResultSetHeader.
+ */
+function toRows<T>(result: unknown): T[] {
+  if (Array.isArray(result)) return result as T[]
+  return []
+}
+
+/**
  * Create a SQLExecutor from a mysql2 pool (promise-based).
  *
  * @example
@@ -36,8 +45,8 @@ interface MySQL2Connection {
 export function mysqlExecutor(pool: MySQL2Pool): SQLExecutor {
   return {
     async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
-      const [rows] = await pool.query<T[]>(sql, params)
-      return rows
+      const [result] = await pool.query(sql, params)
+      return toRows<T>(result)
     },
 
     async transaction<T>(fn: (tx: SQLExecutor) => Promise<T>): Promise<T> {
@@ -46,8 +55,8 @@ export function mysqlExecutor(pool: MySQL2Pool): SQLExecutor {
       try {
         const txExecutor: SQLExecutor = {
           async query<U = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<U[]> {
-            const [rows] = await conn.query<U[]>(sql, params)
-            return rows
+            const [result] = await conn.query(sql, params)
+            return toRows<U>(result)
           },
           transaction: (innerFn) => innerFn(txExecutor),
         }

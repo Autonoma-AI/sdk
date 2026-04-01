@@ -51,13 +51,15 @@ export async function introspectDatabase(
   }
   const excludeSet = new Set(config.excludeTables ?? ['_prisma_migrations'])
 
-  // Run all introspection queries in parallel
+  // Run all introspection queries in parallel.
+  // Normalize row keys to lowercase — MySQL's information_schema can return
+  // column names in uppercase (TABLE_NAME vs table_name).
   const [tableRows, columnRows, pkRows, fkRows, enumRows] = await Promise.all([
-    executor.query<TableRow>(dialect.tablesSQL(dbSchema)),
-    executor.query<ColumnRow>(dialect.columnsSQL(dbSchema)),
-    executor.query<PKRow>(dialect.primaryKeysSQL(dbSchema)),
-    executor.query<FKRow>(dialect.foreignKeysSQL(dbSchema)),
-    executor.query<EnumRow>(dialect.enumsSQL(dbSchema)),
+    executor.query<TableRow>(dialect.tablesSQL(dbSchema)).then(normalizeKeys),
+    executor.query<ColumnRow>(dialect.columnsSQL(dbSchema)).then(normalizeKeys),
+    executor.query<PKRow>(dialect.primaryKeysSQL(dbSchema)).then(normalizeKeys),
+    executor.query<FKRow>(dialect.foreignKeysSQL(dbSchema)).then(normalizeKeys),
+    executor.query<EnumRow>(dialect.enumsSQL(dbSchema)).then(normalizeKeys),
   ])
 
   // Build enum lookup: name → values[]
@@ -179,13 +181,28 @@ export async function introspectDatabase(
     })
   }
 
-  // Build relations from FK edges
-  const relations = edges.map((edge) => ({
-    parentModel: edge.to,
-    childModel: edge.from,
-    parentField: edge.to,
-    childField: edge.localField,
-  }))
+  // Build relations from FK edges.
+  // For each edge (from→to), generate two relations:
+  //   1. Parent-side: on the "to" model, a field pointing to "from" model (e.g., Organization.members)
+  //   2. Child-side:  on the "from" model, a field pointing to "to" model (e.g., Member.organization)
+  const relations: SchemaRelation[] = []
+  for (const edge of edges) {
+    // Parent-side: "to" model has a collection/reference to "from" model
+    relations.push({
+      parentModel: edge.to,
+      childModel: edge.from,
+      parentField: pluralCamelCase(edge.from),
+      childField: edge.localField,
+    })
+
+    // Child-side: "from" model has a singular reference to "to" model (FK is on this side)
+    relations.push({
+      parentModel: edge.from,
+      childModel: edge.to,
+      parentField: lowerFirst(edge.to),
+      childField: edge.localField,
+    })
+  }
 
   return {
     schema: { models, edges, relations, scopeField: config.scopeField },
@@ -254,6 +271,48 @@ function mapDataType(dataType: string, udtName: string, dialectName: string): st
   if (dt === 'enum' || dt === 'set') return udtName
 
   return dataType
+}
+
+function lowerFirst(str: string): string {
+  return str.charAt(0).toLowerCase() + str.slice(1)
+}
+
+/**
+ * Convert a PascalCase model name to a camelCase plural field name.
+ * e.g., "Member" → "members", "Application" → "applications", "ApiKey" → "apiKeys"
+ */
+function pluralCamelCase(modelName: string): string {
+  const camel = lowerFirst(modelName)
+  return pluralize(camel)
+}
+
+function pluralize(str: string): string {
+  if (str.endsWith('s') || str.endsWith('x') || str.endsWith('z') || str.endsWith('ch') || str.endsWith('sh')) {
+    return str + 'es'
+  }
+  if (str.endsWith('y') && str.length > 1 && !isVowel(str.charAt(str.length - 2))) {
+    return str.slice(0, -1) + 'ies'
+  }
+  return str + 's'
+}
+
+function isVowel(ch: string): boolean {
+  return 'aeiou'.includes(ch.toLowerCase())
+}
+
+/**
+ * Lowercase all keys in each row — handles MySQL information_schema returning
+ * uppercase column names (TABLE_NAME, COLUMN_NAME, etc.)
+ */
+function normalizeKeys<T>(rows: T[]): T[] {
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object') return row
+    const normalized: Record<string, unknown> = {}
+    for (const [key, val] of Object.entries(row as Record<string, unknown>)) {
+      normalized[key.toLowerCase()] = val
+    }
+    return normalized as T
+  })
 }
 
 /** Reverse lookup: find the key whose value matches `dbName` */

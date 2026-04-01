@@ -10,7 +10,11 @@
   },
   "devDependencies": {
     "@prisma/client": "^5.22.0",
+    "@testcontainers/mysql": "^11.13.0",
     "@testcontainers/postgresql": "^11.13.0",
+    "@types/pg": "^8.20.0",
+    "mysql2": "^3.20.0",
+    "pg": "^8.20.0",
     "prisma": "^5.22.0",
     "testcontainers": "^11.13.0",
     "tsup": "^8.4.0",

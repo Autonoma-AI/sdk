@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { SQLExecutor, ResolvedEntitySpec, CreateContext } from './types'
 import type { Dialect } from './dialect'
 
@@ -64,7 +65,7 @@ export async function updateEntity(
   for (const [fieldName, value] of Object.entries(fields)) {
     const dbCol = colMap.get(fieldName) ?? fieldName
     setClauses.push(`${dialect.quoteId(dbCol)} = ${dialect.param(paramIdx)}`)
-    params.push(value)
+    params.push(serializeValue(value, dialect))
     paramIdx++
   }
 
@@ -84,19 +85,19 @@ async function insertOne(
   colMap: Map<string, string>,
   fields: Record<string, unknown>,
 ): Promise<Record<string, unknown>[]> {
+  // For dialects without RETURNING (MySQL), ensure we have an ID to SELECT back
+  if (!dialect.supportsReturning) {
+    const idFieldName = reverseGet(colMap, findIdCol(colMap)) ?? 'id'
+    if (fields[idFieldName] === undefined) {
+      fields = { ...fields, [idFieldName]: randomUUID() }
+    }
+  }
+
   const entries = Object.entries(fields)
 
   if (entries.length === 0) {
-    if (dialect.supportsReturning) {
-      const sql = `INSERT INTO ${dialect.quoteId(dbTable)} DEFAULT VALUES RETURNING *`
-      return mapRowsBack(await executor.query(sql), colMap)
-    }
-    // MySQL: INSERT with empty VALUES(), then fetch via LAST_INSERT_ID
-    await executor.query(`INSERT INTO ${dialect.quoteId(dbTable)} VALUES ()`)
-    return mapRowsBack(
-      await executor.query(`SELECT * FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(findIdCol(colMap))} = LAST_INSERT_ID()`),
-      colMap,
-    )
+    const sql = `INSERT INTO ${dialect.quoteId(dbTable)} DEFAULT VALUES RETURNING *`
+    return mapRowsBack(await executor.query(sql), colMap)
   }
 
   const dbCols: string[] = []
@@ -108,7 +109,7 @@ async function insertOne(
     const dbCol = colMap.get(fieldName) ?? fieldName
     dbCols.push(dialect.quoteId(dbCol))
     placeholders.push(dialect.param(paramIdx))
-    params.push(value)
+    params.push(serializeValue(value, dialect))
     paramIdx++
   }
 
@@ -120,27 +121,21 @@ async function insertOne(
     return mapRowsBack(await executor.query(sql, params), colMap)
   }
 
-  // MySQL: INSERT then SELECT back the row
+  // MySQL: INSERT then SELECT back by the ID we set
   await executor.query(
     `INSERT INTO ${dialect.quoteId(dbTable)} (${colList}) VALUES (${valList})`,
     params,
   )
 
-  // If the fields include an explicit ID, select by that; otherwise use LAST_INSERT_ID()
   const idCol = findIdCol(colMap)
-  const explicitId = fields.id ?? fields[reverseGet(colMap, idCol) ?? 'id']
-  if (explicitId !== undefined) {
-    return mapRowsBack(
-      await executor.query(
-        `SELECT * FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} = ${dialect.param(1)}`,
-        [explicitId],
-      ),
-      colMap,
-    )
-  }
+  const idFieldName = reverseGet(colMap, idCol) ?? 'id'
+  const id = fields[idFieldName]
 
   return mapRowsBack(
-    await executor.query(`SELECT * FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} = LAST_INSERT_ID()`),
+    await executor.query(
+      `SELECT * FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} = ${dialect.param(1)}`,
+      [id],
+    ),
     colMap,
   )
 }
@@ -165,7 +160,7 @@ async function insertBatch(
     const placeholders: string[] = []
     for (const fieldName of fieldNames) {
       placeholders.push(dialect.param(paramIdx))
-      params.push(fields[fieldName])
+      params.push(serializeValue(fields[fieldName], dialect))
       paramIdx++
     }
     valueTuples.push(`(${placeholders.join(', ')})`)
@@ -220,4 +215,29 @@ function reverseGet(map: Map<string, string>, dbName: string): string | null {
     if (val === dbName) return key
   }
   return null
+}
+
+/**
+ * Serialize a JS value for SQL insertion.
+ * Handles MySQL-specific quirks:
+ *  - Objects/arrays → JSON.stringify (MySQL requires JSON strings, not objects)
+ *  - ISO 8601 datetime strings → MySQL DATETIME format
+ */
+function serializeValue(value: unknown, dialect: Dialect): unknown {
+  if (value === null || value === undefined) return value
+
+  // JSON: MySQL needs a string, Postgres accepts objects via jsonb
+  if (typeof value === 'object' && !(value instanceof Date)) {
+    if (dialect.name === 'mysql') return JSON.stringify(value)
+    return value
+  }
+
+  // DateTime: MySQL doesn't accept ISO 8601 with 'T' and 'Z'
+  if (typeof value === 'string' && dialect.name === 'mysql') {
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+      return value.replace('T', ' ').replace('Z', '').replace(/\.\d+$/, '')
+    }
+  }
+
+  return value
 }
