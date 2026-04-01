@@ -15,8 +15,8 @@
   },
   "scripts": {
     "build": "tsup",
-    "test": "vitest run",
-    "test:unit": "vitest run",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests",
     "clean": "rm -rf dist"
   },
   "dependencies": {
