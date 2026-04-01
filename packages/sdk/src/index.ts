@@ -7,10 +7,12 @@ export { resolveTemplate } from './template'
 export { topoSort, findDeferrableEdge } from './graph'
 export { resolveTree } from './tree'
 export { checkScenario, checkAllScenarios } from './check'
+export { introspectDatabase } from './introspect'
+export { getDialect } from './dialect'
 
 // Types
 export type {
-  OrmAdapter,
+  SQLExecutor,
   SchemaInfo,
   ModelInfo,
   FieldInfo,
@@ -28,6 +30,8 @@ export type {
   SchemaRelation,
 } from './types'
 
+export type { Dialect } from './dialect'
+export type { IntrospectionResult } from './introspect'
 export type { TemplateContext } from './template'
 export type { CreateOp, ResolvedTree, RefNode } from './tree'
 export type { CheckResult, CheckError } from './check'

@@ -2,13 +2,34 @@ import type {
   HandlerConfig,
   HandlerRequest,
   HandlerResponse,
-  CreateContext,
   ResolvedEntitySpec,
 } from './types'
 import { verifySignature } from './hmac'
 import { signRefs, verifyRefs } from './refs'
 import { resolveTree } from './tree'
 import { AutonomaError, Errors } from './errors'
+import { getDialect } from './dialect'
+import { introspectDatabase, type IntrospectionResult } from './introspect'
+import { createEntities, updateEntity } from './create'
+import { teardown } from './teardown'
+
+/** Cache introspection results per config to avoid re-querying on every request */
+const introspectionCache = new WeakMap<HandlerConfig, IntrospectionResult>()
+
+async function getIntrospection(config: HandlerConfig): Promise<IntrospectionResult> {
+  let cached = introspectionCache.get(config)
+  if (cached) return cached
+
+  const dialect = getDialect(config.dialect)
+  cached = await introspectDatabase(config.executor, dialect, {
+    scopeField: config.scopeField,
+    schema: config.dbSchema,
+    tableNameMap: config.tableNameMap,
+    excludeTables: config.excludeTables,
+  })
+  introspectionCache.set(config, cached)
+  return cached
+}
 
 export async function handleRequest(
   config: HandlerConfig,
@@ -44,7 +65,7 @@ export async function handleRequest(
 
     switch (action) {
       case 'discover':
-        return handleDiscover(config)
+        return await handleDiscover(config)
       case 'up':
         return await handleUp(config, body)
       case 'down':
@@ -61,8 +82,8 @@ export async function handleRequest(
   }
 }
 
-function handleDiscover(config: HandlerConfig): HandlerResponse {
-  const schema = config.adapter.getSchema()
+async function handleDiscover(config: HandlerConfig): Promise<HandlerResponse> {
+  const { schema } = await getIntrospection(config)
   return { status: 200, body: { schema } }
 }
 
@@ -74,87 +95,83 @@ async function handleUp(
   if (!create) throw Errors.invalidBody('missing "create" in request body')
 
   const testRunId = (body.testRunId as string) ?? crypto.randomUUID()
-  const schema = config.adapter.getSchema()
+  const { schema, tableMap, columnMaps } = await getIntrospection(config)
+  const dialect = getDialect(config.dialect)
 
   const tree = resolveTree(create, schema, testRunId)
   const refs: Record<string, Record<string, unknown>[]> = {}
   const idMap = new Map<string, string>()
 
-  let i = 0
-  while (i < tree.ops.length) {
-    const op = tree.ops[i]!
-    const model = op.model
+  await config.executor.transaction(async (tx) => {
+    let i = 0
+    while (i < tree.ops.length) {
+      const op = tree.ops[i]!
+      const model = op.model
 
-    // Collect consecutive ops for the same model with same batch flag
-    const batch: typeof tree.ops = [op]
-    while (i + 1 < tree.ops.length && tree.ops[i + 1]!.model === model && tree.ops[i + 1]!.batch === op.batch) {
-      i++
-      batch.push(tree.ops[i]!)
-    }
+      // Collect consecutive ops for the same model with same batch flag
+      const batch: typeof tree.ops = [op]
+      while (i + 1 < tree.ops.length && tree.ops[i + 1]!.model === model && tree.ops[i + 1]!.batch === op.batch) {
+        i++
+        batch.push(tree.ops[i]!)
+      }
 
-    // Replace temp IDs with real IDs in all fields
-    const resolvedFields = batch.map((b) => {
-      const fields = { ...b.fields }
-      delete fields.id
-      for (const [key, value] of Object.entries(fields)) {
-        if (typeof value === 'string' && value.startsWith('__temp_')) {
-          const realId = idMap.get(value)
-          if (realId) fields[key] = realId
+      // Replace temp IDs with real IDs in all fields
+      const resolvedFields = batch.map((b) => {
+        const fields = { ...b.fields }
+        delete fields.id
+        for (const [key, value] of Object.entries(fields)) {
+          if (typeof value === 'string' && value.startsWith('__temp_')) {
+            const realId = idMap.get(value)
+            if (realId) fields[key] = realId
+          }
+        }
+        // Inject scope field if applicable
+        const scopeEdge = schema.edges.find(
+          (e) => e.from === model && e.localField.toLowerCase() === schema.scopeField.toLowerCase() && e.from !== e.to,
+        )
+        if (scopeEdge && !(scopeEdge.localField in fields)) {
+          const scopeVal = detectScopeValue(refs, schema.scopeField)
+          if (scopeVal) fields[scopeEdge.localField] = scopeVal
+        }
+        return fields
+      })
+
+      const spec: Record<string, ResolvedEntitySpec> = {
+        [model]: { count: resolvedFields.length, fields: resolvedFields, batch: op.batch },
+      }
+
+      const context = { testRunId, refs }
+      const created = await createEntities(tx, dialect, tableMap, columnMaps, spec, context)
+      const records = created[model] ?? []
+
+      if (!refs[model]) refs[model] = []
+      refs[model].push(...records)
+
+      for (let j = 0; j < batch.length; j++) {
+        const record = records[j]
+        if (record && typeof record.id === 'string') {
+          idMap.set(batch[j]!.tempId, record.id)
         }
       }
-      // Inject scope field if applicable
-      const scopeEdge = schema.edges.find(
-        (e) => e.from === model && e.localField.toLowerCase() === schema.scopeField.toLowerCase() && e.from !== e.to,
-      )
-      if (scopeEdge && !(scopeEdge.localField in fields)) {
-        const scopeVal = detectScopeValue(refs, schema.scopeField)
-        if (scopeVal) fields[scopeEdge.localField] = scopeVal
+
+      i++
+    }
+
+    // Resolve deferred FK updates (circular dependency cycles)
+    for (const deferred of tree.deferredUpdates) {
+      const realTargetId = idMap.get(deferred.targetTempId)
+      const refTempId = tree.aliases.get(deferred.refAlias)
+      const realRefId = refTempId ? idMap.get(refTempId) : undefined
+
+      if (!realTargetId || !realRefId) {
+        throw new Error(
+          `_ref "${deferred.refAlias}" could not be resolved. Ensure the referenced node has _alias defined in the scenario.`,
+        )
       }
-      return fields
-    })
 
-    const spec: Record<string, ResolvedEntitySpec> = {
-      [model]: { count: resolvedFields.length, fields: resolvedFields, batch: op.batch },
+      await updateEntity(tx, dialect, tableMap, columnMaps, deferred.model, realTargetId, { [deferred.field]: realRefId })
     }
-
-    const context: CreateContext = { testRunId, refs }
-    const created = await config.adapter.createEntities(spec, context)
-    const records = created[model] ?? []
-
-    if (!refs[model]) refs[model] = []
-    refs[model].push(...records)
-
-    for (let j = 0; j < batch.length; j++) {
-      const record = records[j]
-      if (record && typeof record.id === 'string') {
-        idMap.set(batch[j]!.tempId, record.id)
-      }
-    }
-
-    i++
-  }
-
-  // Resolve deferred FK updates (circular dependency cycles)
-  for (const deferred of tree.deferredUpdates) {
-    const realTargetId = idMap.get(deferred.targetTempId)
-    const refTempId = tree.aliases.get(deferred.refAlias)
-    const realRefId = refTempId ? idMap.get(refTempId) : undefined
-
-    if (!realTargetId || !realRefId) {
-      throw new Error(
-        `_ref "${deferred.refAlias}" could not be resolved. Ensure the referenced node has _alias defined in the scenario.`,
-      )
-    }
-
-    if (!config.adapter.updateEntity) {
-      throw new Error(
-        `Circular FK detected (${deferred.model}.${deferred.field}), but the ORM adapter does not implement updateEntity. ` +
-        `Upgrade @autonoma-ai/sdk-prisma or @autonoma-ai/sdk-drizzle to a version that supports circular FK resolution.`,
-      )
-    }
-
-    await config.adapter.updateEntity(deferred.model, realTargetId, { [deferred.field]: realRefId })
-  }
+  })
 
   const scopeValue = detectScopeValue(refs, schema.scopeField) ?? testRunId
 
@@ -187,7 +204,10 @@ async function handleDown(
     throw Errors.invalidRefsToken(message)
   }
 
-  await config.adapter.teardown(payload.testRunId, payload.refs)
+  const { schema, tableMap, columnMaps } = await getIntrospection(config)
+  const dialect = getDialect(config.dialect)
+
+  await teardown(config.executor, dialect, tableMap, columnMaps, schema, payload.testRunId, payload.refs)
 
   return { status: 200, body: { ok: true } }
 }

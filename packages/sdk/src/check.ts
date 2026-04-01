@@ -1,5 +1,5 @@
 import type {
-  OrmAdapter,
+  SQLExecutor,
   ScenarioDefinition,
   HandlerConfig,
 } from './types'
@@ -24,15 +24,27 @@ export interface CheckError {
  * Runs the full up → down cycle and returns structured errors.
  */
 export async function checkScenario(
-  adapter: OrmAdapter,
+  executor: SQLExecutor,
   scenario: ScenarioDefinition,
-  options?: { sharedSecret?: string; signingSecret?: string; auth?: HandlerConfig['auth'] },
+  options?: {
+    scopeField: string
+    dialect?: HandlerConfig['dialect']
+    dbSchema?: string
+    tableNameMap?: Record<string, string>
+    sharedSecret?: string
+    signingSecret?: string
+    auth?: HandlerConfig['auth']
+  },
 ): Promise<CheckResult> {
   const sharedSecret = options?.sharedSecret ?? 'autonoma-check-shared'
   const signingSecret = options?.signingSecret ?? 'autonoma-check-signing'
 
   const config: HandlerConfig = {
-    adapter,
+    executor,
+    scopeField: options?.scopeField ?? 'organizationId',
+    dialect: options?.dialect,
+    dbSchema: options?.dbSchema,
+    tableNameMap: options?.tableNameMap,
     sharedSecret,
     signingSecret,
     auth: options?.auth ?? (async () => ({ token: 'check-token' })),
@@ -88,31 +100,35 @@ export async function checkScenario(
  * Check multiple scenarios sequentially.
  */
 export async function checkAllScenarios(
-  adapter: OrmAdapter,
+  executor: SQLExecutor,
   scenarios: ScenarioDefinition[],
-  options?: { sharedSecret?: string; signingSecret?: string; auth?: HandlerConfig['auth'] },
+  options?: {
+    scopeField: string
+    dialect?: HandlerConfig['dialect']
+    dbSchema?: string
+    tableNameMap?: Record<string, string>
+    sharedSecret?: string
+    signingSecret?: string
+    auth?: HandlerConfig['auth']
+  },
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = []
   for (const scenario of scenarios) {
-    results.push(await checkScenario(adapter, scenario, options))
+    results.push(await checkScenario(executor, scenario, options))
   }
   return results
 }
 
 function suggestFix(errorMsg: string): string {
-  if (errorMsg.includes('Unique constraint failed')) {
-    const match = errorMsg.match(/fields: \(`(.+?)`\)/)
+  if (errorMsg.includes('Unique constraint failed') || errorMsg.includes('unique constraint')) {
+    const match = errorMsg.match(/fields: \(`(.+?)`\)/) ?? errorMsg.match(/constraint "(.+?)"/)
     if (match) return `Unique constraint on (${match[1]}). Add {{testRunId}} or {{index}} to make values unique.`
     return 'Unique constraint violation. Make field values unique across instances.'
   }
-  if (errorMsg.includes('Foreign key constraint')) {
+  if (errorMsg.includes('Foreign key constraint') || errorMsg.includes('foreign key')) {
     return 'A referenced record does not exist. Check that parent entities are nested correctly.'
   }
-  if (errorMsg.includes('Unknown argument')) {
-    const match = errorMsg.match(/Unknown argument `(\w+)`/)
-    if (match) return `Field "${match[1]}" does not exist on this model. Remove it.`
-  }
-  if (errorMsg.includes('must not be null')) {
+  if (errorMsg.includes('null value in column') || errorMsg.includes('must not be null')) {
     return 'A required field is null. Add it to the node with a value.'
   }
   return ''

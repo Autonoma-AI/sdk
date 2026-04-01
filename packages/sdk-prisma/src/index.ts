@@ -1,50 +1,43 @@
-import type { OrmAdapter, SchemaInfo, ResolvedEntitySpec, CreateContext } from '@autonoma-ai/sdk'
-import { introspectPrisma, type PrismaAdapterConfig } from './introspect'
-import { createEntities } from './create'
-import { teardown } from './teardown'
+import type { SQLExecutor } from '@autonoma-ai/sdk'
 
-export type { PrismaAdapterConfig }
+interface PrismaClient {
+  $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>
+  $transaction<T>(fn: (tx: PrismaClient) => Promise<T>): Promise<T>
+}
 
 /**
- * Create a Prisma ORM adapter for the Autonoma SDK.
+ * Create a SQLExecutor from a Prisma client.
  *
  * @example
  * ```ts
- * import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+ * import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
  * import { prisma } from './db'
  *
- * const adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+ * const handler = createHandler({
+ *   executor: prismaExecutor(prisma),
+ *   scopeField: 'organizationId',
+ *   sharedSecret: process.env.AUTONOMA_SECRET!,
+ *   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+ * })
  * ```
  */
-export function prismaAdapter(
-  prisma: any,
-  config: PrismaAdapterConfig,
-): OrmAdapter {
-  let cachedSchema: SchemaInfo | null = null
-
+export function prismaExecutor(prisma: PrismaClient): SQLExecutor {
   return {
-    getSchema() {
-      if (!cachedSchema) {
-        cachedSchema = introspectPrisma(prisma, config)
-      }
-      return cachedSchema
+    async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
+      const result = await prisma.$queryRawUnsafe<T[]>(sql, ...(params ?? []))
+      return result
     },
 
-    async createEntities(
-      spec: Record<string, ResolvedEntitySpec>,
-      context: CreateContext,
-    ) {
-      return createEntities(prisma, spec, context)
-    },
-
-    async teardown(scopeValue: string, refs?: Record<string, Record<string, unknown>[]>) {
-      const schema = this.getSchema()
-      return teardown(prisma, schema, scopeValue, refs)
-    },
-
-    async updateEntity(model: string, id: string, fields: Record<string, unknown>) {
-      const delegate = prisma[model.charAt(0).toLowerCase() + model.slice(1)]
-      await delegate.update({ where: { id }, data: fields })
+    async transaction<T>(fn: (tx: SQLExecutor) => Promise<T>): Promise<T> {
+      return prisma.$transaction(async (txClient) => {
+        const txExecutor: SQLExecutor = {
+          async query<U = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<U[]> {
+            return txClient.$queryRawUnsafe<U[]>(sql, ...(params ?? []))
+          },
+          transaction: (innerFn) => innerFn(txExecutor),
+        }
+        return fn(txExecutor)
+      })
     },
   }
 }

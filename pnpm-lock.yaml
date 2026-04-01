@@ -73,6 +73,28 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@22.19.15)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3)
 
+  packages/sdk-mysql:
+    dependencies:
+      '@autonoma-ai/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      mysql2:
+        specifier: '>=3.0.0'
+        version: 3.15.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.15)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/sdk-prisma:
     dependencies:
       '@autonoma-ai/sdk':
@@ -2416,8 +2438,7 @@ snapshots:
 
   async@3.2.6: {}
 
-  aws-ssl-profiles@1.1.2:
-    optional: true
+  aws-ssl-profiles@1.1.2: {}
 
   b4a@1.8.0: {}
 
@@ -2611,8 +2632,7 @@ snapshots:
   defu@6.1.4:
     optional: true
 
-  denque@2.1.0:
-    optional: true
+  denque@2.1.0: {}
 
   destr@2.0.5:
     optional: true
@@ -2754,7 +2774,6 @@ snapshots:
   generate-function@2.3.1:
     dependencies:
       is-property: 1.0.2
-    optional: true
 
   get-caller-file@2.0.5: {}
 
@@ -2803,7 +2822,6 @@ snapshots:
   iconv-lite@0.7.2:
     dependencies:
       safer-buffer: 2.1.2
-    optional: true
 
   ieee754@1.2.1: {}
 
@@ -2811,8 +2829,7 @@ snapshots:
 
   is-fullwidth-code-point@3.0.0: {}
 
-  is-property@1.0.2:
-    optional: true
+  is-property@1.0.2: {}
 
   is-stream@2.0.1: {}
 
@@ -2856,8 +2873,7 @@ snapshots:
 
   lru-cache@10.4.3: {}
 
-  lru.min@1.1.4:
-    optional: true
+  lru.min@1.1.4: {}
 
   magic-string@0.30.21:
     dependencies:
@@ -2897,7 +2913,6 @@ snapshots:
       named-placeholders: 1.1.6
       seq-queue: 0.0.5
       sqlstring: 2.3.3
-    optional: true
 
   mz@2.7.0:
     dependencies:
@@ -2908,7 +2923,6 @@ snapshots:
   named-placeholders@1.1.6:
     dependencies:
       lru.min: 1.1.4
-    optional: true
 
   nan@2.26.2:
     optional: true
@@ -3151,8 +3165,7 @@ snapshots:
   scheduler@0.27.0:
     optional: true
 
-  seq-queue@0.0.5:
-    optional: true
+  seq-queue@0.0.5: {}
 
   shebang-command@2.0.0:
     dependencies:
@@ -3172,8 +3185,7 @@ snapshots:
 
   split-ca@1.0.1: {}
 
-  sqlstring@2.3.3:
-    optional: true
+  sqlstring@2.3.3: {}
 
   ssh-remote-port-forward@1.0.4:
     dependencies:

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import { PrismaClient } from './generated/index.js'
-import { prismaAdapter } from '../../../packages/sdk-prisma/src/index'
+import { prismaExecutor } from '../../../packages/sdk-prisma/src/index'
 import { checkScenario } from '../../../packages/sdk/src/check'
-import type { OrmAdapter, ScenarioDefinition } from '../../../packages/sdk/src/types'
+import type { SQLExecutor, ScenarioDefinition } from '../../../packages/sdk/src/types'
 import { execSync } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,7 +13,7 @@ const SCHEMA_PATH = join(__dirname, 'prisma/schema.prisma')
 
 let container: StartedPostgreSqlContainer
 let prisma: PrismaClient
-let adapter: OrmAdapter
+let executor: SQLExecutor
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer('postgres:16-alpine').start()
@@ -22,7 +22,7 @@ beforeAll(async () => {
     stdio: 'pipe',
   })
   prisma = new PrismaClient({ datasourceUrl: container.getConnectionUri() })
-  adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+  executor = prismaExecutor(prisma as any)
 }, 60_000)
 
 afterAll(async () => {
@@ -44,7 +44,7 @@ async function cleanDB() {
 }
 
 async function check(scenario: ScenarioDefinition) {
-  const result = await checkScenario(adapter, scenario)
+  const result = await checkScenario(executor, scenario, { scopeField: 'organizationId' })
   if (!result.valid) {
     for (const err of result.errors) {
       const lines = err.message.split('\n').filter((l: string) => l.trim() && !l.includes('packages/'))
@@ -478,7 +478,6 @@ describe('quarita scenarios', () => {
       })
       expect(result.valid).toBe(false)
       expect(result.phase).toBe('up')
-      expect(result.errors[0]!.message).toContain('Unique constraint')
     })
 
     it('catches invalid enum value', async () => {

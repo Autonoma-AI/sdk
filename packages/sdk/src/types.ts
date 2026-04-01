@@ -1,23 +1,13 @@
-/** ORM adapter interface — implemented by @autonoma-ai/sdk-prisma, @autonoma-ai/sdk-drizzle, etc. */
-export interface OrmAdapter {
-  /** Return schema metadata for discover (models, fields, relationships) */
-  getSchema(): SchemaInfo
-
-  /** Create entities from a resolved spec, return created records keyed by model */
-  createEntities(
-    spec: Record<string, ResolvedEntitySpec>,
-    context: CreateContext,
-  ): Promise<Record<string, Record<string, unknown>[]>>
-
-  /** Delete all data scoped to a value. Refs are provided for targeted cleanup of un-scoped models. */
-  teardown(scopeValue: string, refs?: Record<string, Record<string, unknown>[]>): Promise<void>
-
+/** Minimal SQL executor — wrap your DB connection (pg Pool, Prisma, Drizzle, etc.) into this. */
+export interface SQLExecutor {
+  /** Execute a SQL query with parameterized values. Returns rows as plain objects. */
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
   /**
-   * Update a single record by ID. Used to backfill nullable FKs in circular
-   * dependency cycles (e.g. Application.mainBranchId after Branch is created).
-   * Optional — only required when circular FK relationships exist in the schema.
+   * Execute a block within a transaction.
+   * The callback receives an executor scoped to the transaction.
+   * If the callback throws, the transaction is rolled back.
    */
-  updateEntity?(model: string, id: string, fields: Record<string, unknown>): Promise<void>
+  transaction<T>(fn: (tx: SQLExecutor) => Promise<T>): Promise<T>
 }
 
 export interface SchemaInfo {
@@ -80,7 +70,22 @@ export interface ScenarioDefinition {
 }
 
 export interface HandlerConfig {
-  adapter: OrmAdapter
+  /** SQL executor wrapping your database connection */
+  executor: SQLExecutor
+  /** Scope field name (camelCase), e.g., 'organizationId' */
+  scopeField: string
+  /** Database dialect. Defaults to 'postgres'. */
+  dialect?: 'postgres' | 'mysql' | 'sqlite'
+  /** DB schema name. Defaults to 'public' for Postgres. */
+  dbSchema?: string
+  /**
+   * Map scenario model names to DB table names.
+   * Keys are model names (PascalCase), values are DB table names.
+   * If omitted, auto-detected from information_schema with PascalCase inference.
+   */
+  tableNameMap?: Record<string, string>
+  /** Tables to exclude from introspection. Defaults to ['_prisma_migrations']. */
+  excludeTables?: string[]
   /** Shared secret — known by both you and Autonoma. Used to verify HMAC signatures on incoming requests. */
   sharedSecret: string
   /** Internal secret — only you know this. Used to sign the refs JWT token. Autonoma never sees it. */
