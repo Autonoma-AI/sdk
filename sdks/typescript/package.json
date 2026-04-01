@@ -1,0 +1,28 @@
+{
+  "name": "autonoma-sdk",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "test": "turbo test",
+    "test:unit": "turbo test:unit",
+    "lint": "turbo lint",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "@prisma/client": "^5.22.0",
+    "@testcontainers/mysql": "^11.13.0",
+    "@testcontainers/postgresql": "^11.13.0",
+    "@types/pg": "^8.20.0",
+    "drizzle-orm": "^0.45.1",
+    "mysql2": "^3.20.0",
+    "pg": "^8.20.0",
+    "prisma": "^5.22.0",
+    "testcontainers": "^11.13.0",
+    "tsup": "^8.4.0",
+    "tsx": "^4.21.0",
+    "turbo": "^2.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "modules": ["graph", "template", "hmac", "refs", "fingerprint"],
+  "bridges": {
+    "typescript": {
+      "command": "npx",
+      "args": ["tsx", "bridges/typescript.ts"],
+      "cwd": "."
+    },
+    "elixir": {
+      "command": "mix",
+      "args": ["run", "bridges/conformance_bridge.exs"],
+      "cwd": "../sdks/elixir"
+    },
+    "python": {
+      "command": "python3",
+      "args": ["bridges/conformance_bridge.py"],
+      "cwd": "../sdks/python"
+    }
+  }
+}

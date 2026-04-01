@@ -1,0 +1,82 @@
+{
+  "module": "refs",
+  "functions": [
+    {
+      "name": "signRefs",
+      "cases": [
+        {
+          "description": "produces a 3-part dot-separated token",
+          "input": {
+            "payload": {
+              "refs": { "User": [{ "id": "user-1", "email": "test@test.com" }] },
+              "testRunId": "test-run-123",
+              "environment": "standard"
+            },
+            "secret": "signing-secret"
+          },
+          "assert": {
+            "parts_count": 3,
+            "matches_regex": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+          }
+        },
+        {
+          "description": "token has exactly 3 parts",
+          "input": {
+            "payload": {
+              "refs": {},
+              "testRunId": "run-1",
+              "environment": "empty"
+            },
+            "secret": "secret"
+          },
+          "assert": {
+            "parts_count": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "verifyRefs",
+      "cases": [
+        {
+          "description": "round-trips a signed token",
+          "input": {
+            "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IlJFRlMifQ.eyJyZWZzIjp7IlVzZXIiOlt7ImlkIjoidXNlci0xIiwiZW1haWwiOiJ0ZXN0QHRlc3QuY29tIn1dfSwidGVzdFJ1bklkIjoidGVzdC1ydW4tMTIzIiwiZW52aXJvbm1lbnQiOiJzdGFuZGFyZCJ9.b2340UY6iXALRK2SaBV0BzZLVbxC8J59_csCUEc-gOw",
+            "secret": "signing-secret"
+          },
+          "assert": {
+            "deep_equals": {
+              "refs": { "User": [{ "id": "user-1", "email": "test@test.com" }] },
+              "testRunId": "test-run-123",
+              "environment": "standard"
+            }
+          }
+        },
+        {
+          "description": "rejects token with wrong secret",
+          "input": {
+            "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IlJFRlMifQ.eyJyZWZzIjp7IlVzZXIiOlt7ImlkIjoidXNlci0xIiwiZW1haWwiOiJ0ZXN0QHRlc3QuY29tIn1dfSwidGVzdFJ1bklkIjoidGVzdC1ydW4tMTIzIiwiZW52aXJvbm1lbnQiOiJzdGFuZGFyZCJ9.b2340UY6iXALRK2SaBV0BzZLVbxC8J59_csCUEc-gOw",
+            "secret": "wrong-secret"
+          },
+          "assert": { "throws": true }
+        },
+        {
+          "description": "rejects malformed token (not 3 parts)",
+          "input": {
+            "token": "only-one-part",
+            "secret": "signing-secret"
+          },
+          "assert": { "throws": true }
+        },
+        {
+          "description": "rejects tampered payload",
+          "input": {
+            "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IlJFRlMifQ.dGFtcGVyZWQ.b2340UY6iXALRK2SaBV0BzZLVbxC8J59_csCUEc-gOw",
+            "secret": "signing-secret"
+          },
+          "assert": { "throws": true }
+        }
+      ]
+    }
+  ]
+}

@@ -10,20 +10,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  # ---------------------------------------------------------------------------
+  # TypeScript → npm
+  # ---------------------------------------------------------------------------
+  npm:
     name: Publish to npm
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    defaults:
+      run:
+        working-directory: sdks/typescript
     steps:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: sdks/typescript/package.json
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile
@@ -42,3 +51,62 @@ jobs:
         run: pnpm -r --filter '!@autonoma-ai/sdk' publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Python → PyPI (Trusted Publishing via OIDC — no token needed)
+  # ---------------------------------------------------------------------------
+  pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Build package
+        run: poetry build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdks/python/dist/
+
+  # ---------------------------------------------------------------------------
+  # Elixir → Hex
+  # ---------------------------------------------------------------------------
+  hex:
+    name: Publish to Hex
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdks/elixir
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.17"
+
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get
+
+      - name: Build and publish to Hex
+        run: mix hex.publish --yes
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}

@@ -4,710 +4,698 @@
 
 Every E2E test needs data. A test for "user adds item to cart" needs a user, products, and a cart. A test for "admin views analytics" needs an organization with users, runs, and history.
 
-Tests can't share data — if one test deletes a product, another test that expects 10 products will fail. When tests run in parallel, this gets worse.
+Tests can't share data -- if one test deletes a product, another test that expects 10 products will fail. When tests run in parallel, this gets worse.
 
-The Environment Factory solves this. It's a POST endpoint in your backend that the Autonoma platform calls to:
+The Environment Factory solves this. It's a single POST endpoint in your backend that the Autonoma platform calls to:
 
-1. **Create** fresh, isolated data before each test run
-2. **Tear down** that data after the test finishes
+1. Create fresh, isolated data before each test run
+2. Tear down that data after the test finishes
 
 Each test run gets its own organization, users, and data. No interference between tests.
 
 ## What the SDK does
 
-The SDK is three npm packages that you install in your backend. Together they implement the entire Environment Factory endpoint. You configure it with your database connection, a scope field, two secrets, and an auth callback.
+The Autonoma SDK is a set of packages that you install in your backend. Together they implement the entire Environment Factory endpoint. You configure it with your database connection, a scope field, two secrets, and an auth callback.
 
-The SDK handles:
+The SDK handles everything:
 - Reading your database schema (models, fields, relationships)
-- Creating records in the correct order (respecting foreign key dependencies)
+- Creating records in the correct FK order automatically
 - Resolving template expressions in field values (unique emails, distributed enums)
 - Bulk-inserting large datasets efficiently
 - Tearing down all created data without leaving orphans
-- Verifying request signatures and signing teardown tokens
+- Verifying incoming request signatures (HMAC-SHA256)
+- Signing teardown tokens so nobody can tamper with them
 - Blocking the endpoint in production by default
+
+You write minimal configuration code. The SDK does the rest.
+
+SDKs are available for TypeScript, Python, and Elixir. Each language provides a core protocol library, ORM adapters (for your database layer), and server/framework adapters (for your HTTP framework). You install one of each.
 
 ## The three actions
 
-The endpoint handles three actions via `POST`:
+The endpoint handles three actions via POST:
 
-**`discover`** — The platform asks "what does your database look like?" The SDK reads your Prisma schema and returns the models, fields, and relationships. The platform uses this to generate valid scenario data.
+discover -- The platform asks "what does your database look like?" The SDK reads your ORM schema and returns the models, fields, and relationships. The platform uses this to generate valid scenario data.
 
-**`up`** — The platform sends scenario data (a nested tree describing what records to create) and the SDK creates them in the database. It returns auth credentials so the test runner can log in, plus a signed token for teardown.
+up -- The platform sends scenario data (a nested tree describing what records to create). The SDK creates them in the correct FK order, resolves templates, and returns auth credentials so the test runner can log in. It also returns a signed token for teardown.
 
-**`down`** — The platform sends the signed token back. The SDK verifies it and deletes everything that was created.
+down -- The platform sends the signed token back. The SDK verifies it and deletes everything that was created -- in the correct order, without FK constraint violations.
 
 ## What you provide
 
-| Config | What it is |
-|--------|-----------|
-| `adapter` | Your ORM adapter (Prisma or Drizzle) with a scope field |
-| `sharedSecret` | A secret shared between you and Autonoma — verifies incoming requests |
-| `signingSecret` | A secret only you know — signs the teardown token so nobody can tamper with it |
-| `auth` | A callback that creates real login credentials for test users |
+adapter       Your ORM adapter configured with a scope field.
+sharedSecret  A secret shared between you and Autonoma -- verifies incoming requests.
+signingSecret A secret only you know -- signs the teardown token so nobody can tamper with it.
+auth          A callback that creates real login credentials for test users.
 
 ## The scope field
 
-Most multi-tenant apps have a foreign key like `organizationId` on every model. This is the "scope field" — it's how the SDK isolates test data.
+Most multi-tenant apps have a foreign key like organizationId on every model. This is the "scope field" -- it's how the SDK isolates test data.
 
-During creation: child records get the organization's ID automatically via nesting.
-During teardown: the SDK deletes everything where `organizationId = <the test org's ID>`.
+During creation: child records get the organization's ID automatically via nesting. You never set it manually -- the SDK reads the FK graph and injects it.
 
-If your app isn't multi-tenant, you'll need a dedicated field (like `testRunId`) on every model.
+During teardown: the SDK deletes everything where the scope field equals the test organization's ID, in reverse FK order to avoid constraint violations.
+
+Example: if your database has Organization, User, and Application models, and both User and Application have an organizationId column pointing to Organization, then organizationId is your scope field. The SDK will:
+1. Create the Organization first
+2. Create Users and Applications with organizationId set to the Organization's ID
+3. On teardown, delete Applications, then Users, then the Organization
+
+If your app isn't multi-tenant, you'll need a dedicated field (like testRunId) on every model.
+
+Limitation: The scope field must be a single column. Compound scope keys (e.g., organizationId + countryId) are not supported. If your app scopes by multiple fields, use a single root entity with its own ID that child models reference.
 
 ## The two secrets
 
-**Shared secret** (`AUTONOMA_SHARED_SECRET`): Both you and Autonoma know this. Autonoma signs every request with HMAC-SHA256; your endpoint verifies the signature. This prevents unauthorized calls to your endpoint.
+You need two different secrets. The SDK will throw an error if they are the same.
 
-**Signing secret** (`AUTONOMA_SIGNING_SECRET`): Only you know this. During `up`, the SDK signs a JWT containing the IDs of all created records. During `down`, it verifies the JWT before deleting. Even Autonoma can't forge or modify this token — they just store it and pass it back.
+Shared secret (AUTONOMA_SHARED_SECRET): Both you and Autonoma know this. Autonoma signs every request with HMAC-SHA256; your endpoint verifies the signature. This prevents unauthorized calls to your endpoint.
+
+Signing secret (AUTONOMA_SIGNING_SECRET): Only you know this. During up, the SDK signs a token containing the IDs of all created records. During down, it verifies the token before deleting. Even Autonoma can't forge or modify this token -- they just store it and pass it back.
 
 Generate both with different values:
 
-```bash
-openssl rand -hex 32   # → AUTONOMA_SHARED_SECRET
-openssl rand -hex 32   # → AUTONOMA_SIGNING_SECRET
-```
+  openssl rand -hex 32   # use as AUTONOMA_SHARED_SECRET
+  openssl rand -hex 32   # use as AUTONOMA_SIGNING_SECRET (must be different!)
 
 ## Handling updates
 
-The platform sends scenario data inline in the `up` request. If your schema changes (you add a model, rename a field), the platform sees the change on the next `discover` call. There are no local files to keep in sync.
+The platform sends scenario data inline in the up request. If your schema changes (you add a model, rename a field), the platform sees the change on the next discover call. There are no local files to keep in sync.
 
-## The packages
+## SDK availability
 
-```
-@autonoma-ai/sdk              Core protocol (shared by all adapters)
-@autonoma-ai/sdk-prisma       Prisma ORM adapter
-@autonoma-ai/sdk-drizzle      Drizzle ORM adapter
-@autonoma-ai/server-web       Web standard adapter (Next.js, Hono, Bun, Deno)
-@autonoma-ai/server-express   Express adapter
-@autonoma-ai/server-node      Node.js http adapter
-```
+SDKs are available for three languages:
 
-Install the core + one ORM adapter + one server adapter:
+TypeScript -- ORM adapters for Prisma and Drizzle. Server adapters for Web standard (Next.js, Hono, Bun, Deno), Express, and Node.js http.
 
-```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
-```
+Python -- ORM adapters for SQLAlchemy and other Python ORMs. Server adapters for popular Python web frameworks.
+
+Elixir -- ORM adapters for Ecto. Server adapters for Phoenix and Plug.
+
+Each language follows the same architecture: a core protocol library plus ORM and server adapter packages. The protocol behavior is identical across languages -- only the package names and syntax differ.
+
+See the language-specific documentation in each SDK directory for installation instructions and code examples.
 
 
 ---
 
-# Setup Guide
+# Autonoma Environment Factory Protocol
 
-## Prerequisites
+## Overview
 
-- A backend with **Prisma** or **Drizzle** and a generated client
-- **PostgreSQL**, **MySQL**, or **SQLite**
-- Node.js 18+
+The Environment Factory protocol defines how the Autonoma platform communicates with your backend to create and destroy isolated test data. It is a simple request-response protocol over HTTP POST with HMAC-SHA256 authentication.
 
-## 1. Install
+Protocol version: 1.0
 
-```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
-```
+## Transport
 
-Substitute based on your stack:
+All communication happens over a single HTTP POST endpoint. The URL is chosen by you (e.g., /api/autonoma). The platform sends JSON requests and expects JSON responses.
 
-| ORM | Package |
-|-----|---------|
-| Prisma | `@autonoma-ai/sdk-prisma` |
-| Drizzle | `@autonoma-ai/sdk-drizzle` |
+## Authentication
 
-| Framework | Package |
-|-----------|---------|
-| Next.js App Router, Hono, Bun, Deno | `@autonoma-ai/server-web` |
-| Express, Fastify | `@autonoma-ai/server-express` |
-| Node.js http | `@autonoma-ai/server-node` |
+Every request is authenticated with HMAC-SHA256. The platform computes the signature over the raw request body using the shared secret and includes it in the x-signature header.
 
-## 2. Find your scope field
+The SDK verifies the signature before processing any request. If the signature is missing or invalid, the request is rejected with a 401 status.
 
-Look at your Prisma schema. The scope field is the FK that most models use to reference a root entity:
+### The two secrets
 
-```prisma
-model User {
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-}
-model Application {
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-}
-```
+The protocol uses two separate secrets. They must be different values.
 
-If most models have `organizationId` (or `orgId`, `tenantId`, `workspaceId`), that's your scope field.
+Shared secret: Known by both the Autonoma platform and your backend. Used for HMAC-SHA256 request signing. The platform signs; your SDK verifies.
 
-## 3. Generate secrets
+Signing secret: Known only by your backend. Used to sign the refs token during up and verify it during down. The platform stores this token opaquely and passes it back -- it cannot read or modify it.
 
-```bash
-openssl rand -hex 32   # → AUTONOMA_SHARED_SECRET (share with Autonoma)
-openssl rand -hex 32   # → AUTONOMA_SIGNING_SECRET (keep private)
-```
+## Request format
 
-Use **different** values. Add to `.env`:
+Every request is an HTTP POST with:
+- Content-Type: application/json
+- x-signature: HMAC-SHA256 hex digest of the raw body, keyed with the shared secret
 
-```env
-AUTONOMA_SHARED_SECRET=<first value>
-AUTONOMA_SIGNING_SECRET=<second value>
-```
+The request body is a JSON object with an "action" field that determines the operation.
 
-## 4. Create the endpoint
+## Response format
 
-### Next.js App Router
+Every response is a JSON object. Successful responses include metadata fields:
 
-```typescript
-// app/api/autonoma/route.ts
-import { createHandler } from '@autonoma-ai/server-web'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
-import { prisma } from '@/lib/db'
+  version   The protocol version string (currently "1.0").
+  sdk       An object with language, orm, and server fields identifying the SDK implementation.
 
-export const POST = createHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
-  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
-  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user) => { /* see next section */ },
-})
-```
+Error responses include:
 
-### Express
+  error     A human-readable error message.
+  code      A machine-readable error code string.
 
-```typescript
-import { createExpressHandler } from '@autonoma-ai/server-express'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
-import { prisma } from '../db'
+## Actions
 
-app.post('/api/autonoma', createExpressHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
-  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
-  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user) => { /* see next section */ },
-}))
-```
+### discover
 
-## 5. Implement the auth callback
+Request:
 
-The `auth` callback receives the first `User` created during setup. It must return real credentials that the test runner can use to log in.
-
-**Session cookies (most web apps):**
-```typescript
-auth: async (user) => {
-  const session = await createSession(user.id)
-  return {
-    cookies: [{
-      name: 'session',
-      value: session.token,
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-    }],
+  {
+    "action": "discover"
   }
-}
-```
 
-**Bearer token (APIs):**
-```typescript
-auth: async (user) => {
-  const token = jwt.sign({ sub: user.id }, SECRET)
-  return { token }
-}
-```
+Response (200):
 
-**Email/password (mobile apps — the runner logs in manually):**
-```typescript
-auth: async (user) => ({
-  credentials: { email: user.email as string, password: 'test-password' },
-})
-```
+  {
+    "version": "1.0",
+    "sdk": { "language": "typescript", "orm": "prisma", "server": "web" },
+    "schema": {
+      "models": [ ... ],
+      "edges": [ ... ],
+      "relations": [ ... ],
+      "scopeField": "organizationId"
+    }
+  }
 
-## 6. Verify
+The schema object contains:
+- models: list of all database models with their fields (name, type, required, id, hasDefault)
+- edges: list of all FK relationships (from model, to model, local field, foreign field, nullable)
+- relations: named relation mappings used for scenario nesting
+- scopeField: the field name used for test data isolation
 
-### Smoke test with curl
+### up
 
-```bash
-SECRET="your-shared-secret"
-URL="http://localhost:3000/api/autonoma"
-BODY='{"action":"discover"}'
-SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/.*= //')
-curl -s -X POST "$URL" -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
-```
+Request:
 
-You should see your schema: models, fields, edges.
+  {
+    "action": "up",
+    "testRunId": "optional-uuid",
+    "create": {
+      "ModelName": [{ "field": "value", ... }]
+    }
+  }
 
-### Integration test
+If testRunId is omitted, the SDK generates a random UUID.
 
-```typescript
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { PostgreSqlContainer } from '@testcontainers/postgresql'
-import { PrismaClient } from '@prisma/client'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
-import { checkScenario } from '@autonoma-ai/sdk'
-import { execSync } from 'node:child_process'
+The create field contains a nested JSON tree describing what records to create. See scenarios.txt for the full format.
 
-describe('environment factory', () => {
-  let container, prisma, adapter
+Response (200):
 
-  beforeAll(async () => {
-    container = await new PostgreSqlContainer('postgres:16-alpine').start()
-    execSync('npx prisma db push --skip-generate --accept-data-loss', {
-      env: { ...process.env, DATABASE_URL: container.getConnectionUri() },
-      stdio: 'pipe',
-    })
-    prisma = new PrismaClient({ datasourceUrl: container.getConnectionUri() })
-    adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
-  }, 60_000)
+  {
+    "version": "1.0",
+    "sdk": { "language": "typescript", "orm": "prisma", "server": "web" },
+    "auth": { "token": "...", "cookies": [...], "credentials": {...} },
+    "refs": {
+      "ModelName": [{ "id": "...", "field": "value", ... }]
+    },
+    "refsToken": "header.payload.signature"
+  }
 
-  afterAll(async () => {
-    await prisma.$disconnect()
-    await container.stop()
-  })
+- auth: credentials for the test runner to authenticate (format depends on auth callback)
+- refs: all created records, keyed by model name
+- refsToken: a signed token encoding the created record IDs, used for teardown
 
-  it('creates and tears down data', async () => {
-    const result = await checkScenario(adapter, {
-      create: {
-        Organization: [{
-          name: 'Test [{{testRunId}}]',
-          slug: 'test-{{testRunId}}',
-          users: [{ email: 'admin-{{testRunId}}@test.com', name: 'Admin' }],
-        }],
-      },
-    })
-    expect(result.valid).toBe(true)
-  })
-})
-```
+### down
 
-`checkScenario` runs the full create-and-teardown cycle against a real database. If it fails, `result.errors` tells you what went wrong and `result.errors[0].fix` suggests how to fix it.
+Request:
 
-## 7. Deploy
+  {
+    "action": "down",
+    "refsToken": "header.payload.signature"
+  }
 
-Deploy the endpoint and paste `AUTONOMA_SHARED_SECRET` into the Autonoma dashboard when connecting your app. The platform will call `discover` to learn your schema, then send scenario data in `up` requests before each test.
+The refsToken is the exact token returned by the up response.
 
-The endpoint returns 404 in production by default. Set `allowProduction: true` in the config when you're ready to enable it in production.
+Response (200):
+
+  {
+    "version": "1.0",
+    "sdk": { "language": "typescript", "orm": "prisma", "server": "web" },
+    "ok": true
+  }
+
+## The scope field
+
+The scope field is a single column name (e.g., organizationId) present on most models in the database. It references a root entity (e.g., Organization) that acts as the isolation boundary for test data.
+
+During up: the SDK creates the root entity first, then injects the scope field value into all child records.
+
+During teardown: the SDK deletes all records matching the scope field value, in reverse topological order to respect FK constraints. Records on models without the scope field are deleted by their individual IDs from the refs token.
+
+## The refs token
+
+The refs token is a JWT-like structure (header.payload.signature) signed with the signing secret. It contains:
+- The test run ID (scope value)
+- All created record IDs, keyed by model name
+
+The token is signed by the SDK during up and verified during down. Because only your backend knows the signing secret, the token cannot be forged or modified by the platform or any external party. This ensures that down can only delete records that up created.
+
+## Safety model
+
+The protocol enforces hard safety constraints:
+
+1. BLOCKED IN PRODUCTION
+   The endpoint returns 404 when the application is running in production mode (unless explicitly opted in with an allowProduction flag). This prevents accidental use against production databases.
+
+2. UP CAN ONLY CREATE
+   The up action uses the ORM's create operations. It cannot update, delete, drop, truncate, or execute raw SQL. The worst it can do is insert rows.
+
+3. DOWN CAN ONLY DELETE WHAT UP CREATED
+   During up, the SDK signs a token with the IDs of every created record using your signing secret. During down, the SDK verifies that token before deleting. It deletes only the records listed in the token. Even the Autonoma platform cannot forge or modify this token.
+
+4. REQUESTS ARE AUTHENTICATED
+   Every request is HMAC-SHA256 signed with the shared secret. Unsigned or tampered requests are rejected with 401.
+
+5. NO RAW SQL
+   All database operations go through the ORM layer. The SDK calls ORM create and delete methods, never raw SQL strings. Schema validation happens at the ORM level.
+
+## Error codes
+
+  Code                  HTTP Status  Meaning
+  INVALID_SIGNATURE     401          HMAC signature missing or does not match
+  INVALID_BODY          400          Request body is not valid JSON, or missing required fields
+  UNKNOWN_ACTION        400          The action field is not discover, up, or down
+  UNKNOWN_ENVIRONMENT   400          The requested environment name does not exist
+  INVALID_REFS_TOKEN    403          The refs token is missing, malformed, or signature verification failed
+  PRODUCTION_BLOCKED    404          Endpoint is disabled in production mode
+  SAME_SECRETS          500          sharedSecret and signingSecret are the same value
+  INTERNAL_ERROR        500          Unexpected server error
+
+## HMAC signature computation
+
+The signature is computed as:
+
+  HMAC-SHA256(raw_request_body_bytes, shared_secret) -> hex digest
+
+The platform sends this as the x-signature header value. The SDK recomputes the HMAC over the raw body string (before JSON parsing) and compares using a constant-time comparison.
+
+Important: the signature is computed over the exact bytes of the request body. The server adapter must extract the raw body as a string before any JSON parsing or middleware transformation.
 
 
 ---
 
 # Writing Scenario Data
 
-Scenario data describes what database records to create. The Autonoma platform generates this from your schema, but you'll write it for integration tests and debugging.
+Scenario data describes what database records to create. The Autonoma platform generates this from your schema, but you may write it for integration tests and debugging.
+
+## Why not raw SQL?
+
+The Environment Factory is designed with hard constraints that make it safe by construction:
+
+1. BLOCKED IN PRODUCTION
+   Endpoint returns 404 when the application is in production mode (unless explicitly opted in).
+
+2. UP CAN ONLY CREATE
+   The up action calls ORM create methods. It cannot UPDATE, DELETE, DROP, TRUNCATE, or run raw SQL. The worst it can do is INSERT rows.
+
+3. DOWN CAN ONLY DELETE WHAT UP CREATED
+   During up, the SDK signs a token with the IDs of every created record, using your signing secret (not the shared secret). During down, the SDK verifies that token before deleting. It deletes only the records listed in the token. Even Autonoma cannot forge or modify this token.
+
+4. REQUESTS ARE AUTHENTICATED
+   Every request is HMAC-SHA256 signed with the shared secret. Unsigned or tampered requests are rejected with 401.
+
+5. NO RAW SQL
+   All database operations go through your ORM. The SDK uses ORM create and delete methods, not SQL strings. Schema validation happens at the ORM level.
+
+Contrast with raw SQL: a raw SQL endpoint could DROP TABLE, DELETE FROM users, or UPDATE users SET role = 'admin'. Even with auth, one malformed query could destroy production data. The Environment Factory can't do any of that.
+
+This is why scenario data is a structured JSON tree, not SQL. The SDK interprets it as a series of ORM create calls -- nothing more.
 
 ## The format
 
-Data is described as a nested tree. Model names from your Prisma schema are used as keys. Nesting implies FK relationships — the SDK wires them automatically.
+Data is a nested JSON tree. The top-level keys are model names from your database schema. Children are nested inside their parents. The SDK reads FK relationships from your ORM schema and wires IDs automatically -- you never set FK fields manually.
 
-```json
-{
-  "create": {
-    "Organization": [{
-      "name": "Acme [{{testRunId}}]",
-      "slug": "acme-{{testRunId}}",
+Think of it like Protocol Buffers: the schema is shared once (via discover), and after that the data contains only values -- no field types, no FK directions, no column names. Both sides already know the structure. The platform calls discover to learn your schema, then sends scenario data that references models and relation names. Your SDK already has the same schema from your ORM, so it knows exactly how to interpret the nesting and wire the foreign keys.
 
-      "members": [
-        { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
-        { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] }
-      ],
+### Minimal example (org + user)
 
-      "applications": [
-        {
-          "_alias": "webApp",
-          "name": "Marketing Website",
-          "architecture": "WEB",
-          "webApplicationData": [{ "url": "https://acme.com" }],
-          "tags": [
-            { "name": "Critical", "color": "#DC2626" },
-            { "name": "Flaky", "color": "#EAB308" }
-          ]
-        },
-        {
-          "name": "Android App",
-          "architecture": "ANDROID",
-          "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.apk" }]
-        }
-      ]
-    }]
+  {
+    "create": {
+      "Organization": [{
+        "name": "Test Org [{{testRunId}}]",
+        "slug": "test-{{testRunId}}",
+        "members": [{
+          "role": "owner",
+          "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
+        }]
+      }]
+    }
   }
-}
-```
+
+This creates:
+1. One Organization
+2. One User (created first because Member holds the FK to it)
+3. One Member with organizationId set to the Organization's ID and userId set to the User's ID
+
+### How does the SDK know which FK to set?
+
+It doesn't guess. The ORM adapter reads your schema metadata at runtime and extracts every model, field, and relationship -- including the exact FK column names.
+
+For example, given a schema where:
+- Organization has a one-to-many relation to Member
+- Member has a column organizationId pointing to Organization.id
+- Member has a column userId pointing to User.id
+
+The adapter extracts:
+- Organization.members is a relation to Member
+- Member holds the FK column organizationId pointing to Organization.id
+- Member.user is a relation to User
+- Member holds the FK column userId pointing to User.id
+
+Each ORM adapter reads this metadata differently -- Prisma embeds it in the generated client, Drizzle exports it as plain objects, SQLAlchemy exposes it via inspection, Ecto reads it from schema modules -- but they all produce the same result. The SDK receives a standardized schema map and uses it to wire every nested object automatically.
+
+The FK column name comes directly from your schema definition -- whether you called it organizationId, orgId, tenant_fk, or anything else. No string matching, no conventions, no guessing.
+
+### Realistic example (org with apps, tests, runs)
+
+  {
+    "create": {
+      "Organization": [{
+        "name": "Acme [{{testRunId}}]",
+        "slug": "acme-{{testRunId}}",
+
+        "members": [
+          { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
+          { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] }
+        ],
+
+        "applications": [
+          {
+            "_alias": "webApp",
+            "name": "Marketing Website",
+            "architecture": "WEB",
+            "webApplicationData": [{ "url": "https://acme.com" }],
+            "tags": [
+              { "name": "Critical", "color": "#DC2626" },
+              { "name": "Flaky", "color": "#EAB308" }
+            ]
+          },
+          {
+            "name": "Android App",
+            "architecture": "ANDROID",
+            "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.apk" }]
+          }
+        ]
+      }]
+    }
+  }
 
 ## How nesting works
 
-The SDK reads the Prisma schema's relations to know what each nested key means:
+The SDK reads your ORM schema's relations to know what each nested key means. The nested key must be the exact relation field name from the parent model in your ORM schema.
 
-- `"members"` under Organization → create Member records with `organizationId` set to this Organization's ID
-- `"user"` under Member → create User first, then set `Member.userId` to the User's ID
-- `"applications"` under Organization → create Application with `organizationId` set
-- `"tags"` under Application → create Tag with `applicationId` set
+### Finding the right relation name
 
-Both FK directions are handled:
-- FK on child (Application.organizationId → Organization): parent created first, child FK set
-- FK on parent (Member.userId → User): child created first, parent FK set
+Look at the parent model in your ORM schema. The relation field names on the parent are the keys you use in scenario nesting. For example, if Organization has relation fields named members, applications, and invitations, use those exact names in your scenario JSON.
 
-**The nested key must match the exact Prisma relation field name.** Check your schema — some use camelCase (`applications`), some use PascalCase (`Application`).
+Warning: some schemas use PascalCase for relation names (e.g., Application instead of applications). Always check your ORM schema.
+
+### FK direction: child FK vs parent FK
+
+The SDK handles both FK directions:
+
+FK on child (most common): Application.organizationId points to Organization.
+- Parent (Organization) is created first
+- Child (Application) is created after, with organizationId set automatically
+- In the scenario, nest Application under Organization
+
+FK on parent (reverse): Member.userId points to User.
+- The FK (userId) is on Member, but User is the child in the nesting
+- The SDK detects this: creates User first, then sets Member.userId
+- In the scenario, nest User under Member
+
+This is how you solve the "member-user distribution" problem -- each member gets its own user, correctly wired.
 
 ## What to include in fields
 
-- Every required field without a default value
-- Unique fields with `{{testRunId}}` or `{{index}}` to avoid collisions between parallel runs
+Required: every field marked as required in your schema that does NOT have a default value, is not auto-generated, and is not an auto-updated timestamp.
+
+Unique fields: must include {{testRunId}} or {{index}} to avoid collisions when tests run in parallel.
+
+  { "name": "Acme [{{testRunId}}]", "slug": "acme-{{testRunId}}", "email": "admin-{{testRunId}}@test.com" }
 
 ## What to omit
 
-- `id` (auto-generated)
-- Fields with `@default(...)` or `@updatedAt`
-- FK fields that are handled by nesting (the SDK sets them)
-- The scope field (SDK injects it)
+- id -- auto-generated by the database
+- Fields with default values -- the database or ORM handles them
+- Auto-updated timestamp fields -- handled by the ORM automatically
+- FK fields handled by nesting -- if you nest Application under Organization, don't set organizationId manually
+- The scope field -- the SDK injects it automatically for models that have it
+
+Example: given a model with fields id (auto-generated), name (required), architecture (required enum), organizationId (FK), createdAt (default now), and updatedAt (auto-updated), you only provide name and architecture:
+
+  { "name": "My App", "architecture": "WEB" }
+
+The SDK handles id, organizationId, createdAt, and updatedAt.
 
 ## Template expressions
 
-| Expression | Type | Use for |
-|---|---|---|
-| `{{testRunId}}` | string | Unique values per run (emails, slugs) |
-| `{{index}}` | number | 0-based instance index |
-| `{{index1}}` | number | 1-based ("Product 1", "Product 2") |
-| `{{cycle(['a','b','c'])}}` | string | Distributing enum values |
-| `{{random.int(min,max)}}` | number | Random integers |
-| `{{now()}}` | string | Current timestamp |
-| `{{daysAgo(n)}}` | string | Historical timestamp |
+Templates make values unique across parallel test runs and generate dynamic data.
 
-Type preservation: `"{{random.int(1,100)}}"` as the entire value → number. `"Item {{index1}}"` → string.
+  Expression                Type     Use for
+  {{testRunId}}             string   Unique values per run (emails, slugs)
+  {{index}}                 number   0-based instance index
+  {{index1}}                number   1-based ("Product 1", "Product 2")
+  {{cycle(['a','b','c'])}}  string   Distributing enum values evenly
+  {{pick(['a','b','c'])}}   string   Random item from array
+  {{random.int(min,max)}}   number   Random integers
+  {{random.float(a,b)}}     number   Random floats
+  {{now()}}                 string   Current ISO timestamp
+  {{daysAgo(n)}}            string   Historical ISO timestamp
+
+### Type preservation
+
+When a template is the entire value, the SDK preserves the return type:
+- "{{random.int(1,100)}}" resolves to a number, not a string
+- "{{index}}" resolves to a number
+- "{{now()}}" resolves to a string (ISO date)
+
+When a template is part of a string, it's interpolated as a string:
+- "Product {{index1}}" resolves to "Product 1" (string)
+- "user-{{testRunId}}@test.com" resolves to "user-abc123@test.com" (string)
+
+### Examples
+
+Unique emails:
+  { "email": "user-{{testRunId}}@test.com" }
+
+Numbered items:
+  { "name": "Product {{index1}}" }
+  -> "Product 1", "Product 2", "Product 3"...
+
+Distributed enum values:
+  { "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }
+  -> "WEB", "ANDROID", "IOS", "WEB", "ANDROID", "IOS"...
+
+Random data:
+  { "score": "{{random.int(0,100)}}", "weight": "{{random.float(0.1,1.0)}}" }
+
+Dates:
+  { "createdAt": "{{daysAgo(30)}}", "expiresAt": "{{now()}}" }
 
 ## Cross-branch references (_alias / _ref)
 
-When a model needs a FK from a different branch of the tree, use `_alias` to name a node and `_ref` to reference it:
+When a record needs a FK to something in a different branch of the tree, use _alias to name a node and _ref to reference it.
 
-```json
-"applications": [{
-  "_alias": "webApp",
-  "testPlans": [{
-    "testGenerations": [{
-      "_alias": "gen1",
-      "applicationId": { "_ref": "webApp" }
+### Problem: TestGeneration needs applicationId
+
+TestGeneration is nested under TestPlan, but it also needs applicationId which points to the Application (a different branch):
+
+  Organization
+  +-- Application (webApp)       <- need to reference this
+  |   +-- TestPlan
+  |       +-- TestGeneration     <- needs applicationId = webApp.id
+
+### Solution: _alias + _ref
+
+  {
+    "applications": [{
+      "_alias": "webApp",
+      "name": "Marketing Website",
+      "architecture": "WEB",
+
+      "testPlans": [{
+        "name": "Smoke Plan",
+        "plan": "content",
+        "testGenerations": [{
+          "_alias": "gen1",
+          "conversation": "[]",
+          "status": "success",
+          "applicationId": { "_ref": "webApp" }
+        }]
+      }],
+
+      "tests": [{
+        "name": "Homepage Test",
+        "testGenerationId": { "_ref": "gen1" },
+        "steps": [
+          { "order": 1, "interaction": "click", "params": {} }
+        ]
+      }]
     }]
-  }],
-  "tests": [{
-    "testGenerationId": { "_ref": "gen1" }
-  }]
-}]
-```
+  }
 
-## Bulk data (_count / _batch)
+Rules:
+- _alias is a string name you choose. It must be unique across the entire scenario.
+- _ref resolves to the id of the aliased node after it's created.
+- The aliased node must appear before the _ref in tree traversal order (depth-first). If it doesn't, you'll get: _ref "xyz" not found.
+- You can chain references: alias a node, then reference it from multiple places.
 
-For large counts at leaf positions:
+### Another example: Invitation with inviterId
 
-```json
-"runs": { "_count": 10000, "_batch": true }
-```
+  {
+    "Organization": [{
+      "name": "Org",
+      "members": [{
+        "role": "owner",
+        "user": [{
+          "_alias": "inviter",
+          "name": "Alice",
+          "email": "alice-{{testRunId}}@test.com"
+        }]
+      }],
+      "invitations": [
+        { "email": "bob@test.com", "inviterId": { "_ref": "inviter" }, "role": "admin", "expiresAt": "{{now()}}" },
+        { "email": "carol@test.com", "inviterId": { "_ref": "inviter" }, "role": "member", "expiresAt": "{{now()}}" }
+      ]
+    }]
+  }
 
-- `_count`: how many records to create
-- `_batch`: use bulk insert (one SQL query). Fast, but records can't be referenced by `_ref`.
-- Template expressions work in bulk: `{ "_count": 200, "name": "Tag {{index1}}", "color": "#333" }`
+### Another example: TestTag (join table)
+
+  {
+    "applications": [{
+      "tags": [
+        { "_alias": "tag1", "name": "Critical", "color": "#FF0000" },
+        { "_alias": "tag2", "name": "High", "color": "#FF8800" }
+      ],
+      "tests": [{
+        "name": "Test",
+        "testTags": [
+          { "tagId": { "_ref": "tag1" } },
+          { "tagId": { "_ref": "tag2" } }
+        ]
+      }]
+    }]
+  }
+
+## Bulk data (_count and _batch)
+
+For creating many records of the same type, use _count instead of writing each one manually. Add _batch: true for bulk insert performance.
+
+### Basic _count (array shorthand)
+
+Instead of writing 100 objects:
+
+  "applications": [{ "_count": 100, "name": "App {{index1}}", "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }]
+
+This creates 100 Application records:
+- App 1 (WEB), App 2 (ANDROID), App 3 (IOS), App 4 (WEB), ...
+
+Each record gets its own {{index}} value (0-99) and {{index1}} value (1-100).
+
+### _batch for performance
+
+Add _batch: true to use bulk insert (single SQL INSERT statement). This is much faster for large counts:
+
+  "runs": [{ "_count": 10000, "_batch": true }]
+
+Without _batch: 10,000 individual INSERT statements (~30 seconds)
+With _batch: 1 INSERT with 10,000 rows (~2 seconds)
+
+### _count + _batch with field templates
+
+  "tags": [{ "_count": 200, "_batch": true, "name": "Tag {{index1}}", "color": "{{cycle(['#F00','#0F0','#00F'])}}" }]
+
+Creates 200 tags with names "Tag 1" through "Tag 200", cycling through 3 colors.
+
+### _count + _batch as an object (not array)
+
+You can also use the object form -- both work:
+
+  "folders": { "_count": 20, "_batch": true, "name": "Folder {{index1}}" }
+
+### _batch limitations
+
+- Batched records cannot be referenced by _ref. Batch insert uses bulk create which doesn't return individual IDs. If another record needs to reference one of these, don't use _batch.
+- Use _batch only at leaf nodes -- records that nothing else references.
+
+### Examples of when to use _batch
+
+  Good (_batch OK)                                       Bad (_batch breaks things)
+  runs: { _count: 10000, _batch: true }                  applications: { _count: 5, _batch: true } if tests reference an app
+  tags: { _count: 200, _batch: true, ... }               users: { _count: 10, _batch: true } if members reference users
+  folders: { _count: 50, _batch: true, ... }              testGenerations: { _count: 3, _batch: true } if tests reference them
 
 ## The three standard scenarios
 
-**standard** — Realistic variety. Enough data to test every filter, status, and category. Descriptive names ("Marketing Website", not "App 1"). At least one entity per enum value.
-
-**empty** — Org + user only. Tests empty states and onboarding.
-
-**large** — High volume exceeding pagination thresholds. 10k+ runs, 40+ folders. Uses `_batch` at leaf nodes. Tests pagination, sort stability, filter performance.
-
-
----
-
-# Validation
-
-Scenario data is often generated by an LLM. Validation catches mistakes before they hit your database.
-
-## Database dry-run (checkScenario)
-
-The primary validation method. Runs the full create → teardown cycle against a real database:
-
-```typescript
-import { checkScenario } from '@autonoma-ai/sdk'
-
-const result = await checkScenario(adapter, {
-  create: {
-    Organization: [
-      { name: 'Org 1', slug: 'same-slug' },
-      { name: 'Org 2', slug: 'same-slug' },
-    ],
-  },
-})
-// result.valid = false
-// result.phase = 'up'
-// result.errors[0].message = 'Unique constraint failed on the fields: (`slug`)'
-// result.errors[0].fix = 'Add {{testRunId}} or {{index}} to make values unique'
-```
-
-### What the result tells you
-
-| `phase` | What happened |
-|---------|--------------|
-| `up` | Database rejected the data (unique constraint, bad enum, missing field, wrong type) |
-| `down` | Teardown failed (FK constraint during deletion) |
-| `ok` | Full cycle succeeded |
-
-### Common errors
-
-| Error | Fix |
-|-------|-----|
-| `Unique constraint on (slug)` | Add `{{testRunId}}` or `{{index}}` |
-| `Unique constraint on (userId, organizationId)` | Nest each user under its own member |
-| `Invalid value for 'architecture'` | Check enum values in Prisma schema |
-| `Unknown argument 'applications'` | Use exact Prisma relation name (might be `Application`) |
-| `Argument 'email' must not be null` | Add the field to the node |
-
-### Using with testcontainers
-
-```typescript
-import { PostgreSqlContainer } from '@testcontainers/postgresql'
-import { checkScenario } from '@autonoma-ai/sdk'
-
-const container = await new PostgreSqlContainer('postgres:16-alpine').start()
-// push schema, create prisma client, create adapter...
-const result = await checkScenario(adapter, scenario)
-expect(result.valid).toBe(true)
-await container.stop()
-```
-
-## The fix loop
-
-For LLM-generated scenarios:
-
-```
-1. Read the schema (from discover)
-2. Generate scenario JSON
-3. Dry-run against DB (checkScenario)
-4. If errors → read fix field, edit, retry
-5. Scenario is valid
-```
-
-
----
-
-# Building Adapters
-
-The SDK has three adapter types. Each is a separate npm package that implements one interface.
-
-## ORM Adapter
-
-Connects the SDK to a database ORM. Existing: `@autonoma-ai/sdk-prisma`, `@autonoma-ai/sdk-drizzle`.
-
-```typescript
-interface OrmAdapter {
-  /** Read the database schema: models, fields, FK edges, relations */
-  getSchema(): SchemaInfo
-
-  /**
-   * Create records in the database.
-   * spec: { ModelName: { count, fields: resolvedFieldObjects[], batch? } }
-   * If batch=true: use bulk insert, return empty array.
-   * If batch=false: create individually, return all created records.
-   */
-  createEntities(
-    spec: Record<string, ResolvedEntitySpec>,
-    context: CreateContext,
-  ): Promise<Record<string, Record<string, unknown>[]>>
-
-  /**
-   * Delete all data from a test run.
-   * scopeValue: the root entity's ID
-   * refs: all created records (for deleting models without the scope field)
-   */
-  teardown(
-    scopeValue: string,
-    refs?: Record<string, Record<string, unknown>[]>,
-  ): Promise<void>
-}
-```
-
-### Building a new ORM adapter
-
-1. **`getSchema()`**: Introspect your ORM's metadata. Extract models with scalar/enum fields, FK edges, and relation mappings. Mark `@updatedAt` and auto-generated fields as `hasDefault: true`. Cache the result.
-
-2. **`createEntities()`**: Look up the model by camelCase name. If `batch: true`, use bulk insert. If `batch: false`, create individually and return records. Wrap in a transaction.
-
-3. **`teardown()`**: Import `topoSort` and `findDeferrableEdge` from `@autonoma-ai/sdk`. Delete models with the scope FK in reverse topological order. Delete models without the scope FK by their record IDs from refs. Delete the scope root entity last. Handle circular FKs by nullifying the nullable edge before deleting.
-
-## Server Adapter
-
-Converts between a framework's request/response and the SDK's internal format. Existing: `@autonoma-ai/server-web`, `@autonoma-ai/server-express`, `@autonoma-ai/server-node`.
-
-```typescript
-function createHandler(config: HandlerConfig): (req: Request) => Promise<Response>
-```
-
-A server adapter:
-1. Extracts the raw request body as a string (before any parsing — needed for HMAC)
-2. Extracts headers as `Record<string, string>`
-3. Calls `handleRequest(config, { body, headers })` from `@autonoma-ai/sdk`
-4. Writes the status and JSON body to the framework's response
-
-Typically 15-20 lines.
-
-## Auth Adapter (future)
-
-Creates real login credentials for test users. Not yet formalized — customers implement the `auth` callback directly.
-
-Planned interface:
-
-```typescript
-interface AuthAdapter {
-  authenticate(user: Record<string, unknown>): Promise<AuthCredentials>
-}
-
-interface AuthCredentials {
-  token?: string
-  cookies?: Array<{ name: string; value: string; httpOnly?: boolean; sameSite?: string; path?: string }>
-  headers?: Record<string, string>
-  credentials?: { email: string; password: string }
-}
-```
-
-Planned packages: `@autonoma-ai/auth-betterauth`, `@autonoma-ai/auth-workos`, `@autonoma-ai/auth-auth0`.
-
-
----
-
-# Agent Prompt: Set Up the Environment Factory
-
-This is the complete prompt for an AI agent to install and configure the Autonoma SDK in a customer's backend.
-
----
-
-You are a backend engineer. Install the Autonoma SDK and create the Environment Factory endpoint.
-
-## Phase 0: Understand the project
-
-### 0.1 — Detect the stack
-
-Search for:
-- **Framework**: `next.config`, `express`, `fastify`, `hono` → determines server adapter
-- **ORM**: `schema.prisma`, `drizzle/schema.ts` → determines ORM adapter
-- **Auth**: session creation, JWT signing, cookie setting, auth library imports
-
-### 0.2 — Find the scope field
-
-Read the database schema. Find the FK most models use to reference a root entity. Usually `organizationId`, `orgId`, `tenantId`, or `workspaceId`.
-
-### 0.3 — Ask the user
-
-> "I've detected:
-> - Framework: [detected]
-> - ORM: [detected]
-> - Scope field: `[field]` → `[Model]`
->
-> 1. Is the scope field correct?
-> 2. Where should the endpoint go?
-> 3. How do users authenticate? (I'll look at your existing auth code)"
-
-Wait for answers.
-
-## Phase 1: Install
-
-```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
-```
-
-Substitute the ORM adapter (`@autonoma-ai/sdk-drizzle`) and server adapter (`@autonoma-ai/server-express`, `@autonoma-ai/server-node`) based on the stack.
-
-## Phase 2: Create the endpoint
-
-```typescript
-import { createHandler } from '@autonoma-ai/server-web'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
-import { prisma } from '@/lib/db'
-
-export const POST = createHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
-  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
-  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user) => {
-    // Implement using the project's existing auth pattern
-  },
-})
-```
-
-For the auth callback: search the codebase for how sessions or tokens are created (look for `createSession`, `jwt.sign`, `setCookie`). Replicate that pattern. The callback must return credentials that actually work — the test runner uses them to log in.
-
-## Phase 3: Generate secrets
-
-```bash
-openssl rand -hex 32   # → AUTONOMA_SHARED_SECRET
-openssl rand -hex 32   # → AUTONOMA_SIGNING_SECRET (different value!)
-```
-
-Add to `.env`. Add placeholders to `.env.example` if it exists.
-
-## Phase 4: Write an integration test
-
-Install test dependencies:
-
-```bash
-pnpm add -D testcontainers @testcontainers/postgresql
-```
-
-```typescript
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { PostgreSqlContainer } from '@testcontainers/postgresql'
-import { PrismaClient } from '@prisma/client'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
-import { checkScenario } from '@autonoma-ai/sdk'
-import { execSync } from 'node:child_process'
-
-describe('environment factory', () => {
-  let container, prisma, adapter
-
-  beforeAll(async () => {
-    container = await new PostgreSqlContainer('postgres:16-alpine').start()
-    execSync('npx prisma db push --skip-generate --accept-data-loss', {
-      env: { ...process.env, DATABASE_URL: container.getConnectionUri() },
-      stdio: 'pipe',
-    })
-    prisma = new PrismaClient({ datasourceUrl: container.getConnectionUri() })
-    adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
-  }, 60_000)
-
-  afterAll(async () => {
-    await prisma.$disconnect()
-    await container.stop()
-  })
-
-  it('creates and tears down data', async () => {
-    const result = await checkScenario(adapter, {
-      create: {
-        Organization: [{
-          name: 'Test [{{testRunId}}]',
-          slug: 'test-{{testRunId}}',
-          users: [{ email: 'admin-{{testRunId}}@test.com', name: 'Admin' }],
-          // Add minimum entities for your schema — nest children under parents
-        }],
-      },
-    })
-    expect(result.valid).toBe(true)
-  })
-})
-```
-
-Run it: `npx vitest run path/to/test.ts`
-
-If it fails:
-- `phase: 'validate'` → fix field/model names
-- `phase: 'up'` → read `errors[0].fix` for the Prisma error fix
-- `phase: 'down'` → check scope field coverage
-
-## Phase 5: Report
-
-> "Environment Factory is at `[path]`.
->
-> Next steps:
-> 1. Set both secrets in production env vars
-> 2. Run the integration test: `npx vitest run [path]`
-> 3. Deploy and share the endpoint URL with Autonoma"
-
----
-
-## Rules
-
-- **Do NOT create scenario files.** The platform sends data inline.
-- **Do NOT implement HMAC, JWT, or teardown.** The SDK does this.
-- **DO create real auth credentials.** Fake tokens break every test.
-- **DO match existing codebase patterns.** Same imports, file naming, error handling.
-- **DO test with testcontainers and `checkScenario`.** Mocks don't catch real DB errors.
-- **DO look at existing auth code** before implementing the callback.
+When writing scenarios for a project, create three:
+
+### empty -- Org + user only
+Tests empty states, onboarding flows, "no data yet" screens.
+
+  {
+    "create": {
+      "Organization": [{
+        "name": "Empty Org [{{testRunId}}]",
+        "slug": "empty-{{testRunId}}",
+        "members": [{ "role": "owner", "user": [{ "name": "Solo User", "email": "solo-{{testRunId}}@test.com" }] }]
+      }]
+    }
+  }
+
+### standard -- Realistic variety
+Enough data to test every filter, status, and category. Use descriptive names ("Marketing Website", not "App 1"). Include at least one entity per enum value.
+
+  {
+    "create": {
+      "Organization": [{
+        "name": "Acme [{{testRunId}}]",
+        "slug": "acme-{{testRunId}}",
+        "members": [
+          { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
+          { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] },
+          { "role": "viewer", "user": [{ "name": "Carol", "email": "carol-{{testRunId}}@test.com" }] }
+        ],
+        "applications": [
+          {
+            "_alias": "webApp",
+            "name": "Marketing Website",
+            "architecture": "WEB",
+            "tags": [
+              { "name": "Critical", "color": "#DC2626" },
+              { "name": "P1 - High", "color": "#F97316" },
+              { "name": "Flaky", "color": "#EAB308" }
+            ]
+          },
+          { "name": "Android App", "architecture": "ANDROID" },
+          { "name": "iOS App", "architecture": "IOS" }
+        ]
+      }]
+    }
+  }
+
+### large -- High volume
+Exceeds pagination thresholds. Uses _batch at leaf nodes. Tests pagination, sort stability, filter performance.
+
+  {
+    "create": {
+      "Organization": [{
+        "name": "Load Test [{{testRunId}}]",
+        "slug": "load-{{testRunId}}",
+        "members": [{ "role": "owner", "user": [{ "name": "User", "email": "load-{{testRunId}}@test.com" }] }],
+        "applications": [{
+          "_alias": "app",
+          "name": "App",
+          "architecture": "WEB",
+          "tags": { "_count": 50, "_batch": true, "name": "Tag {{index1}}", "color": "#333" },
+          "folders": { "_count": 40, "_batch": true, "name": "Folder {{index1}}" },
+          "testPlans": [{
+            "name": "Plan",
+            "plan": "x",
+            "testGenerations": [{
+              "_alias": "gen1",
+              "conversation": "[]",
+              "applicationId": { "_ref": "app" }
+            }]
+          }],
+          "tests": [{
+            "name": "Test",
+            "testGenerationId": { "_ref": "gen1" },
+            "runs": [{ "_count": 10000, "_batch": true }]
+          }]
+        }]
+      }]
+    }
+  }
