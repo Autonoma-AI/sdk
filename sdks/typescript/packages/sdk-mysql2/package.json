@@ -1,7 +1,7 @@
 {
-  "name": "@autonoma-ai/sdk-mysql",
+  "name": "@autonoma-ai/sdk-mysql2",
   "version": "0.1.0",
-  "description": "MySQL adapter for Autonoma SDK",
+  "description": "MySQL2 adapter for Autonoma SDK",
   "type": "module",
   "exports": {
     ".": {

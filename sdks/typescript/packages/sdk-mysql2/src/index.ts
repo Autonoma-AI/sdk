@@ -27,13 +27,13 @@ function toRows<T>(result: unknown): T[] {
  *
  * @example
  * ```ts
- * import { mysqlExecutor } from '@autonoma-ai/sdk-mysql'
+ * import { mysql2Executor } from '@autonoma-ai/sdk-mysql2'
  * import mysql from 'mysql2/promise'
  *
  * const pool = mysql.createPool({ host: 'localhost', database: 'mydb', user: 'root' })
  *
  * const handler = createHandler({
- *   executor: mysqlExecutor(pool),
+ *   executor: mysql2Executor(pool),
  *   dialect: 'mysql',
  *   dbSchema: 'mydb',
  *   scopeField: 'organizationId',
@@ -42,7 +42,7 @@ function toRows<T>(result: unknown): T[] {
  * })
  * ```
  */
-export function mysqlExecutor(pool: MySQL2Pool): SQLExecutor {
+export function mysql2Executor(pool: MySQL2Pool): SQLExecutor {
   return {
     async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
       const [result] = await pool.query(sql, params)

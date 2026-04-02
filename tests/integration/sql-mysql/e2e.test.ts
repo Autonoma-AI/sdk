@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkScenario } from '../../../packages/sdk/src/check'
-import { mysqlExecutor } from '../../../packages/sdk-mysql/src/index'
+import { mysql2Executor } from '../../../sdks/typescript/packages/sdk-mysql2/src/index'
 import type { SQLExecutor, ScenarioDefinition } from '../../../packages/sdk/src/types'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -34,7 +34,7 @@ beforeAll(async () => {
 
   // For actual operations, use a pool without multipleStatements
   // (the executor wrapper just passes single statements)
-  executor = mysqlExecutor(pool as any)
+  executor = mysql2Executor(pool as any)
 }, 120_000) // MySQL container is slower to start
 
 afterAll(async () => {
