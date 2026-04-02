@@ -1,149 +1,49 @@
 defmodule Autonoma.Dialect do
   @moduledoc "Database dialect abstraction — generates dialect-specific SQL strings."
 
+  alias Autonoma.Generated.SQLQueries
+
+  defp replace_schema(template, schema) do
+    String.replace(template, "{{schema}}", schema)
+  end
+
   defmodule Postgres do
     @moduledoc false
+
+    alias Autonoma.Generated.SQLQueries
 
     def name, do: "postgres"
     def supports_returning, do: true
     def param(i), do: "$#{i}"
     def quote_id(name), do: ~s("#{name}")
 
-    def tables_sql(schema) do
-      """
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = '#{schema}'
-        AND table_type = 'BASE TABLE'
-      ORDER BY table_name
-      """
-    end
-
-    def columns_sql(schema) do
-      """
-      SELECT
-        table_name, column_name, data_type, udt_name,
-        is_nullable, column_default
-      FROM information_schema.columns
-      WHERE table_schema = '#{schema}'
-      ORDER BY table_name, ordinal_position
-      """
-    end
-
-    def primary_keys_sql(schema) do
-      """
-      SELECT tc.table_name, kcu.column_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-        AND tc.table_schema = kcu.table_schema
-      WHERE tc.constraint_type = 'PRIMARY KEY'
-        AND tc.table_schema = '#{schema}'
-      ORDER BY tc.table_name, kcu.ordinal_position
-      """
-    end
-
-    def foreign_keys_sql(schema) do
-      """
-      SELECT
-        kcu.table_name AS from_table,
-        kcu.column_name AS from_column,
-        ccu.table_name AS to_table,
-        ccu.column_name AS to_column,
-        c.is_nullable
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-        AND tc.table_schema = kcu.table_schema
-      JOIN information_schema.constraint_column_usage ccu
-        ON tc.constraint_name = ccu.constraint_name
-        AND tc.table_schema = ccu.table_schema
-      LEFT JOIN information_schema.columns c
-        ON c.table_schema = kcu.table_schema
-        AND c.table_name = kcu.table_name
-        AND c.column_name = kcu.column_name
-      WHERE tc.constraint_type = 'FOREIGN KEY'
-        AND tc.table_schema = '#{schema}'
-      ORDER BY kcu.table_name, kcu.ordinal_position
-      """
-    end
-
-    def enums_sql(_schema) do
-      """
-      SELECT t.typname AS enum_name, e.enumlabel AS enum_value
-      FROM pg_type t
-      JOIN pg_enum e ON t.oid = e.enumtypid
-      JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-      ORDER BY t.typname, e.enumsortorder
-      """
-    end
+    def tables_sql(schema), do: Autonoma.Dialect.do_replace(SQLQueries.postgres_tables(), schema)
+    def columns_sql(schema), do: Autonoma.Dialect.do_replace(SQLQueries.postgres_columns(), schema)
+    def primary_keys_sql(schema), do: Autonoma.Dialect.do_replace(SQLQueries.postgres_primary_keys(), schema)
+    def foreign_keys_sql(schema), do: Autonoma.Dialect.do_replace(SQLQueries.postgres_foreign_keys(), schema)
+    def enums_sql(_schema), do: SQLQueries.postgres_enums()
   end
 
   defmodule MySQL do
     @moduledoc false
+
+    alias Autonoma.Generated.SQLQueries
 
     def name, do: "mysql"
     def supports_returning, do: false
     def param(_i), do: "?"
     def quote_id(name), do: "`#{name}`"
 
-    def tables_sql(schema) do
-      """
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = '#{schema}'
-        AND table_type = 'BASE TABLE'
-      ORDER BY table_name
-      """
-    end
+    def tables_sql(schema), do: Autonoma.Dialect.do_replace(SQLQueries.mysql_tables(), schema)
+    def columns_sql(schema), do: Autonoma.Dialect.do_replace(SQLQueries.mysql_columns(), schema)
+    def primary_keys_sql(schema), do: Autonoma.Dialect.do_replace(SQLQueries.mysql_primary_keys(), schema)
+    def foreign_keys_sql(schema), do: Autonoma.Dialect.do_replace(SQLQueries.mysql_foreign_keys(), schema)
+    def enums_sql(_schema), do: SQLQueries.mysql_enums()
+  end
 
-    def columns_sql(schema) do
-      """
-      SELECT
-        table_name, column_name, data_type,
-        column_type AS udt_name, is_nullable, column_default
-      FROM information_schema.columns
-      WHERE table_schema = '#{schema}'
-      ORDER BY table_name, ordinal_position
-      """
-    end
-
-    def primary_keys_sql(schema) do
-      """
-      SELECT tc.table_name, kcu.column_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-        AND tc.table_schema = kcu.table_schema
-        AND tc.table_name = kcu.table_name
-      WHERE tc.constraint_type = 'PRIMARY KEY'
-        AND tc.table_schema = '#{schema}'
-      ORDER BY tc.table_name, kcu.ordinal_position
-      """
-    end
-
-    def foreign_keys_sql(schema) do
-      """
-      SELECT
-        kcu.table_name AS from_table,
-        kcu.column_name AS from_column,
-        kcu.referenced_table_name AS to_table,
-        kcu.referenced_column_name AS to_column,
-        c.is_nullable
-      FROM information_schema.key_column_usage kcu
-      JOIN information_schema.columns c
-        ON c.table_schema = kcu.table_schema
-        AND c.table_name = kcu.table_name
-        AND c.column_name = kcu.column_name
-      WHERE kcu.referenced_table_name IS NOT NULL
-        AND kcu.table_schema = '#{schema}'
-      ORDER BY kcu.table_name, kcu.ordinal_position
-      """
-    end
-
-    def enums_sql(_schema) do
-      "SELECT NULL AS enum_name, NULL AS enum_value FROM DUAL WHERE 1 = 0"
-    end
+  @doc false
+  def do_replace(template, schema) do
+    String.replace(template, "{{schema}}", schema)
   end
 
   def get("postgres"), do: Postgres
