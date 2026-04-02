@@ -14,19 +14,14 @@ from autonoma.types import HandlerConfig, HandlerRequest
 
 def _enrich_config(config: HandlerConfig, server_name: str) -> HandlerConfig:
     enriched: HandlerConfig = copy.copy(config)
-    enriched.sdk_server = server_name  # type: ignore[attr-defined]
+    if enriched.sdk is None:
+        enriched.sdk = {}
+    enriched.sdk["server"] = server_name
     return enriched
 
 
 def create_fastapi_handler(config: HandlerConfig) -> APIRouter:
-    """Create a FastAPI router that handles the Autonoma protocol.
-
-    Usage::
-
-        from autonoma_fastapi import create_fastapi_handler
-        router = create_fastapi_handler(config)
-        app.include_router(router, prefix="/api/autonoma")
-    """
+    """Create a FastAPI router that handles the Autonoma protocol."""
     router: APIRouter = APIRouter()
     enriched: HandlerConfig = _enrich_config(config, "fastapi")
 
@@ -37,9 +32,9 @@ def create_fastapi_handler(config: HandlerConfig) -> APIRouter:
         headers: dict[str, str] = {k.lower(): v for k, v in request.headers.items()}
 
         req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
-        result: dict[str, Any] = await handle_request(enriched, req)
+        result = await handle_request(enriched, req)
 
-        return JSONResponse(status_code=result["status"], content=result["body"])
+        return JSONResponse(status_code=result.status, content=result.body)
 
     return router
 
@@ -53,6 +48,6 @@ async def fastapi_handler(config: HandlerConfig, request: Request) -> JSONRespon
     headers: dict[str, str] = {k.lower(): v for k, v in request.headers.items()}
 
     req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
-    result: dict[str, Any] = await handle_request(enriched, req)
+    result = await handle_request(enriched, req)
 
-    return JSONResponse(status_code=result["status"], content=result["body"])
+    return JSONResponse(status_code=result.status, content=result.body)

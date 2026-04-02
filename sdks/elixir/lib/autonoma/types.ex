@@ -36,12 +36,37 @@ defmodule Autonoma.Types do
           scope_field: String.t()
         }
 
+  @doc """
+  SQL executor is a 3-arity function:
+    executor.(:query, sql, params) -> [%{column => value}]
+    executor.(:transaction, fn tx -> ... end, nil) -> result
+
+  Where `tx` is a 3-arity function for query calls:
+    tx.(:query, sql, params) -> [%{column => value}]
+  """
+  @type sql_executor :: (atom(), any(), any() -> any())
+
+  @type introspection_result :: %{
+          schema: map(),
+          table_map: %{String.t() => String.t()},
+          column_maps: %{String.t() => %{String.t() => String.t()}},
+          enum_type_maps: %{String.t() => %{String.t() => String.t()}}
+        }
+
   @type handler_config :: %{
-          adapter: module(),
-          shared_secret: String.t(),
-          signing_secret: String.t(),
-          allow_production: boolean(),
-          auth: (map() -> map()) | nil
+          optional(:executor) => sql_executor(),
+          optional(:adapter) => module(),
+          optional(:dialect) => String.t(),
+          optional(:scope_field) => String.t(),
+          optional(:db_schema) => String.t(),
+          optional(:table_name_map) => %{String.t() => String.t()},
+          optional(:exclude_tables) => [String.t()],
+          optional(:sdk) => map(),
+          optional(:sdk_server) => String.t(),
+          required(:shared_secret) => String.t(),
+          required(:signing_secret) => String.t(),
+          optional(:allow_production) => boolean(),
+          optional(:auth) => (map() -> map()) | nil
         }
 
   @type handler_request :: %{
@@ -52,5 +77,19 @@ defmodule Autonoma.Types do
   @type handler_response :: %{
           status: integer(),
           body: map()
+        }
+
+  @type create_op :: %{
+          model: String.t(),
+          fields: map(),
+          temp_id: String.t(),
+          batch: boolean()
+        }
+
+  @type deferred_update :: %{
+          target_temp_id: String.t(),
+          model: String.t(),
+          field: String.t(),
+          ref_alias: String.t()
         }
 end

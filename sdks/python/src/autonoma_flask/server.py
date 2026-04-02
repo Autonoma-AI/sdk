@@ -15,19 +15,14 @@ from autonoma.types import HandlerConfig, HandlerRequest
 
 def _enrich_config(config: HandlerConfig, server_name: str) -> HandlerConfig:
     enriched: HandlerConfig = copy.copy(config)
-    enriched.sdk_server = server_name  # type: ignore[attr-defined]
+    if enriched.sdk is None:
+        enriched.sdk = {}
+    enriched.sdk["server"] = server_name
     return enriched
 
 
 def create_flask_handler(config: HandlerConfig) -> Blueprint:
-    """Create a Flask blueprint for the Autonoma protocol endpoint.
-
-    Usage::
-
-        from autonoma_flask import create_flask_handler
-        bp = create_flask_handler(config)
-        app.register_blueprint(bp, url_prefix="/api/autonoma")
-    """
+    """Create a Flask blueprint for the Autonoma protocol endpoint."""
     bp: Blueprint = Blueprint("autonoma", __name__)
     enriched: HandlerConfig = _enrich_config(config, "flask")
 
@@ -37,9 +32,9 @@ def create_flask_handler(config: HandlerConfig) -> Blueprint:
         headers: dict[str, str] = {k.lower(): v for k, v in request.headers}
 
         req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
-        result: dict[str, Any] = asyncio.run(handle_request(enriched, req))
+        result = asyncio.run(handle_request(enriched, req))
 
-        response: Response = make_response(json.dumps(result["body"]), result["status"])
+        response: Response = make_response(json.dumps(result.body), result.status)
         response.headers["Content-Type"] = "application/json"
         return response
 
@@ -47,10 +42,7 @@ def create_flask_handler(config: HandlerConfig) -> Blueprint:
 
 
 def flask_handler(config: HandlerConfig) -> Any:
-    """Standalone handler for use in custom routes.
-
-    Returns a view function compatible with ``app.add_url_rule``.
-    """
+    """Standalone handler for use in custom routes."""
     enriched: HandlerConfig = _enrich_config(config, "flask")
 
     def handler() -> Response:
@@ -58,9 +50,9 @@ def flask_handler(config: HandlerConfig) -> Any:
         headers: dict[str, str] = {k.lower(): v for k, v in request.headers}
 
         req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
-        result: dict[str, Any] = asyncio.run(handle_request(enriched, req))
+        result = asyncio.run(handle_request(enriched, req))
 
-        response: Response = make_response(json.dumps(result["body"]), result["status"])
+        response: Response = make_response(json.dumps(result.body), result.status)
         response.headers["Content-Type"] = "application/json"
         return response
 

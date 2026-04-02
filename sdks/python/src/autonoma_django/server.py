@@ -12,18 +12,14 @@ from autonoma.types import HandlerConfig, HandlerRequest
 
 def _enrich_config(config: HandlerConfig, server_name: str) -> HandlerConfig:
     enriched: HandlerConfig = copy.copy(config)
-    enriched.sdk_server = server_name  # type: ignore[attr-defined]
+    if enriched.sdk is None:
+        enriched.sdk = {}
+    enriched.sdk["server"] = server_name
     return enriched
 
 
 def create_django_handler(config: HandlerConfig) -> Any:
-    """Create a Django view function for the Autonoma protocol endpoint.
-
-    Usage::
-
-        from autonoma_django import create_django_handler
-        urlpatterns = [path("api/autonoma/", create_django_handler(config))]
-    """
+    """Create a Django view function for the Autonoma protocol endpoint."""
     from django.http import JsonResponse
     from django.views.decorators.csrf import csrf_exempt
     from django.views.decorators.http import require_POST
@@ -43,8 +39,8 @@ def create_django_handler(config: HandlerConfig) -> Any:
             headers["content-type"] = request.META["CONTENT_TYPE"]
 
         req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
-        result: dict[str, Any] = asyncio.run(handle_request(enriched, req))
+        result = asyncio.run(handle_request(enriched, req))
 
-        return JsonResponse(result["body"], status=result["status"])
+        return JsonResponse(result.body, status=result.status)
 
     return handler

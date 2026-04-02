@@ -46,13 +46,29 @@ class SchemaInfo:
     scope_field: str
 
 
+@runtime_checkable
+class SQLExecutor(Protocol):
+    """Minimal SQL executor — wrap your DB connection (pg Pool, SQLAlchemy, etc.) into this."""
+
+    async def query(self, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]: ...
+
+    async def transaction(self, fn: Callable[..., Any]) -> Any: ...
+
+
 @dataclass
 class HandlerConfig:
-    adapter: OrmAdapter
+    """Configuration for the Autonoma request handler."""
+    executor: SQLExecutor
+    scope_field: str
     shared_secret: str
     signing_secret: str
+    dialect: str = "postgres"
+    db_schema: str | None = None
+    table_name_map: dict[str, str] | None = None
+    exclude_tables: list[str] | None = None
     allow_production: bool = False
     auth: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None
+    sdk: dict[str, str] | None = None
 
 
 @dataclass
@@ -67,8 +83,36 @@ class HandlerResponse:
     body: dict[str, Any]
 
 
+# Legacy ORM adapter protocol — kept for backward compat
 @runtime_checkable
 class OrmAdapter(Protocol):
     def get_schema(self) -> dict[str, Any]: ...
     async def create_entities(self, spec: dict[str, Any], context: dict[str, Any]) -> dict[str, list[dict[str, Any]]]: ...
     async def teardown(self, scope_value: str, refs: Optional[dict[str, Any]] = None) -> None: ...
+
+
+@dataclass
+class CreateOp:
+    """A create operation produced by the tree resolver."""
+    model: str
+    fields: dict[str, Any]
+    temp_id: str
+    batch: bool
+
+
+@dataclass
+class DeferredUpdate:
+    """A deferred FK update for circular dependencies."""
+    target_temp_id: str
+    model: str
+    field: str
+    ref_alias: str
+
+
+@dataclass
+class IntrospectionResult:
+    """Result of database introspection."""
+    schema: SchemaInfo
+    table_map: dict[str, str]
+    column_maps: dict[str, dict[str, str]]
+    enum_type_maps: dict[str, dict[str, str]]

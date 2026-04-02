@@ -14,7 +14,13 @@ defmodule Autonoma.Plug.Handler do
       conn.req_headers
       |> Enum.into(%{})
 
-    enriched_config = Map.put(config, :sdk_server, "plug")
+    enriched_config =
+      config
+      |> Map.update(:sdk, %{"server" => "plug"}, fn sdk ->
+        sdk
+        |> Map.put("server", "plug")
+        |> Map.put_new("orm", "unknown")
+      end)
 
     result =
       Autonoma.Handler.handle(enriched_config, %{
