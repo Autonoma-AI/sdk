@@ -36,14 +36,11 @@ defmodule Autonoma.Types do
           scope_field: String.t()
         }
 
-  @doc """
-  SQL executor is a 3-arity function:
-    executor.(:query, sql, params) -> [%{column => value}]
-    executor.(:transaction, fn tx -> ... end, nil) -> result
-
-  Where `tx` is a 3-arity function for query calls:
-    tx.(:query, sql, params) -> [%{column => value}]
-  """
+  # SQL executor is a 3-arity function:
+  #   executor.(:query, sql, params) -> [%{column => value}]
+  #   executor.(:transaction, fn tx -> ... end, nil) -> result
+  # Where `tx` is a 3-arity function for query calls:
+  #   tx.(:query, sql, params) -> [%{column => value}]
   @type sql_executor :: (atom(), any(), any() -> any())
 
   @type introspection_result :: %{

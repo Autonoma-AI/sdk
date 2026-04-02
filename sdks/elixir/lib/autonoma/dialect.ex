@@ -1,12 +1,6 @@
 defmodule Autonoma.Dialect do
   @moduledoc "Database dialect abstraction — generates dialect-specific SQL strings."
 
-  alias Autonoma.Generated.SQLQueries
-
-  defp replace_schema(template, schema) do
-    String.replace(template, "{{schema}}", schema)
-  end
-
   defmodule Postgres do
     @moduledoc false
 
