@@ -29,3 +29,14 @@ tests/integration/**/generated/
 
 # Logs
 *.log
+
+# Elixir
+_build/
+deps/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+*.egg

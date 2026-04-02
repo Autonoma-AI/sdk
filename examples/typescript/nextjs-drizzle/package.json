@@ -1,0 +1,25 @@
+{
+  "name": "autonoma-nextjs-drizzle-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@autonoma-ai/sdk": "latest",
+    "@autonoma-ai/sdk-drizzle": "latest",
+    "@autonoma-ai/server-web": "latest",
+    "drizzle-orm": "^0.45.1",
+    "next": "^14.2.0",
+    "pg": "^8.20.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.30.0",
+    "typescript": "^5.7.0"
+  }
+}

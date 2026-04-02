@@ -1,0 +1,141 @@
+{
+  "module": "graph",
+  "functions": [
+    {
+      "name": "topoSort",
+      "cases": [
+        {
+          "description": "sorts a linear dependency chain",
+          "input": {
+            "nodes": ["Order", "User", "Product"],
+            "edges": [
+              { "from": "Order", "to": "User", "localField": "userId", "foreignField": "id", "nullable": false },
+              { "from": "Order", "to": "Product", "localField": "productId", "foreignField": "id", "nullable": false }
+            ]
+          },
+          "assert": {
+            "sorted": { "length": 3, "before": [["User", "Order"], ["Product", "Order"]] },
+            "cycles": { "equals": [] }
+          }
+        },
+        {
+          "description": "handles nodes with no edges",
+          "input": {
+            "nodes": ["A", "B", "C"],
+            "edges": []
+          },
+          "assert": {
+            "sorted": { "length": 3, "contains_all": ["A", "B", "C"] },
+            "cycles": { "equals": [] }
+          }
+        },
+        {
+          "description": "detects a simple 2-node cycle",
+          "input": {
+            "nodes": ["A", "B"],
+            "edges": [
+              { "from": "A", "to": "B", "localField": "bId", "foreignField": "id", "nullable": false },
+              { "from": "B", "to": "A", "localField": "aId", "foreignField": "id", "nullable": true }
+            ]
+          },
+          "assert": {
+            "sorted": { "equals": [] },
+            "cycles": { "length": 1 },
+            "cycles_flat_contains": ["A", "B"]
+          }
+        },
+        {
+          "description": "handles mixed: some in cycle, some not",
+          "input": {
+            "nodes": ["Root", "A", "B"],
+            "edges": [
+              { "from": "A", "to": "Root", "localField": "rootId", "foreignField": "id", "nullable": false },
+              { "from": "A", "to": "B", "localField": "bId", "foreignField": "id", "nullable": false },
+              { "from": "B", "to": "A", "localField": "aId", "foreignField": "id", "nullable": true }
+            ]
+          },
+          "assert": {
+            "sorted": { "contains": "Root" },
+            "cycles_flat_contains": ["A", "B"]
+          }
+        },
+        {
+          "description": "ignores self-referential edges",
+          "input": {
+            "nodes": ["Category"],
+            "edges": [
+              { "from": "Category", "to": "Category", "localField": "parentId", "foreignField": "id", "nullable": true }
+            ]
+          },
+          "assert": {
+            "sorted": { "equals": ["Category"] },
+            "cycles": { "equals": [] }
+          }
+        },
+        {
+          "description": "sorts a deep chain correctly",
+          "input": {
+            "nodes": ["D", "C", "B", "A"],
+            "edges": [
+              { "from": "B", "to": "A", "localField": "aId", "foreignField": "id", "nullable": false },
+              { "from": "C", "to": "B", "localField": "bId", "foreignField": "id", "nullable": false },
+              { "from": "D", "to": "C", "localField": "cId", "foreignField": "id", "nullable": false }
+            ]
+          },
+          "assert": {
+            "sorted": { "length": 4, "before": [["A", "B"], ["B", "C"], ["C", "D"]] },
+            "cycles": { "equals": [] }
+          }
+        },
+        {
+          "description": "detects a 3-node cycle",
+          "input": {
+            "nodes": ["A", "B", "C"],
+            "edges": [
+              { "from": "A", "to": "B", "localField": "bId", "foreignField": "id", "nullable": false },
+              { "from": "B", "to": "C", "localField": "cId", "foreignField": "id", "nullable": false },
+              { "from": "C", "to": "A", "localField": "aId", "foreignField": "id", "nullable": true }
+            ]
+          },
+          "assert": {
+            "sorted": { "equals": [] },
+            "cycles": { "length": 1 },
+            "cycles_flat_contains": ["A", "B", "C"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "findDeferrableEdge",
+      "cases": [
+        {
+          "description": "finds a nullable edge in a cycle",
+          "input": {
+            "cycle": ["A", "B"],
+            "edges": [
+              { "from": "A", "to": "B", "localField": "bId", "foreignField": "id", "nullable": false },
+              { "from": "B", "to": "A", "localField": "aId", "foreignField": "id", "nullable": true }
+            ]
+          },
+          "assert": {
+            "not_null": true,
+            "property": { "nullable": true }
+          }
+        },
+        {
+          "description": "returns null when no nullable edge exists",
+          "input": {
+            "cycle": ["A", "B"],
+            "edges": [
+              { "from": "A", "to": "B", "localField": "bId", "foreignField": "id", "nullable": false },
+              { "from": "B", "to": "A", "localField": "aId", "foreignField": "id", "nullable": false }
+            ]
+          },
+          "assert": {
+            "is_null": true
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "autonoma-express-prisma-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@autonoma-ai/sdk": "latest",
+    "@autonoma-ai/sdk-prisma": "latest",
+    "@autonoma-ai/server-express": "latest",
+    "@prisma/client": "^5.22.0",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "prisma": "^5.22.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  }
+}
