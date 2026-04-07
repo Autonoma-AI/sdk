@@ -3,7 +3,6 @@ package ai.autonoma.sdk;
 import ai.autonoma.sdk.types.*;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Tear down all data scoped to a value, in reverse topological order.
@@ -129,9 +128,10 @@ public final class TeardownExecutor {
                 .toList();
             if (!ids.isEmpty()) {
                 String idCol = colMap.getOrDefault("id", "id");
-                String placeholders = ids.stream()
-                    .map(id -> dialect.param(ids.indexOf(id) + 1))
-                    .collect(Collectors.joining(", "));
+                StringJoiner placeholders = new StringJoiner(", ");
+                for (int idx = 0; idx < ids.size(); idx++) {
+                    placeholders.add(dialect.param(idx + 1));
+                }
                 tx.query("DELETE FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(idCol)
                     + " IN (" + placeholders + ")", ids.toArray());
             }

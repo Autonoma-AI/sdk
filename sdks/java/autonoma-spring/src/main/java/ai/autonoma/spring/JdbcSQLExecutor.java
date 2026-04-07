@@ -6,6 +6,7 @@ import javax.sql.DataSource;
 import java.sql.*;
 import java.util.*;
 import java.util.function.Function;
+import java.util.Locale;
 
 /**
  * JDBC-based implementation of SQLExecutor.
@@ -71,7 +72,7 @@ public class JdbcSQLExecutor implements SQLExecutor {
     }
 
     private List<Map<String, Object>> executeQuery(Connection conn, String sql, Object... params) throws SQLException {
-        String trimmed = sql.trim().toUpperCase();
+        String trimmed = sql.trim().toUpperCase(Locale.ROOT);
         boolean isSelect = trimmed.startsWith("SELECT") || trimmed.contains("RETURNING");
 
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {

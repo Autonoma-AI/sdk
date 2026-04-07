@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -66,7 +67,7 @@ public class AutonomaController {
         Enumeration<String> headerNames = request.getHeaderNames();
         while (headerNames.hasMoreElements()) {
             String name = headerNames.nextElement();
-            headers.put(name.toLowerCase(), request.getHeader(name));
+            headers.put(name.toLowerCase(Locale.ROOT), request.getHeader(name));
         }
         return headers;
     }

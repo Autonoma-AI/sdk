@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Core request handler for the Autonoma Environment Factory protocol.
@@ -17,13 +16,13 @@ public final class AutonomaHandler {
     public static final String PROTOCOL_VERSION = "1.0";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Map<Integer, IntrospectionResult> introspectionCache = new ConcurrentHashMap<>();
+    private static final Map<HandlerConfig, IntrospectionResult> introspectionCache =
+        Collections.synchronizedMap(new WeakHashMap<>());
 
     private AutonomaHandler() {}
 
     private static IntrospectionResult getIntrospection(HandlerConfig config) {
-        int cacheKey = System.identityHashCode(config);
-        return introspectionCache.computeIfAbsent(cacheKey, k -> {
+        return introspectionCache.computeIfAbsent(config, k -> {
             Dialect dialect = Dialect.get(config.getDialect());
             return DatabaseIntrospector.introspect(
                 config.getExecutor(),
