@@ -16,6 +16,11 @@
       "command": "python3",
       "args": ["bridges/conformance_bridge.py"],
       "cwd": "../sdks/python"
+    },
+    "ruby": {
+      "command": "ruby",
+      "args": ["-Ilib", "bridges/conformance_bridge.rb"],
+      "cwd": "../sdks/ruby"
     }
   }
 }

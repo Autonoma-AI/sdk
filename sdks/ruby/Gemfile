@@ -1,0 +1,19 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+gemspec
+
+group :development, :test do
+  gem "minitest", "~> 5.0"
+  gem "rake", "~> 13.0"
+end
+
+group :active_record do
+  gem "activerecord", ">= 7.0"
+  gem "pg", ">= 1.5"
+end
+
+group :rails do
+  gem "rails", ">= 7.0"
+end
