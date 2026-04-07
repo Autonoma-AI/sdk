@@ -93,22 +93,3 @@ class Check
         return '';
     }
 }
-
-class CheckError
-{
-    public function __construct(
-        public readonly string $phase,
-        public readonly string $message,
-        public readonly string $fix = '',
-    ) {}
-}
-
-class CheckResult
-{
-    public function __construct(
-        public readonly bool $valid,
-        public readonly string $phase,
-        public readonly array $errors = [],
-        public readonly ?array $timing = null,
-    ) {}
-}
