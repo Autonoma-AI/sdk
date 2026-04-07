@@ -71,8 +71,23 @@ module Autonoma
 
       entries = fields.to_a
       if entries.empty?
-        sql = "INSERT INTO #{dialect.quote_id(db_table)} DEFAULT VALUES RETURNING *"
-        return map_rows_back(executor.query(sql), col_map)
+        if dialect.supports_returning
+          sql = "INSERT INTO #{dialect.quote_id(db_table)} DEFAULT VALUES RETURNING *"
+          return map_rows_back(executor.query(sql), col_map)
+        end
+
+        executor.query("INSERT INTO #{dialect.quote_id(db_table)} () VALUES ()")
+        id_col = find_id_col(col_map)
+        record_id = fields[id_field_name || "id"]
+        raise "Cannot fetch inserted row without RETURNING support and a known id" if record_id.nil?
+
+        return map_rows_back(
+          executor.query(
+            "SELECT * FROM #{dialect.quote_id(db_table)} WHERE #{dialect.quote_id(id_col)} = #{dialect.param(1)}",
+            [record_id]
+          ),
+          col_map
+        )
       end
 
       db_cols = []
