@@ -231,14 +231,17 @@ module Autonoma
 
     def self.map_data_type(data_type, udt_name, dialect_name)
       dt = data_type.downcase
+      udt = udt_name.to_s.downcase
+
+      # MySQL: tinyint(1) is boolean, but data_type is just "tinyint" — check column_type (udt_name)
+      return "Boolean" if dialect_name == "mysql" && dt == "tinyint" && udt.start_with?("tinyint(1")
+
       case dt
       when "integer", "smallint", "bigint", "int", "mediumint", "tinyint"
         "Int"
       when "numeric", "real", "double precision", "float", "double", "decimal"
         "Float"
-      when "boolean"
-        "Boolean"
-      when "tinyint(1)"
+      when "boolean", "tinyint(1)"
         "Boolean"
       when "text", "character varying", "character", "varchar", "char", "mediumtext", "longtext", "tinytext"
         "String"
