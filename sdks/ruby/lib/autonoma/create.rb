@@ -24,10 +24,10 @@ module Autonoma
         results[model] = if is_batch && fields_list.any?
                            insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_list)
                          else
-                           fields_list.filter_map do |fields|
+                           fields_list.map do |fields|
                              rows = insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
                              rows.first
-                           end
+                           end.compact
                          end
       end
 

@@ -47,7 +47,7 @@ poetry run pytest -k "sqlalchemy"                   # tests matching pattern
 ### Ruby
 ```bash
 cd sdks/ruby
-ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_template.rb test/test_graph.rb test/test_handler.rb
+ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_template.rb test/test_graph.rb test/test_handler.rb test/test_create.rb
 ```
 
 ### Conformance (all languages)
