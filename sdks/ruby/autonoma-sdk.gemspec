@@ -14,13 +14,12 @@ Gem::Specification.new do |spec|
 
   spec.required_ruby_version = ">= 3.1"
 
-  spec.files         = Dir["lib/**/*.rb", "LICENSE", "README.md"]
+  spec.files         = Dir["lib/**/*.rb"]
   spec.require_paths = ["lib"]
 
   spec.metadata = {
     "homepage_uri" => "https://autonoma.ai",
-    "source_code_uri" => "https://github.com/Autonoma-AI/sdk",
-    "changelog_uri" => "https://github.com/Autonoma-AI/sdk/blob/main/CHANGELOG.md"
+    "source_code_uri" => "https://github.com/Autonoma-AI/sdk"
   }
 
   # No hard runtime dependencies — core SDK uses only stdlib (openssl, json, base64, securerandom)
