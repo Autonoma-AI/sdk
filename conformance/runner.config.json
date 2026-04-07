@@ -21,6 +21,11 @@
       "command": "php",
       "args": ["bridges/conformance_bridge.php"],
       "cwd": "../sdks/php"
+    },
+    "ruby": {
+      "command": "ruby",
+      "args": ["-Ilib", "bridges/conformance_bridge.rb"],
+      "cwd": "../sdks/ruby"
     }
   }
 }
