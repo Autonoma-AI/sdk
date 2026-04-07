@@ -16,6 +16,7 @@ root/
     typescript/         # TypeScript SDK (pnpm/turbo monorepo)
     elixir/             # Elixir SDK (mix project)
     python/             # Python SDK (pyproject.toml)
+    ruby/               # Ruby SDK (gemspec)
 ```
 
 ## Commands
@@ -41,6 +42,12 @@ cd sdks/python
 poetry install --all-extras && poetry run pytest   # full install + test
 poetry run pytest tests/test_sqlalchemy_adapter.py  # single test file
 poetry run pytest -k "sqlalchemy"                   # tests matching pattern
+```
+
+### Ruby
+```bash
+cd sdks/ruby
+ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_template.rb test/test_graph.rb test/test_handler.rb test/test_create.rb
 ```
 
 ### Conformance (all languages)
@@ -73,6 +80,7 @@ All language SDKs implement the same protocol with the same core modules:
 | TypeScript | Prisma, Drizzle | Express, Web (Next/Hono/Deno), Node HTTP |
 | Python | SQLAlchemy, Django | FastAPI, Flask, Django |
 | Elixir | Ecto | Plug (Phoenix) |
+| Ruby | ActiveRecord | Rails |
 
 ### Protocol Versioning
 
@@ -86,20 +94,21 @@ Every response (discover/up/down) includes:
 
 ## Multi-Language Rules
 
-This SDK exists in three languages: **TypeScript**, **Python**, and **Elixir**. They are independent implementations that must behave identically, verified by the shared conformance suite.
+This SDK exists in four languages: **TypeScript**, **Python**, **Elixir**, and **Ruby**. They are independent implementations that must behave identically, verified by the shared conformance suite.
 
 ### Adding features or fixing bugs
 
-- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all three languages**.
-- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all three pass: `cd conformance && npx tsx run.ts`.
+- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all four languages**.
+- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all four pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
 
 ### Breaking changes and versioning
 
-- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all three handlers:
+- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all four handlers:
   - TypeScript: `sdks/typescript/packages/sdk/src/handler.ts` → `PROTOCOL_VERSION`
   - Python: `sdks/python/src/autonoma/handler.py` → `PROTOCOL_VERSION`
   - Elixir: `sdks/elixir/lib/autonoma/handler.ex` → `@protocol_version`
+  - Ruby: `sdks/ruby/lib/autonoma/handler.rb` → `PROTOCOL_VERSION`
 - Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
 
 ## Key Conventions
@@ -107,5 +116,6 @@ This SDK exists in three languages: **TypeScript**, **Python**, and **Elixir**. 
 - TypeScript: ESM-only, `verbatimModuleSyntax`, no `.js` extensions in imports
 - Elixir: standard mix project conventions
 - Python: src layout, Poetry (pyproject.toml), extras for adapters (`autonoma-sdk[sqlalchemy]`, `autonoma-sdk[fastapi]`, etc.)
+- Ruby: gemspec with no hard runtime dependencies (stdlib only), ActiveRecord/Rails as optional adapters
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites
 - Protocol responses include `version` and `sdk` metadata for traceability
