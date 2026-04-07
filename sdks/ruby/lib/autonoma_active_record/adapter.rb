@@ -21,11 +21,10 @@ module AutonomaActiveRecord
       if params.empty?
         result = conn.exec_query(sql)
       else
-        # ActiveRecord uses positional bind params with $1, $2 for Postgres
-        # Convert $N placeholders to ActiveRecord-compatible bind format
         binds = params.map { |v| build_bind(v) }
-        sanitized_sql = substitute_binds(sql, params, conn)
-        result = conn.exec_query(sanitized_sql)
+        # Normalize placeholders to $1, $2, ... for ActiveRecord bind support
+        normalized_sql = normalize_placeholders(sql)
+        result = conn.exec_query(normalized_sql, "SQL", binds)
       end
 
       result.to_a
@@ -40,12 +39,13 @@ module AutonomaActiveRecord
 
     private
 
-    def substitute_binds(sql, params, conn)
+    # Convert ? placeholders to $1, $2, ... for ActiveRecord.
+    # $N placeholders are passed through as-is.
+    def normalize_placeholders(sql)
       idx = 0
-      sql.gsub(/\$\d+|\?/) do
-        value = params[idx]
+      sql.gsub("?") do
         idx += 1
-        conn.quote(value)
+        "$#{idx}"
       end
     end
 
