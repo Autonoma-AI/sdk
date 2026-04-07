@@ -22,7 +22,7 @@ module Autonoma
       header, body, signature = parts
       expected = hmac_sign("#{header}.#{body}", secret)
 
-      raise "signature mismatch" unless expected == signature
+      raise "signature mismatch" unless Autonoma.secure_compare(expected, signature)
 
       JSON.parse(base64url_decode(body))
     end
