@@ -21,10 +21,18 @@ class Refs
         }
         [$header, $body, $signature] = $parts;
         $expected = self::hmacSign("{$header}.{$body}", $secret);
-        if ($expected !== $signature) {
+        if (!hash_equals($expected, $signature)) {
             throw new \InvalidArgumentException('signature mismatch');
         }
-        return json_decode(self::base64urlDecode($body), true);
+        $decoded = self::base64urlDecode($body);
+        if ($decoded === false) {
+            throw new \InvalidArgumentException('invalid base64url payload');
+        }
+        $payload = json_decode($decoded, true);
+        if (!is_array($payload)) {
+            throw new \InvalidArgumentException('invalid JSON payload');
+        }
+        return $payload;
     }
 
     public static function base64urlEncode(string $data): string
@@ -32,13 +40,13 @@ class Refs
         return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
     }
 
-    public static function base64urlDecode(string $data): string
+    public static function base64urlDecode(string $data): string|false
     {
         $padding = 4 - (strlen($data) % 4);
         if ($padding !== 4) {
             $data .= str_repeat('=', $padding);
         }
-        return base64_decode(strtr($data, '-_', '+/'));
+        return base64_decode(strtr($data, '-_', '+/'), true);
     }
 
     private static function hmacSign(string $data, string $secret): string
