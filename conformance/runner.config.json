@@ -21,6 +21,11 @@
       "command": "java",
       "args": ["-jar", "conformance-bridge/target/autonoma-conformance-bridge-0.1.0.jar"],
       "cwd": "../sdks/java"
+    },
+    "ruby": {
+      "command": "ruby",
+      "args": ["-Ilib", "bridges/conformance_bridge.rb"],
+      "cwd": "../sdks/ruby"
     }
   }
 }
