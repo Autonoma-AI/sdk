@@ -84,8 +84,8 @@ module Autonoma
         "version" => PROTOCOL_VERSION,
         "sdk" => {
           "language" => "ruby",
-          "orm" => sdk["orm"] || "unknown",
-          "server" => sdk["server"] || "unknown"
+          "orm" => sdk["orm"] || sdk[:orm] || "unknown",
+          "server" => sdk["server"] || sdk[:server] || "unknown"
         }
       }
     end
