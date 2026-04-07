@@ -177,7 +177,7 @@ export async function introspectDatabase(
     }
 
     columnMaps.set(modelName, colMap)
-    models.push({ name: modelName, fields })
+    models.push({ name: modelName, tableName: dbTable, fields })
   }
 
   // Build FK edges

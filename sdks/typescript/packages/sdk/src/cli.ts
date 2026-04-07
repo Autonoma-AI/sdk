@@ -82,6 +82,7 @@ interface DMMFInput {
 
 interface DMMFModel {
   name: string
+  dbName?: string | null
   fields: DMMFField[]
 }
 
@@ -140,7 +141,7 @@ function convertDMMFToSchema(dmmf: DMMFInput, scopeField: string): SchemaInfo {
       }
     }
 
-    models.push({ name: model.name, fields })
+    models.push({ name: model.name, tableName: model.dbName ?? model.name, fields })
   }
 
   return { models, edges, relations: [], scopeField }

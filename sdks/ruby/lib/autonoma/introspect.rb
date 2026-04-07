@@ -127,7 +127,7 @@ module Autonoma
         end
 
         column_maps[model_name] = col_map
-        models << ModelInfo.new(name: model_name, fields: fields)
+        models << ModelInfo.new(name: model_name, table_name: db_table, fields: fields)
       end
 
       # Build FK edges
