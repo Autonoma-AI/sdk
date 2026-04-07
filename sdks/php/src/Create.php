@@ -112,8 +112,16 @@ class Create
         }
 
         if (empty($fields)) {
-            $sql = "INSERT INTO {$dialect->quoteId($dbTable)} DEFAULT VALUES RETURNING *";
-            return self::mapRowsBack($executor->query($sql), $colMap);
+            if ($dialect->supportsReturning()) {
+                $sql = "INSERT INTO {$dialect->quoteId($dbTable)} DEFAULT VALUES RETURNING *";
+                return self::mapRowsBack($executor->query($sql), $colMap);
+            }
+            // MySQL: INSERT with empty column list, then SELECT back via LAST_INSERT_ID
+            $executor->query("INSERT INTO {$dialect->quoteId($dbTable)} () VALUES ()");
+            return self::mapRowsBack(
+                $executor->query("SELECT * FROM {$dialect->quoteId($dbTable)} WHERE {$dialect->quoteId('id')} = LAST_INSERT_ID()"),
+                $colMap,
+            );
         }
 
         $dbCols = [];
@@ -207,10 +215,22 @@ class Create
                 $sql = "INSERT INTO {$dialect->quoteId($dbTable)} ({$colList}) VALUES {$valList} RETURNING *";
                 $allResults = array_merge($allResults, self::mapRowsBack($executor->query($sql, $params), $colMap));
             } else {
+                // MySQL: INSERT then SELECT back by client-generated IDs
                 $executor->query(
                     "INSERT INTO {$dialect->quoteId($dbTable)} ({$colList}) VALUES {$valList}",
                     $params,
                 );
+                $idCol = self::findIdCol($colMap);
+                $ids = array_map(fn($f) => $f[$idFieldName ?? 'id'] ?? null, $chunk);
+                $ids = array_filter($ids, fn($id) => $id !== null);
+                if (!empty($ids)) {
+                    $inPlaceholders = implode(', ', array_map(fn($i) => $dialect->param($i), range(1, count($ids))));
+                    $rows = $executor->query(
+                        "SELECT * FROM {$dialect->quoteId($dbTable)} WHERE {$dialect->quoteId($idCol)} IN ({$inPlaceholders})",
+                        array_values($ids),
+                    );
+                    $allResults = array_merge($allResults, self::mapRowsBack($rows, $colMap));
+                }
             }
         }
 
