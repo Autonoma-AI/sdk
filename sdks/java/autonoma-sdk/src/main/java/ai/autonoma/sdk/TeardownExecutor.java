@@ -1,0 +1,140 @@
+package ai.autonoma.sdk;
+
+import ai.autonoma.sdk.types.*;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * Tear down all data scoped to a value, in reverse topological order.
+ *
+ * Strategy:
+ *   1. Find the scope root model (e.g. Organization) from FK edges
+ *   2. Any model with a FK pointing to the scope root is "scoped"
+ *   3. Delete scoped models by their FK = scopeValue
+ *   4. Delete non-scoped models by their record IDs from refs
+ *   5. Delete the scope root entity last by id = scopeValue
+ */
+public final class TeardownExecutor {
+
+    private TeardownExecutor() {}
+
+    @SuppressWarnings("unchecked")
+    public static void teardown(
+            SQLExecutor executor,
+            Dialect dialect,
+            Map<String, String> tableMap,
+            Map<String, Map<String, String>> columnMaps,
+            SchemaInfo schema,
+            String scopeValue,
+            Map<String, List<Map<String, Object>>> refs) {
+
+        // Find scope root
+        String scopeRootModel = null;
+        for (FKEdge edge : schema.edges()) {
+            if (edge.localField().equalsIgnoreCase(schema.scopeField()) && !edge.to().equals(edge.from())) {
+                scopeRootModel = edge.to();
+                break;
+            }
+        }
+
+        // Build map: model -> FK field name pointing to scope root
+        Map<String, String> scopeFieldByModel = new LinkedHashMap<>();
+        if (scopeRootModel != null) {
+            for (FKEdge edge : schema.edges()) {
+                if (edge.to().equals(scopeRootModel) && !edge.from().equals(scopeRootModel)) {
+                    scopeFieldByModel.put(edge.from(), edge.localField());
+                }
+            }
+        }
+
+        List<String> modelNames = schema.models().stream().map(ModelInfo::name).toList();
+        TopoSortResult sortResult = GraphUtil.topoSort(modelNames, schema.edges());
+
+        final String finalScopeRoot = scopeRootModel;
+
+        executor.transaction(tx -> {
+            // Break cycles by nullifying deferrable FKs
+            for (List<String> cycle : sortResult.cycles()) {
+                FKEdge edge = GraphUtil.findDeferrableEdge(cycle, schema.edges());
+                if (edge != null) {
+                    String scopeFK = scopeFieldByModel.get(edge.from());
+                    if (scopeFK != null) {
+                        String dbTable = tableMap.get(edge.from());
+                        Map<String, String> colMap = columnMaps.getOrDefault(edge.from(), Map.of());
+                        if (dbTable != null) {
+                            String dbFKCol = colMap.getOrDefault(edge.localField(), edge.localField());
+                            String dbScopeCol = colMap.getOrDefault(scopeFK, scopeFK);
+                            tx.query("UPDATE " + dialect.quoteId(dbTable) + " SET " + dialect.quoteId(dbFKCol)
+                                + " = NULL WHERE " + dialect.quoteId(dbScopeCol) + " = " + dialect.param(1), scopeValue);
+                        }
+                    }
+                }
+            }
+
+            // Delete cycle nodes
+            for (List<String> cycle : sortResult.cycles()) {
+                for (String model : cycle) {
+                    deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs);
+                }
+            }
+
+            // Delete in reverse topo order
+            List<String> reversed = new ArrayList<>(sortResult.sorted());
+            Collections.reverse(reversed);
+            for (String model : reversed) {
+                if (model.equals(finalScopeRoot)) continue;
+                deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs);
+            }
+
+            // Delete scope root last
+            if (finalScopeRoot != null) {
+                String dbTable = tableMap.get(finalScopeRoot);
+                Map<String, String> colMap = columnMaps.getOrDefault(finalScopeRoot, Map.of());
+                if (dbTable != null) {
+                    String idCol = colMap.getOrDefault("id", "id");
+                    tx.query("DELETE FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(idCol)
+                        + " = " + dialect.param(1), scopeValue);
+                }
+            }
+
+            return null;
+        });
+    }
+
+    private static void deleteModel(
+            SQLExecutor tx,
+            Dialect dialect,
+            Map<String, String> tableMap,
+            Map<String, Map<String, String>> columnMaps,
+            String model,
+            String scopeValue,
+            Map<String, String> scopeFieldByModel,
+            Map<String, List<Map<String, Object>>> refs) {
+
+        String dbTable = tableMap.get(model);
+        if (dbTable == null) return;
+        Map<String, String> colMap = columnMaps.getOrDefault(model, Map.of());
+
+        String scopeFK = scopeFieldByModel.get(model);
+        if (scopeFK != null) {
+            String dbCol = colMap.getOrDefault(scopeFK, scopeFK);
+            tx.query("DELETE FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(dbCol)
+                + " = " + dialect.param(1), scopeValue);
+        } else if (refs != null && refs.containsKey(model)) {
+            List<String> ids = refs.get(model).stream()
+                .map(r -> r.get("id"))
+                .filter(id -> id instanceof String)
+                .map(id -> (String) id)
+                .toList();
+            if (!ids.isEmpty()) {
+                String idCol = colMap.getOrDefault("id", "id");
+                String placeholders = ids.stream()
+                    .map(id -> dialect.param(ids.indexOf(id) + 1))
+                    .collect(Collectors.joining(", "));
+                tx.query("DELETE FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(idCol)
+                    + " IN (" + placeholders + ")", ids.toArray());
+            }
+        }
+    }
+}
