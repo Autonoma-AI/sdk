@@ -99,7 +99,7 @@ async def _handle_discover(config: HandlerConfig) -> HandlerResponse:
     # Serialize to dict
     schema_dict = {
         "models": [
-            {"name": m.name, "fields": [
+            {"name": m.name, "tableName": m.table_name, "fields": [
                 {"name": f.name, "type": f.type, "isRequired": f.is_required, "isId": f.is_id, "hasDefault": f.has_default}
                 for f in m.fields
             ]}

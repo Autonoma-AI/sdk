@@ -133,7 +133,7 @@ async def introspect_database(
             ))
 
         column_maps[model_name] = col_map
-        models.append(ModelInfo(name=model_name, fields=fields))
+        models.append(ModelInfo(name=model_name, table_name=db_table, fields=fields))
 
     # Build FK edges
     edges: list[FKEdge] = []

@@ -52,7 +52,7 @@ class SQLAlchemyAdapter:
                     ),
                 })
 
-            models_info.append({"name": model.__name__, "fields": fields})
+            models_info.append({"name": model.__name__, "tableName": model.__table__.name, "fields": fields})
 
             # FK edges from foreign key constraints
             for fk_constraint in model.__table__.foreign_key_constraints:
