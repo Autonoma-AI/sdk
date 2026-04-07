@@ -62,7 +62,7 @@ module Autonoma
         reverse_table_map[db_table] = model
       end
 
-      db_tables = table_rows.filter_map { |r| r["table_name"] unless exclude_set.include?(r["table_name"]) }
+      db_tables = table_rows.map { |r| r["table_name"] }.reject { |t| exclude_set.include?(t) }
       db_tables.each do |db_table|
         next if reverse_table_map.key?(db_table)
 

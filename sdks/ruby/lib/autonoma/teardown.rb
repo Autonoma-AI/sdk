@@ -107,7 +107,7 @@ module Autonoma
           [scope_value]
         )
       elsif refs && refs[model]
-        ids = refs[model].filter_map { |r| r["id"] if r["id"].is_a?(String) }
+        ids = refs[model].map { |r| r["id"] }.select { |id| id.is_a?(String) }
         if ids.any?
           id_col = col_map["id"] || "id"
           placeholders = ids.each_with_index.map { |_, i| dialect.param(i + 1) }.join(", ")

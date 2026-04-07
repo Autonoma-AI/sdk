@@ -4,8 +4,8 @@ require "minitest/autorun"
 require "json"
 require_relative "../lib/autonoma"
 
-# Mock executor for handler tests
-class MockExecutor
+# Mock executor that returns canned introspection results for handler tests.
+class HandlerMockExecutor
   attr_reader :queries
 
   def initialize
@@ -14,7 +14,28 @@ class MockExecutor
 
   def query(sql, params = [])
     @queries << { sql: sql, params: params }
-    []
+
+    # Return minimal introspection data for discover to succeed
+    if sql.include?("information_schema.tables")
+      [{ "table_name" => "users" }]
+    elsif sql.include?("information_schema.columns")
+      [
+        { "table_name" => "users", "column_name" => "id", "data_type" => "uuid",
+          "udt_name" => "uuid", "is_nullable" => "NO", "column_default" => "gen_random_uuid()" },
+        { "table_name" => "users", "column_name" => "name", "data_type" => "character varying",
+          "udt_name" => "varchar", "is_nullable" => "NO", "column_default" => nil },
+        { "table_name" => "users", "column_name" => "email", "data_type" => "character varying",
+          "udt_name" => "varchar", "is_nullable" => "NO", "column_default" => nil }
+      ]
+    elsif sql.include?("PRIMARY KEY")
+      [{ "table_name" => "users", "column_name" => "id" }]
+    elsif sql.include?("FOREIGN KEY") || sql.include?("foreign_keys")
+      []
+    elsif sql.include?("pg_enum") || sql.include?("enum")
+      []
+    else
+      []
+    end
   end
 
   def transaction
@@ -24,7 +45,7 @@ end
 
 class TestHandler < Minitest::Test
   def setup
-    @executor = MockExecutor.new
+    @executor = HandlerMockExecutor.new
     @config = Autonoma::HandlerConfig.new(
       executor: @executor,
       scope_field: "organizationId",
@@ -86,13 +107,27 @@ class TestHandler < Minitest::Test
     assert_equal "UNKNOWN_ACTION", result.body["code"]
   end
 
-  def test_sdk_meta_includes_ruby_language
-    # Directly test the meta output by checking error responses (always include meta)
+  def test_discover_returns_sdk_meta_with_ruby
     req = make_request({ "action" => "discover" })
-    # This will fail due to mock executor not returning schema, but we can check via error response
     result = Autonoma::Handler.handle_request(@config, req)
-    # The discover handler will try to introspect, which should hit the mock executor
-    # Even on error, the response should have version/sdk info or error info
-    assert_kind_of Autonoma::HandlerResponse, result
+
+    assert_equal 200, result.status
+    assert_equal "1.0", result.body["version"]
+    assert_equal "ruby", result.body["sdk"]["language"]
+    assert_equal "unknown", result.body["sdk"]["orm"]
+    assert_equal "unknown", result.body["sdk"]["server"]
+  end
+
+  def test_discover_returns_schema
+    req = make_request({ "action" => "discover" })
+    result = Autonoma::Handler.handle_request(@config, req)
+
+    assert_equal 200, result.status
+    schema = result.body["schema"]
+    refute_nil schema
+    assert_kind_of Array, schema["models"]
+    assert_equal 1, schema["models"].length
+    assert_equal "Users", schema["models"][0]["name"]
+    assert_equal "organizationId", schema["scopeField"]
   end
 end
