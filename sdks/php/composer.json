@@ -1,0 +1,40 @@
+{
+    "name": "autonoma-ai/sdk",
+    "description": "Autonoma SDK for PHP/Laravel — automates the Autonoma Environment Factory endpoint",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["autonoma", "testing", "e2e", "environment-factory", "laravel"],
+    "require": {
+        "php": "^8.2"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0",
+        "orchestra/testbench": "^9.0",
+        "laravel/framework": "^11.0"
+    },
+    "suggest": {
+        "laravel/framework": "Required for Laravel server adapter and Eloquent executor"
+    },
+    "autoload": {
+        "psr-4": {
+            "Autonoma\\Sdk\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Autonoma\\Sdk\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Autonoma\\Sdk\\Laravel\\AutonomaServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "config": {
+        "sort-packages": true
+    }
+}

@@ -16,6 +16,11 @@
       "command": "python3",
       "args": ["bridges/conformance_bridge.py"],
       "cwd": "../sdks/python"
+    },
+    "php": {
+      "command": "php",
+      "args": ["bridges/conformance_bridge.php"],
+      "cwd": "../sdks/php"
     }
   }
 }
