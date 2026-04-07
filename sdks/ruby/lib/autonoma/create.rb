@@ -139,6 +139,13 @@ module Autonoma
       end
 
       field_names = fields_arr.first.keys
+      expected_fields = field_names.each_with_object({}) { |fn, h| h[fn] = true }
+      fields_arr.each_with_index do |fields, idx|
+        next if fields.length == field_names.length && fields.keys.all? { |fn| expected_fields.key?(fn) }
+
+        raise "Inconsistent batch insert fields at row #{idx}: expected keys #{field_names.inspect}, got #{fields.keys.inspect}"
+      end
+
       db_cols_list = field_names.map { |f| dialect.quote_id(col_map[f] || f) }
       col_list = db_cols_list.join(", ")
 
@@ -172,6 +179,23 @@ module Autonoma
             "INSERT INTO #{dialect.quote_id(db_table)} (#{col_list}) VALUES #{val_list}",
             params
           )
+          # Select back inserted rows by client-generated IDs
+          if id_field_name
+            ids = chunk.map { |f| f[id_field_name] }.compact
+            if ids.any?
+              id_col = find_id_col(col_map)
+              placeholders = ids.each_with_index.map { |_, i| dialect.param(i + 1) }.join(", ")
+              all_results.concat(
+                map_rows_back(
+                  executor.query(
+                    "SELECT * FROM #{dialect.quote_id(db_table)} WHERE #{dialect.quote_id(id_col)} IN (#{placeholders})",
+                    ids
+                  ),
+                  col_map
+                )
+              )
+            end
+          end
         end
       end
 
