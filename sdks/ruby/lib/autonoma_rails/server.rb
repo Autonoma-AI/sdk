@@ -34,8 +34,9 @@ module AutonomaRails
       enriched.sdk = sdk
 
       body_str = request.raw_post
-      headers = request.headers.to_h.transform_keys(&:downcase)
+      headers = request.headers.to_h
         .select { |k, _| k.is_a?(String) }
+        .transform_keys(&:downcase)
 
       req = Autonoma::HandlerRequest.new(body: body_str, headers: headers)
       result = Autonoma::Handler.handle_request(enriched, req)
