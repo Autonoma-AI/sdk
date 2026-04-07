@@ -20,8 +20,9 @@
           "jsonpath": "$.tool.poetry.version"
         },
         {
-          "type": "elixir",
-          "path": "sdks/elixir/mix.exs"
+          "type": "generic",
+          "path": "sdks/elixir/mix.exs",
+          "glob": false
         }
       ]
     }
