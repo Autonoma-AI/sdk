@@ -248,6 +248,17 @@ jobs:
           mix deps.get
           mix compile
 
+      # Go (for Go bridge)
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: sdks/go/go.sum
+
+      # Build Go conformance bridge binary
+      - name: Build Go conformance bridge
+        working-directory: sdks/go
+        run: go build -o bridges/conformance_bridge ./bridges/
+
       # Install tsx globally for the conformance runner
       - name: Install tsx
         run: npm install -g tsx

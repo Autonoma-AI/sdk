@@ -23,8 +23,8 @@
       "cwd": "../sdks/ruby"
     },
     "go": {
-      "command": "go",
-      "args": ["run", "./bridges/"],
+      "command": "./bridges/conformance_bridge",
+      "args": [],
       "cwd": "../sdks/go"
     }
   }
