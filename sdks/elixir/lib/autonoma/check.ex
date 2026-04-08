@@ -26,7 +26,7 @@ defmodule Autonoma.Check do
       shared_secret: shared_secret,
       signing_secret: signing_secret,
       sdk: Keyword.get(opts, :sdk, %{}),
-      auth: Keyword.get(opts, :auth, fn _user -> %{"token" => "check-token"} end)
+      auth: Keyword.get(opts, :auth, fn _user -> %{"headers" => %{"Authorization" => "Bearer check-token"}} end)
     }
 
     create = Map.get(scenario, "create", Map.get(scenario, :create, %{}))

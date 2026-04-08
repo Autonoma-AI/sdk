@@ -26,7 +26,11 @@ defmodule Autonoma.Plug.HandlerTest do
     %{
       adapter: adapter,
       shared_secret: @shared_secret,
-      signing_secret: @signing_secret
+      signing_secret: @signing_secret,
+      auth: fn user ->
+        user_id = if user, do: user["id"], else: "anon"
+        %{"headers" => %{"Authorization" => "Bearer test-token-#{user_id}"}}
+      end
     }
   end
 

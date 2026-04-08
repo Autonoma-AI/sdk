@@ -99,14 +99,31 @@ export interface HandlerConfig {
   /** Internal secret — only you know this. Used to sign the refs JWT token. Autonoma never sees it. */
   signingSecret: string
   allowProduction?: boolean
-  auth?: (user: Record<string, unknown>) => Promise<AuthResult> | AuthResult
+  /**
+   * Auth callback — called after entity creation during `up`.
+   * Receives the first User record from refs (or null if no User model exists).
+   * Must return auth credentials for the test runner.
+   */
+  auth: (user: Record<string, unknown> | null) => Promise<AuthResult> | AuthResult
   /** SDK identity metadata. Server and ORM adapters populate this. */
   sdk?: Partial<SdkInfo>
 }
 
+export interface AuthCookie {
+  name: string
+  value: string
+  httpOnly?: boolean
+  sameSite?: 'strict' | 'lax' | 'none'
+  path?: string
+  domain?: string
+  secure?: boolean
+  maxAge?: number
+}
+
 export interface AuthResult {
-  token: string
-  [key: string]: unknown
+  cookies?: AuthCookie[]
+  headers?: Record<string, string>
+  credentials?: Record<string, string>
 }
 
 export interface HandlerRequest {

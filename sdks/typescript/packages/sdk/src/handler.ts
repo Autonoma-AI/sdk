@@ -201,10 +201,7 @@ async function handleUp(
   const scopeValue = detectScopeValue(refs, schema.scopeField) ?? testRunId
 
   const firstUser = findFirstUser(refs)
-  let auth = { token: '' }
-  if (config.auth && firstUser) {
-    auth = await config.auth(firstUser)
-  }
+  const auth = await config.auth(firstUser)
 
   const refsToken = signRefs(
     { refs, testRunId: scopeValue, environment: '' },

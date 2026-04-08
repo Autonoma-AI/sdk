@@ -63,12 +63,12 @@ class HandlerConfig:
     scope_field: str
     shared_secret: str
     signing_secret: str
+    auth: Callable[[dict[str, Any] | None], dict[str, Any]]
     dialect: str = "postgres"
     db_schema: str | None = None
     table_name_map: dict[str, str] | None = None
     exclude_tables: list[str] | None = None
     allow_production: bool = False
-    auth: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None
     sdk: dict[str, str] | None = None
 
 
