@@ -38,9 +38,9 @@ module Autonoma
     :sdk,
     keyword_init: true
   ) do
-    def initialize(executor:, scope_field:, shared_secret:, signing_secret:,
+    def initialize(executor:, scope_field:, shared_secret:, signing_secret:, auth:,
                    dialect: "postgres", db_schema: nil, table_name_map: nil,
-                   exclude_tables: nil, allow_production: false, auth: nil, sdk: nil)
+                   exclude_tables: nil, allow_production: false, sdk: nil)
       super
     end
   end

@@ -46,7 +46,7 @@ async def check_scenario(
         table_name_map=options.get("tableNameMap"),
         shared_secret=shared_secret,
         signing_secret=signing_secret,
-        auth=options.get("auth", lambda _: {"token": "check-token"}),
+        auth=options.get("auth", lambda _: {"headers": {"Authorization": "Bearer check-token"}}),
     )
 
     # Up

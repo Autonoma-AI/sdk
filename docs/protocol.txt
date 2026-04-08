@@ -94,7 +94,7 @@ Response (200):
   {
     "version": "1.0",
     "sdk": { "language": "typescript", "orm": "prisma", "server": "web" },
-    "auth": { "token": "...", "cookies": [...], "credentials": {...} },
+    "auth": { "cookies": [...], "headers": {...}, "credentials": {...} },
     "refs": {
       "ModelName": [{ "id": "...", "field": "value", ... }]
     },

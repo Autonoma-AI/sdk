@@ -312,7 +312,7 @@ async function main() {
     adapter,
     sharedSecret: SHARED_SECRET,
     signingSecret: SIGNING_SECRET,
-    auth: async (user: any) => ({ token: `t-${user.id}`, userId: user.id }),
+    auth: async (user: any) => ({ headers: { Authorization: `Bearer t-${user?.id ?? 'anon'}` } }),
   }
 
   const results: Array<{ name: string; ok: boolean; upMs: number; downMs: number; error?: string }> = []

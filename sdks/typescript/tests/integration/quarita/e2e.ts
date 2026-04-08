@@ -164,7 +164,7 @@ async function step3_up(scenario: any) {
     sharedSecret: SHARED_SECRET,
     signingSecret: SIGNING_SECRET,
     scenarios: { scenarios: [scenario] },
-    auth: async (user: any) => ({ token: `fake-jwt-for-${user.id}`, userId: user.id }),
+    auth: async (user: any) => ({ headers: { Authorization: `Bearer fake-jwt-for-${user?.id ?? 'anon'}` } }),
   }
 
   const req = signedRequest({
@@ -182,7 +182,7 @@ async function step3_up(scenario: any) {
 
   const body = res.body as any
   console.log('  ✓ up succeeded')
-  console.log(`  Auth token: ${body.auth.token}`)
+  console.log(`  Auth: ${JSON.stringify(body.auth)}`)
   console.log(`  Refs created:`)
   for (const [model, records] of Object.entries(body.refs) as any) {
     console.log(`    ${model}: ${records.length} record(s)`)

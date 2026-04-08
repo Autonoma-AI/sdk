@@ -101,7 +101,7 @@ async function main() {
     sharedSecret: SHARED_SECRET,
     signingSecret: SIGNING_SECRET,
     scenarios: { scenarios: [scenario] },
-    auth: async (user: any) => ({ token: `token-${user.id}`, userId: user.id }),
+    auth: async (user: any) => ({ headers: { Authorization: `Bearer token-${user?.id ?? 'anon'}` } }),
   }
 
   // ── 4. Run UP ────────────────────────────────────────────────────────

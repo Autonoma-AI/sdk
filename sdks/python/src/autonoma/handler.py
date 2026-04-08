@@ -221,9 +221,7 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
     scope_value = _detect_scope_value(refs, schema.scope_field) or test_run_id
 
     first_user = _find_first_user(refs)
-    auth: dict[str, Any] = {"token": ""}
-    if config.auth and first_user:
-        auth = config.auth(first_user)
+    auth = config.auth(first_user)
 
     refs_token = sign_refs(
         {"refs": refs, "testRunId": scope_value, "environment": ""},

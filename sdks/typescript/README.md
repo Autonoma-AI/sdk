@@ -35,7 +35,7 @@ export const POST = createHandler({
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
   auth: async (user) => {
     const session = await createSession(user.id as string)
-    return { token: session.token }
+    return { headers: { Authorization: `Bearer ${session.token}` } }
   },
 })
 ```
@@ -56,7 +56,7 @@ app.post('/api/autonoma', createExpressHandler({
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
   auth: async (user) => {
     const session = await createSession(user.id as string)
-    return { token: session.token }
+    return { headers: { Authorization: `Bearer ${session.token}` } }
   },
 }))
 
