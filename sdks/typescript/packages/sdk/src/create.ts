@@ -292,7 +292,7 @@ const MYSQL_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
  *  - ISO 8601 datetime strings → MySQL DATETIME format
  */
 function serializeValue(value: unknown, dialect: Dialect): unknown {
-  if (value === null || value === undefined) return value
+  if (value === null || value === undefined) return null
 
   // JSON: Both MySQL and Postgres need stringified JSON when using parameterized
   // queries with explicit casts (e.g. $1::jsonb). Postgres $queryRawUnsafe cannot
