@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const ProtocolVersion = "1.0"
+//go:generate sh -c "printf 'package autonoma\n\n// Code generated from protocol/version.txt. DO NOT EDIT.\nconst ProtocolVersion = \"%s\"\n' \"$(cat ../../../protocol/version.txt | tr -d '\\n')\" > protocol_version_gen.go"
 
 var (
 	introspectionCacheMu sync.Mutex

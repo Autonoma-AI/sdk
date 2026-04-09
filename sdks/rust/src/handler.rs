@@ -15,7 +15,7 @@ use crate::teardown::teardown;
 use crate::tree::resolve_tree;
 use crate::types::{HandlerConfig, HandlerRequest, HandlerResponse, IntrospectionResult};
 
-pub const PROTOCOL_VERSION: &str = "1.0";
+pub const PROTOCOL_VERSION: &str = include_str!("../../../protocol/version.txt").trim_ascii();
 
 async fn get_introspection(config: &HandlerConfig) -> Result<IntrospectionResult, String> {
     config

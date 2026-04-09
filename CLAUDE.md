@@ -147,15 +147,15 @@ This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PH
 
 ### Breaking changes and versioning
 
-- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump the version in `protocol/version.txt`. SDKs that already read from this file do so automatically; for newly added SDKs, wire them up to read from the same file:
+- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump the version in `protocol/version.txt`. All eight SDKs read from this single file:
   - TypeScript: injected at build time via `define` in `tsup.config.ts` and `vitest.config.ts`
   - Python: read at module load in `handler.py` via `pathlib`
   - Elixir: compiled in via `@external_resource` + `File.read!` in `handler.ex`
+  - PHP: read at runtime in `Handler.php` via `file_get_contents`
   - Java: included as a classpath resource via Maven and read in `AutonomaHandler.java`
   - Ruby: read at require time in `handler.rb` via `File.read`
-  - PHP: `sdks/php/src/Handler.php` → `PROTOCOL_VERSION` (not yet wired to `protocol/version.txt`)
-  - Rust: `sdks/rust/src/handler.rs` → `PROTOCOL_VERSION` (not yet wired to `protocol/version.txt`)
-  - Go: `sdks/go/autonoma/handler.go` → `ProtocolVersion` (not yet wired to `protocol/version.txt`)
+  - Rust: compiled in via `include_str!` in `handler.rs`
+  - Go: generated via `go generate` into `protocol_version_gen.go`
 - Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
 
 ## Key Conventions
