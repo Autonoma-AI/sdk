@@ -44,10 +44,6 @@ config = %{
 plug Autonoma.Plug.Handler, config
 ```
 
-## Status
-
-The Elixir SDK core modules (graph, hmac, refs, fingerprint, template) are complete and pass the conformance test suite. The Ecto adapter is a stub. Requires local Elixir to build and test.
-
 ## Commands
 
 ```bash
@@ -57,4 +53,4 @@ mix test        # run tests
 
 ## Documentation
 
-For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory.
+For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory. For a runnable example, see [`examples/elixir/phoenix-ecto/`](../../examples/elixir/phoenix-ecto/).
