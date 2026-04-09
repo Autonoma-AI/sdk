@@ -32,6 +32,11 @@
       "args": ["-Ilib", "bridges/conformance_bridge.rb"],
       "cwd": "../sdks/ruby"
     },
+    "rust": {
+      "command": "../sdks/rust/target/release/conformance_bridge",
+      "args": [],
+      "cwd": "."
+    },
     "go": {
       "command": "./bridges/conformance_bridge",
       "args": [],
