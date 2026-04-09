@@ -17,6 +17,11 @@
       "args": ["bridges/conformance_bridge.py"],
       "cwd": "../sdks/python"
     },
+    "php": {
+      "command": "php",
+      "args": ["bridges/conformance_bridge.php"],
+      "cwd": "../sdks/php"
+    },
     "java": {
       "command": "java",
       "args": ["-jar", "conformance-bridge/target/autonoma-conformance-bridge-0.1.0.jar"],
