@@ -1,6 +1,6 @@
 {
   "name": "@autonoma-ai/sdk-drizzle",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Drizzle adapter for Autonoma SDK",
   "type": "module",
   "exports": {
