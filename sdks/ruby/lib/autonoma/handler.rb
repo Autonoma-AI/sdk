@@ -98,6 +98,7 @@ module Autonoma
         "models" => schema.models.map do |m|
           {
             "name" => m.name,
+            "tableName" => m.table_name,
             "fields" => m.fields.map do |f|
               {
                 "name" => f.name, "type" => f.type,

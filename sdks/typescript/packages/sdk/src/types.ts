@@ -28,6 +28,7 @@ export interface SchemaRelation {
 
 export interface ModelInfo {
   name: string
+  tableName: string
   fields: FieldInfo[]
 }
 

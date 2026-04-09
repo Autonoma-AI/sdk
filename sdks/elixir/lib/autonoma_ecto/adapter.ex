@@ -79,7 +79,7 @@ defmodule Autonoma.Ecto.Adapter do
         model_rels = introspect_relations(mod, model_name, adapter)
 
         {
-          models_acc ++ [%{"name" => model_name, "fields" => fields}],
+          models_acc ++ [%{"name" => model_name, "tableName" => mod.__schema__(:source), "fields" => fields}],
           edges_acc ++ model_edges,
           rels_acc ++ model_rels
         }

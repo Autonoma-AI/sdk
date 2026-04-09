@@ -18,6 +18,7 @@ class FieldInfo:
 @dataclass
 class ModelInfo:
     name: str
+    table_name: str
     fields: list[FieldInfo]
 
 

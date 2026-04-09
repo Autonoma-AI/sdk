@@ -115,7 +115,7 @@ defmodule Autonoma.Introspect do
             {f_acc ++ [field], e_acc}
           end)
 
-        model = %{"name" => model_name, "fields" => fields}
+        model = %{"name" => model_name, "tableName" => db_table, "fields" => fields}
         et_acc = if map_size(et_map) > 0, do: Map.put(et_acc, model_name, et_map), else: et_acc
 
         {m_acc ++ [model], Map.put(cm_acc, model_name, col_map), et_acc}
