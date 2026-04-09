@@ -381,6 +381,9 @@ fn parse_mysql_enum(column_type: &str) -> Option<Vec<String>> {
 fn map_data_type(data_type: &str, udt_name: &str, dialect_name: &str) -> String {
     let dt = data_type.to_lowercase();
     match dt.as_str() {
+        "tinyint" if dialect_name == "mysql" && udt_name.to_lowercase() == "tinyint(1)" => {
+            "Boolean".to_string()
+        }
         "integer" | "smallint" | "bigint" | "int" | "mediumint" | "tinyint" => "Int".to_string(),
         "numeric" | "real" | "double precision" | "float" | "double" | "decimal" => {
             "Float".to_string()
@@ -397,13 +400,7 @@ fn map_data_type(data_type: &str, udt_name: &str, dialect_name: &str) -> String 
         }
         "user-defined" if dialect_name == "postgres" => udt_name.to_string(),
         "enum" | "set" => udt_name.to_string(),
-        _ => {
-            if dt == "tinyint(1)" {
-                "Boolean".to_string()
-            } else {
-                data_type.to_string()
-            }
-        }
+        _ => data_type.to_string(),
     }
 }
 
