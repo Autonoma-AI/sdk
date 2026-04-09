@@ -99,6 +99,7 @@ class Handler
         $schemaDict = [
             'models' => array_map(fn($m) => [
                 'name' => $m->name,
+                'tableName' => $m->tableName,
                 'fields' => array_map(fn($f) => [
                     'name' => $f->name,
                     'type' => $f->type,

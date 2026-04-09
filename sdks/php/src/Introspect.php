@@ -148,7 +148,7 @@ class Introspect
             }
 
             $columnMaps[$modelName] = $colMap;
-            $models[] = new ModelInfo(name: $modelName, fields: $fields);
+            $models[] = new ModelInfo(name: $modelName, tableName: $dbTable, fields: $fields);
         }
 
         // Build FK edges
