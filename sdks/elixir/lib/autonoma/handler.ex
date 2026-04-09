@@ -6,28 +6,19 @@ defmodule Autonoma.Handler do
 
   alias Autonoma.{Error, HMAC, Refs, Dialect, Introspect, Tree, Create, TeardownSQL}
 
-  @protocol_version "1.0"
+  @protocol_version_file Path.expand("../../../../protocol/version.txt", __DIR__)
+  @external_resource @protocol_version_file
+  @protocol_version File.read!(@protocol_version_file) |> String.trim()
 
   # ---------------------------------------------------------------------------
-  # Introspection cache (per config reference via :erlang.phash2)
+  # Introspection cache (per config, stored in process dictionary)
   # ---------------------------------------------------------------------------
-
-  @cache_table :autonoma_introspection_cache
-
-  defp ensure_cache_table do
-    case :ets.whereis(@cache_table) do
-      :undefined -> :ets.new(@cache_table, [:set, :public, :named_table])
-      _ -> @cache_table
-    end
-  end
 
   defp get_introspection(config) do
-    ensure_cache_table()
-    key = :erlang.phash2(config)
+    cache_key = {:autonoma_introspection_cache, :erlang.phash2(config)}
 
-    case :ets.lookup(@cache_table, key) do
-      [{^key, cached}] -> cached
-      [] ->
+    case Process.get(cache_key) do
+      nil ->
         dialect = get_dialect(config)
         result = Introspect.introspect(config.executor, dialect, [
           scope_field: config.scope_field,
@@ -35,8 +26,10 @@ defmodule Autonoma.Handler do
           table_name_map: Map.get(config, :table_name_map),
           exclude_tables: Map.get(config, :exclude_tables, ["_prisma_migrations"])
         ])
-        :ets.insert(@cache_table, {key, result})
+        Process.put(cache_key, result)
         result
+      cached ->
+        cached
     end
   end
 

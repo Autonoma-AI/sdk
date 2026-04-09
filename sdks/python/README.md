@@ -8,8 +8,11 @@ Python implementation of the Autonoma Environment Factory SDK.
 |---------|-------------|
 | `autonoma-sdk` | Core protocol (HMAC, refs, templates, graph, handler) |
 | `autonoma-sdk[sqlalchemy]` | SQLAlchemy ORM adapter |
+| `autonoma-sdk[django]` | Django ORM adapter and server handler |
 | `autonoma-sdk[flask]` | Flask server adapter |
 | `autonoma-sdk[fastapi]` | FastAPI server adapter |
+| `autonoma-sdk[postgres]` | PostgreSQL driver (psycopg2) |
+| `autonoma-sdk[all]` | All adapters and drivers |
 
 ## Quick Start
 
@@ -19,6 +22,8 @@ Python implementation of the Autonoma Environment Factory SDK.
 pip install autonoma-sdk
 # With extras:
 pip install "autonoma-sdk[sqlalchemy,fastapi]"
+# Or everything:
+pip install "autonoma-sdk[all]"
 ```
 
 ### FastAPI + SQLAlchemy
@@ -45,17 +50,14 @@ async def autonoma_endpoint(request: Request):
     return JSONResponse(content=result.body, status_code=result.status)
 ```
 
-## Status
-
-The Python SDK core modules (graph, hmac, refs, fingerprint, template) are complete and pass the conformance test suite. ORM and server adapters are planned.
-
 ## Commands
 
 ```bash
-pip install -e ".[dev]"   # install in development mode
-pytest                     # run tests
+poetry install --all-extras   # install with all adapters
+poetry run pytest              # run tests
+poetry run pytest -k "sqlalchemy"  # tests matching pattern
 ```
 
 ## Documentation
 
-For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory.
+For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory. For runnable examples, see [`examples/python/`](../../examples/python/).

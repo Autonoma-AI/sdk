@@ -9,6 +9,8 @@ TypeScript implementation of the Autonoma Environment Factory SDK. Get a working
 | `@autonoma-ai/sdk` | Core protocol (HMAC, refs, templates, graph, handler) |
 | `@autonoma-ai/sdk-prisma` | Prisma ORM adapter |
 | `@autonoma-ai/sdk-drizzle` | Drizzle ORM adapter |
+| `@autonoma-ai/sdk-pg` | PostgreSQL driver adapter |
+| `@autonoma-ai/sdk-mysql2` | MySQL driver adapter |
 | `@autonoma-ai/server-web` | Web standard handler (Next.js App Router, Hono, Bun, Deno) |
 | `@autonoma-ai/server-express` | Express handler |
 | `@autonoma-ai/server-node` | Node.js `http` handler |
@@ -73,6 +75,4 @@ pnpm test      # run all tests (vitest)
 
 ## Documentation
 
-Full docs are in the [`docs/`](docs/) subdirectory. Start with the [overview](docs/overview.txt) or read [everything in one file](docs/llms-full.txt).
-
-For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory.
+For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory. For runnable examples, see [`examples/typescript/`](../../examples/typescript/).

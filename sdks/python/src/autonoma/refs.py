@@ -23,7 +23,7 @@ def verify_refs(token: str, secret: str) -> dict:
     header, body, signature = parts
     expected = _hmac_sign(f"{header}.{body}", secret)
 
-    if expected != signature:
+    if not hmac.compare_digest(expected, signature):
         raise ValueError("signature mismatch")
 
     return json.loads(_base64url_decode(body))

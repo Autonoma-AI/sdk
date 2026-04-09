@@ -16,9 +16,7 @@ require_relative "teardown"
 
 module Autonoma
   module Handler
-    PROTOCOL_VERSION = "1.0"
-
-    @introspection_cache = {}
+    PROTOCOL_VERSION = File.read(File.expand_path("../../../../protocol/version.txt", __dir__)).strip
 
     def self.handle_request(config, req)
       if config.shared_secret == config.signing_secret
@@ -62,8 +60,8 @@ module Autonoma
     end
 
     def self.get_introspection(config)
-      cache_key = config.object_id
-      return @introspection_cache[cache_key] if @introspection_cache.key?(cache_key)
+      cached = config.instance_variable_get(:@_introspection_cache)
+      return cached if cached
 
       dialect = Dialect.get_dialect(config.dialect)
       result = Introspect.introspect_database(
@@ -74,7 +72,7 @@ module Autonoma
         table_name_map: config.table_name_map,
         exclude_tables: config.exclude_tables
       )
-      @introspection_cache[cache_key] = result
+      config.instance_variable_set(:@_introspection_cache, result)
       result
     end
 

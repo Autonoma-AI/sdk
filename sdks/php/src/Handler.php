@@ -10,7 +10,15 @@ use Autonoma\Sdk\Types\IntrospectionResult;
 
 class Handler
 {
-    public const PROTOCOL_VERSION = '1.0';
+    public static string $PROTOCOL_VERSION = '';
+
+    public static function getProtocolVersion(): string
+    {
+        if (self::$PROTOCOL_VERSION === '') {
+            self::$PROTOCOL_VERSION = trim(file_get_contents(__DIR__ . '/../../../../protocol/version.txt'));
+        }
+        return self::$PROTOCOL_VERSION;
+    }
 
     /** @var array<int, IntrospectionResult> Cache introspection results per config */
     private static array $introspectionCache = [];
@@ -82,7 +90,7 @@ class Handler
     {
         $sdk = $config->sdk ?? [];
         return [
-            'version' => self::PROTOCOL_VERSION,
+            'version' => self::getProtocolVersion(),
             'sdk' => [
                 'language' => 'php',
                 'orm' => $sdk['orm'] ?? 'unknown',

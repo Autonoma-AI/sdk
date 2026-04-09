@@ -6,6 +6,8 @@ require "time"
 
 module Autonoma
   module Create
+    MYSQL_DATETIME_RE = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+
     # Create entities from a resolved spec. Spec maps model name -> {count, fields[], batch}.
     def self.create_entities(executor, dialect, table_map, column_maps, spec, enum_type_maps = {})
       enum_type_maps ||= {}
@@ -138,12 +140,16 @@ module Autonoma
         end
       end
 
-      field_names = fields_arr.first.keys
-      expected_fields = field_names.each_with_object({}) { |fn, h| h[fn] = true }
-      fields_arr.each_with_index do |fields, idx|
-        next if fields.length == field_names.length && fields.keys.all? { |fn| expected_fields.key?(fn) }
+      # Compute the union of keys across all rows in deterministic (sorted) order.
+      # Rows missing a key will use NULL.
+      field_names = fields_arr.each_with_object({}) { |f, set| f.each_key { |k| set[k] = true } }.keys.sort
 
-        raise "Inconsistent batch insert fields at row #{idx}: expected keys #{field_names.inspect}, got #{fields.keys.inspect}"
+      # If no fields at all, fall back to individual inserts
+      if field_names.empty?
+        return fields_arr.map do |fields|
+          rows = insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
+          rows.first
+        end.compact
       end
 
       db_cols_list = field_names.map { |f| dialect.quote_id(col_map[f] || f) }
@@ -246,7 +252,7 @@ module Autonoma
 
       # MySQL: convert ISO 8601 datetime strings
       if value.is_a?(String) && dialect.name == "mysql"
-        if value.match?(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+        if value.match?(MYSQL_DATETIME_RE)
           return value.gsub("T", " ").gsub("Z", "").gsub(/0+\z/, "").gsub(/\.\z/, "")
         end
       end

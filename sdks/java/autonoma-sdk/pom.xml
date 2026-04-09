@@ -14,6 +14,21 @@
     <name>Autonoma SDK Core</name>
     <description>Core Autonoma Environment Factory SDK for Java</description>
 
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.basedir}/../../../protocol</directory>
+                <includes>
+                    <include>version.txt</include>
+                </includes>
+                <targetPath>autonoma</targetPath>
+            </resource>
+        </resources>
+    </build>
+
     <dependencies>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

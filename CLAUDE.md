@@ -147,15 +147,15 @@ This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PH
 
 ### Breaking changes and versioning
 
-- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all eight handlers:
-  - TypeScript: `sdks/typescript/packages/sdk/src/handler.ts` → `PROTOCOL_VERSION`
-  - Python: `sdks/python/src/autonoma/handler.py` → `PROTOCOL_VERSION`
-  - Elixir: `sdks/elixir/lib/autonoma/handler.ex` → `@protocol_version`
-  - PHP: `sdks/php/src/Handler.php` → `PROTOCOL_VERSION`
-  - Java: `sdks/java/autonoma-sdk/src/main/java/ai/autonoma/sdk/AutonomaHandler.java` → `PROTOCOL_VERSION`
-  - Ruby: `sdks/ruby/lib/autonoma/handler.rb` → `PROTOCOL_VERSION`
-  - Rust: `sdks/rust/src/handler.rs` → `PROTOCOL_VERSION`
-  - Go: `sdks/go/autonoma/handler.go` → `ProtocolVersion`
+- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump the version in `protocol/version.txt`. All eight SDKs read from this single file:
+  - TypeScript: injected at build time via `define` in `tsup.config.ts` and `vitest.config.ts`
+  - Python: read at module load in `handler.py` via `pathlib`
+  - Elixir: compiled in via `@external_resource` + `File.read!` in `handler.ex`
+  - PHP: read at runtime in `Handler.php` via `file_get_contents`
+  - Java: included as a classpath resource via Maven and read in `AutonomaHandler.java`
+  - Ruby: read at require time in `handler.rb` via `File.read`
+  - Rust: compiled in via `include_str!` in `handler.rs`
+  - Go: generated via `go generate` into `protocol_version_gen.go`
 - Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
 
 ## Key Conventions
