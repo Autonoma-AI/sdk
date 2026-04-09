@@ -198,12 +198,39 @@ jobs:
         run: mix test --include postgres test/autonoma_ecto/postgres_integration_test.exs
 
   # ---------------------------------------------------------------------------
+  # Rust
+  # ---------------------------------------------------------------------------
+  rust:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdks/rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('sdks/rust/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - run: cargo build
+      - run: cargo test
+      - run: cargo build --features actix
+
+  # ---------------------------------------------------------------------------
   # Conformance (all languages must produce identical output)
   # ---------------------------------------------------------------------------
   conformance:
     name: Conformance Suite
     runs-on: ubuntu-latest
-    needs: [ts-unit, python, elixir]
+    needs: [ts-unit, python, elixir, rust]
     steps:
       - uses: actions/checkout@v4
 
@@ -247,6 +274,22 @@ jobs:
           mix local.rebar --force
           mix deps.get
           mix compile
+
+      # Rust (for Rust bridge)
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdks/rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('sdks/rust/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build Rust conformance bridge
+        working-directory: sdks/rust
+        run: cargo build --release --bin conformance_bridge
 
       # Install tsx globally for the conformance runner
       - name: Install tsx
