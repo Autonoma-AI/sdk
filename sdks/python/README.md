@@ -31,6 +31,9 @@ config = HandlerConfig(
     shared_secret="your-shared-secret",
     signing_secret="your-signing-secret",
     adapter=my_adapter,
+    auth=lambda user: {
+        "headers": {"Authorization": f"Bearer {create_session_token(user['id'])}"}
+    },
 )
 
 @app.post("/api/autonoma")

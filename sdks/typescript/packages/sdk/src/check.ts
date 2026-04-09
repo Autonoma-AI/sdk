@@ -47,7 +47,7 @@ export async function checkScenario(
     tableNameMap: options?.tableNameMap,
     sharedSecret,
     signingSecret,
-    auth: options?.auth ?? (async () => ({ token: 'check-token' })),
+    auth: options?.auth ?? (async () => ({ headers: { Authorization: 'Bearer check-token' } })),
   }
 
   // Up

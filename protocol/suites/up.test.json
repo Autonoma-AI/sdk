@@ -19,7 +19,7 @@
           "refsToken": "string"
         },
         "bodyAssertions": [
-          { "path": "auth.token", "type": "string" },
+          { "path": "auth", "type": "object" },
           { "path": "refsToken", "type": "string", "notEmpty": true }
         ]
       },

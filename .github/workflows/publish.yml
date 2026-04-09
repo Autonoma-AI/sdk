@@ -1,9 +1,9 @@
 name: Publish
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
 
 concurrency:
   group: publish
@@ -11,10 +11,39 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Gate: only publish tags that live on main
+  # ---------------------------------------------------------------------------
+  guard:
+    name: Verify tag is on main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check tagged commit is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME points to a commit not on main. Skipping publish."
+            exit 1
+          fi
+
+      - name: Create release branch
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          BRANCH_NAME="release/${TAG_NAME}"
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME"
+
+  # ---------------------------------------------------------------------------
   # TypeScript → npm
   # ---------------------------------------------------------------------------
   npm:
     name: Publish to npm
+    needs: guard
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,6 +86,7 @@ jobs:
   # ---------------------------------------------------------------------------
   pypi:
     name: Publish to PyPI
+    needs: guard
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -88,6 +118,7 @@ jobs:
   # ---------------------------------------------------------------------------
   hex:
     name: Publish to Hex
+    needs: guard
     runs-on: ubuntu-latest
     permissions:
       contents: read

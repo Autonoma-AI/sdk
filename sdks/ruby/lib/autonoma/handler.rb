@@ -226,8 +226,7 @@ module Autonoma
       scope_value = detect_scope_value(refs, schema.scope_field) || test_run_id
 
       first_user = find_first_user(refs)
-      auth = { "token" => "" }
-      auth = config.auth.call(first_user) if config.auth && first_user
+      auth = config.auth.call(first_user)
 
       refs_token = Refs.sign_refs(
         { "refs" => refs, "testRunId" => scope_value, "environment" => "" },

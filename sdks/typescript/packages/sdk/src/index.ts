@@ -25,6 +25,7 @@ export type {
   HandlerConfig,
   HandlerRequest,
   HandlerResponse,
+  AuthCookie,
   AuthResult,
   DiscoverResponse,
   UpResponse,

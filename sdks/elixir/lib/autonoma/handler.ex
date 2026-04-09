@@ -181,12 +181,7 @@ defmodule Autonoma.Handler do
     scope_value = detect_scope_value(refs, schema["scopeField"]) || test_run_id
 
     first_user = find_first_user(refs)
-    auth =
-      if config[:auth] && first_user do
-        config.auth.(first_user)
-      else
-        %{"token" => ""}
-      end
+    auth = config.auth.(first_user)
 
     refs_token = Refs.sign(
       %{"refs" => refs, "testRunId" => scope_value, "environment" => ""},
@@ -350,12 +345,8 @@ defmodule Autonoma.Handler do
         config.signing_secret
       )
 
-    auth =
-      if config[:auth] do
-        config.auth.(%{})
-      else
-        %{"token" => ""}
-      end
+    first_user = find_first_user(refs)
+    auth = config.auth.(first_user)
 
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"auth" => auth, "refs" => refs, "refsToken" => refs_token})}
   end

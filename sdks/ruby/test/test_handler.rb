@@ -50,7 +50,8 @@ class TestHandler < Minitest::Test
       executor: @executor,
       scope_field: "organizationId",
       shared_secret: "shared-secret",
-      signing_secret: "signing-secret"
+      signing_secret: "signing-secret",
+      auth: ->(user) { { "headers" => { "Authorization" => "Bearer test-token-#{user ? user['id'] : 'anon'}" } } }
     )
   end
 
@@ -68,7 +69,8 @@ class TestHandler < Minitest::Test
       executor: @executor,
       scope_field: "organizationId",
       shared_secret: "same-secret",
-      signing_secret: "same-secret"
+      signing_secret: "same-secret",
+      auth: ->(user) { { "headers" => {} } }
     )
     req = make_request({ "action" => "discover" }, "same-secret")
     result = Autonoma::Handler.handle_request(bad_config, req)
