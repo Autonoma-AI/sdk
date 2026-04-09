@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.7](https://github.com/Autonoma-AI/sdk/compare/v0.1.6...v0.1.7) (2026-04-09)
+
+
+### Features
+
+* add Rust SDK with Actix Web server adapter ([#18](https://github.com/Autonoma-AI/sdk/issues/18)) ([3cb2476](https://github.com/Autonoma-AI/sdk/commit/3cb2476311c9b90f6670ee132a37fbacc03dba54))
+
+
+### Bug Fixes
+
+* cross-SDK bugs from review (batch, refs, tinyint, cache, regex) ([#21](https://github.com/Autonoma-AI/sdk/issues/21)) ([7c3804c](https://github.com/Autonoma-AI/sdk/commit/7c3804c892eecfafbd4f8e4b06acb479d0e80ab0))
+
 ## [0.1.6](https://github.com/Autonoma-AI/sdk/compare/v0.1.5...v0.1.6) (2026-04-09)
 
 
