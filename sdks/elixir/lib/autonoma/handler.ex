@@ -6,7 +6,9 @@ defmodule Autonoma.Handler do
 
   alias Autonoma.{Error, HMAC, Refs, Dialect, Introspect, Tree, Create, TeardownSQL}
 
-  @protocol_version "1.0"
+  @protocol_version_file Path.expand("../../../../protocol/version.txt", __DIR__)
+  @external_resource @protocol_version_file
+  @protocol_version File.read!(@protocol_version_file) |> String.trim()
 
   # ---------------------------------------------------------------------------
   # Introspection cache (per config, stored in process dictionary)

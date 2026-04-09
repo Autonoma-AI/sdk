@@ -16,7 +16,7 @@ require_relative "teardown"
 
 module Autonoma
   module Handler
-    PROTOCOL_VERSION = "1.0"
+    PROTOCOL_VERSION = File.read(File.expand_path("../../../../protocol/version.txt", __dir__)).strip
 
     def self.handle_request(config, req)
       if config.shared_secret == config.signing_secret

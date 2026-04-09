@@ -4,6 +4,8 @@ import ai.autonoma.sdk.types.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 
@@ -13,7 +15,16 @@ import java.util.*;
  */
 public final class AutonomaHandler {
 
-    public static final String PROTOCOL_VERSION = "1.0";
+    public static final String PROTOCOL_VERSION = loadProtocolVersion();
+
+    private static String loadProtocolVersion() {
+        try (InputStream is = AutonomaHandler.class.getResourceAsStream("/autonoma/version.txt")) {
+            if (is == null) throw new IllegalStateException("protocol/version.txt not found on classpath");
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Failed to read protocol version", e);
+        }
+    }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Map<HandlerConfig, IntrospectionResult> introspectionCache =

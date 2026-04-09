@@ -115,12 +115,12 @@ This SDK exists in five languages: **TypeScript**, **Python**, **Elixir**, **Jav
 
 ### Breaking changes and versioning
 
-- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all five handlers:
-  - TypeScript: `sdks/typescript/packages/sdk/src/handler.ts` → `PROTOCOL_VERSION`
-  - Python: `sdks/python/src/autonoma/handler.py` → `PROTOCOL_VERSION`
-  - Elixir: `sdks/elixir/lib/autonoma/handler.ex` → `@protocol_version`
-  - Java: `sdks/java/autonoma-sdk/src/main/java/ai/autonoma/sdk/AutonomaHandler.java` → `PROTOCOL_VERSION`
-  - Ruby: `sdks/ruby/lib/autonoma/handler.rb` → `PROTOCOL_VERSION`
+- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump the version in `protocol/version.txt`. All five SDKs read from this single file:
+  - TypeScript: injected at build time via `define` in `tsup.config.ts` and `vitest.config.ts`
+  - Python: read at module load in `handler.py` via `pathlib`
+  - Elixir: compiled in via `@external_resource` + `File.read!` in `handler.ex`
+  - Java: included as a classpath resource via Maven and read in `AutonomaHandler.java`
+  - Ruby: read at require time in `handler.rb` via `File.read`
 - Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
 
 ## Key Conventions

@@ -32,7 +32,8 @@ async function getIntrospection(config: HandlerConfig): Promise<IntrospectionRes
   return cached
 }
 
-export const PROTOCOL_VERSION = '1.0'
+declare const __PROTOCOL_VERSION__: string
+export const PROTOCOL_VERSION = __PROTOCOL_VERSION__
 
 function buildSdkMeta(config: HandlerConfig): { version: string; sdk: SdkInfo } {
   return {

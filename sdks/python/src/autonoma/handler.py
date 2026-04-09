@@ -17,7 +17,11 @@ from .tree import resolve_tree
 from .create import create_entities, update_entity
 from .teardown import teardown
 
-PROTOCOL_VERSION = "1.0"
+from pathlib import Path as _Path
+
+PROTOCOL_VERSION = (
+    _Path(__file__).resolve().parents[4] / "protocol" / "version.txt"
+).read_text().strip()
 
 async def _get_introspection(config: HandlerConfig) -> IntrospectionResult:
     cached = getattr(config, "_introspection_cache", None)
