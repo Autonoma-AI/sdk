@@ -1,7 +1,7 @@
 {
   "name": "@autonoma-ai/sdk",
-  "version": "0.1.2",
-  "description": "Autonoma Environment Factory SDK — protocol layer",
+  "version": "0.1.3",
+  "description": "Autonoma Environment Factory SDK \u2014 protocol layer",
   "type": "module",
   "exports": {
     ".": {
@@ -18,7 +18,9 @@
   "bin": {
     "autonoma": "./dist/cli.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   },

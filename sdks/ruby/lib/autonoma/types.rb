@@ -2,7 +2,7 @@
 
 module Autonoma
   FieldInfo = Struct.new(:name, :type, :is_required, :is_id, :has_default, keyword_init: true)
-  ModelInfo = Struct.new(:name, :fields, keyword_init: true)
+  ModelInfo = Struct.new(:name, :table_name, :fields, keyword_init: true)
 
   FKEdge = Struct.new(:from_model, :to_model, :local_field, :foreign_field, :nullable, keyword_init: true)
 

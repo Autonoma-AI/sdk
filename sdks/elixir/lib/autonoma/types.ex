@@ -19,6 +19,7 @@ defmodule Autonoma.Types do
 
   @type model_info :: %{
           name: String.t(),
+          table_name: String.t(),
           fields: [field_info()]
         }
 

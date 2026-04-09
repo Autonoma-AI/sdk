@@ -66,7 +66,7 @@ class DjangoAdapter:
                             "nullable": getattr(field, "null", False),
                         })
 
-            models_info.append({"name": model.__name__, "fields": fields})
+            models_info.append({"name": model.__name__, "tableName": model._meta.db_table, "fields": fields})
 
         self._cached_schema = {
             "models": models_info,
