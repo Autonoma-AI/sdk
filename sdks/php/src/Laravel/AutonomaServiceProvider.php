@@ -26,7 +26,7 @@ class AutonomaServiceProvider extends ServiceProvider
                 tableNameMap: $config['table_name_map'] ?? null,
                 excludeTables: $config['exclude_tables'] ?? null,
                 allowProduction: $config['allow_production'] ?? false,
-                auth: $config['auth'] ?? null,
+                auth: $config['auth'] ?? throw new \RuntimeException('Autonoma SDK requires an "auth" callback in config/autonoma.php'),
                 sdk: ['orm' => 'eloquent'],
             );
         });

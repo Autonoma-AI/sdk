@@ -6,13 +6,13 @@ class HandlerConfig {
         public readonly string $scopeField,
         public readonly string $sharedSecret,
         public readonly string $signingSecret,
+        /** @var callable(?array): array */
+        public readonly mixed $auth,
         public readonly string $dialect = 'postgres',
         public readonly ?string $dbSchema = null,
         public readonly ?array $tableNameMap = null,
         public readonly ?array $excludeTables = null,
         public readonly bool $allowProduction = false,
         public /*readonly*/ ?array $sdk = null,
-        /** @var ?callable(array): array */
-        public readonly mixed $auth = null,
     ) {}
 }

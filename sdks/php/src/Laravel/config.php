@@ -41,7 +41,12 @@ return [
     // Middleware to apply to the Autonoma route
     'middleware' => [],
 
-    // Custom auth callback: receives first User record, returns auth object
-    // 'auth' => function (array $user) { return ['token' => '...']; },
+    // Auth callback (required) — receives first User record (or null), returns auth credentials.
+    // Supports three strategies: cookies, headers, or credentials.
+    // 'auth' => function (?array $user) {
+    //     return ['cookies' => [['name' => 'session', 'value' => '...']]];        // session cookies
+    //     return ['headers' => ['Authorization' => 'Bearer ...']];                 // bearer token
+    //     return ['credentials' => ['username' => '...', 'password' => '...']];    // username/password
+    // },
     'auth' => null,
 ];

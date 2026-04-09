@@ -18,6 +18,7 @@ class HandlerTest extends TestCase
             scopeField: 'organizationId',
             sharedSecret: 'test-shared-secret',
             signingSecret: 'test-signing-secret',
+            auth: fn($user) => ['credentials' => ['token' => 'test-token']],
         );
     }
 
@@ -78,6 +79,7 @@ class HandlerTest extends TestCase
             scopeField: 'organizationId',
             sharedSecret: 'same-secret',
             signingSecret: 'same-secret',
+            auth: fn($user) => ['credentials' => ['token' => 'test-token']],
         );
         $body = '{"action":"discover"}';
         $req = new HandlerRequest(

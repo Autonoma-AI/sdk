@@ -26,7 +26,7 @@ class Check
             dialect: $options['dialect'] ?? 'postgres',
             dbSchema: $options['dbSchema'] ?? null,
             tableNameMap: $options['tableNameMap'] ?? null,
-            auth: $options['auth'] ?? fn($u) => ['token' => 'check-token'],
+            auth: $options['auth'] ?? fn($u) => ['credentials' => ['token' => 'check-token']],
         );
 
         // Up
