@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/Autonoma-AI/sdk/compare/v0.1.4...v0.1.5) (2026-04-09)
+
+
+### Features
+
+* add Java SDK with Spring Boot server adapter ([#7](https://github.com/Autonoma-AI/sdk/issues/7)) ([2d6bcbb](https://github.com/Autonoma-AI/sdk/commit/2d6bcbbfe21ca08cc164fbfe6c50c79d9a49328f))
+
 ## [0.1.4](https://github.com/Autonoma-AI/sdk/compare/v0.1.3...v0.1.4) (2026-04-08)
 
 
