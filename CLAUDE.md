@@ -19,6 +19,7 @@ root/
     php/                # PHP/Laravel SDK (composer)
     java/               # Java SDK (Maven multi-module)
     ruby/               # Ruby SDK (gemspec)
+    rust/               # Rust SDK (Cargo, features: actix, sqlx-postgres)
     go/                 # Go SDK (go module)
 ```
 
@@ -70,6 +71,16 @@ cd sdks/ruby
 ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_template.rb test/test_graph.rb test/test_handler.rb test/test_create.rb
 ```
 
+### Rust
+```bash
+cd sdks/rust
+cargo build && cargo test                     # full build + test
+cargo test -- hmac                            # tests matching a name pattern
+cargo build --features actix                  # build with Actix Web adapter
+cargo build --features axum                   # build with Axum adapter
+cargo build --features sqlx-postgres          # build with SQLx Postgres adapter
+```
+
 ### Go
 ```bash
 cd sdks/go
@@ -111,6 +122,7 @@ All language SDKs implement the same protocol with the same core modules:
 | PHP | Eloquent (raw SQL) | Laravel |
 | Java | JDBC | Spring Boot (Spring MVC) |
 | Ruby | ActiveRecord | Rails |
+| Rust | SQLx | Actix Web, Axum |
 | Go | database/sql | Gin |
 
 ### Protocol Versioning
@@ -125,12 +137,12 @@ Every response (discover/up/down) includes:
 
 ## Multi-Language Rules
 
-This SDK exists in seven languages: **TypeScript**, **Python**, **Elixir**, **PHP**, **Java**, **Ruby**, and **Go**. They are independent implementations that must behave identically, verified by the shared conformance suite.
+This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PHP**, **Java**, **Ruby**, **Rust**, and **Go**. They are independent implementations that must behave identically, verified by the shared conformance suite.
 
 ### Adding features or fixing bugs
 
-- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all seven languages**.
-- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all seven pass: `cd conformance && npx tsx run.ts`.
+- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all eight languages**.
+- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all eight pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
 
 ### Breaking changes and versioning
@@ -142,6 +154,7 @@ This SDK exists in seven languages: **TypeScript**, **Python**, **Elixir**, **PH
   - Java: included as a classpath resource via Maven and read in `AutonomaHandler.java`
   - Ruby: read at require time in `handler.rb` via `File.read`
   - PHP: `sdks/php/src/Handler.php` → `PROTOCOL_VERSION` (not yet wired to `protocol/version.txt`)
+  - Rust: `sdks/rust/src/handler.rs` → `PROTOCOL_VERSION` (not yet wired to `protocol/version.txt`)
   - Go: `sdks/go/autonoma/handler.go` → `ProtocolVersion` (not yet wired to `protocol/version.txt`)
 - Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
 
@@ -153,6 +166,7 @@ This SDK exists in seven languages: **TypeScript**, **Python**, **Elixir**, **PH
 - PHP: PSR-4 autoloading, Composer (composer.json), Laravel service provider auto-discovery
 - Java: Maven multi-module, Java 17+, records for data types, Spring Boot 3.x for server adapter
 - Ruby: gemspec with no hard runtime dependencies (stdlib only), ActiveRecord/Rails as optional adapters
+- Rust: Cargo crate with optional feature flags (`actix`, `axum`, `sqlx-postgres`, `sqlx-mysql`), async-trait for executor abstraction
 - Go: standard Go module, `database/sql` executor adapter, Gin server adapter
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites
 - Protocol responses include `version` and `sdk` metadata for traceability

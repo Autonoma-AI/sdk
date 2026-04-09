@@ -40,3 +40,6 @@ __pycache__/
 *.egg-info/
 .venv/
 *.egg
+
+# Rust build artifacts
+sdks/rust/target/
