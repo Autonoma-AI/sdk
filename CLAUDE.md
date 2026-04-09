@@ -19,6 +19,7 @@ root/
     php/                # PHP/Laravel SDK (composer)
     java/               # Java SDK (Maven multi-module)
     ruby/               # Ruby SDK (gemspec)
+    go/                 # Go SDK (go module)
 ```
 
 ## Commands
@@ -69,6 +70,14 @@ cd sdks/ruby
 ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_template.rb test/test_graph.rb test/test_handler.rb test/test_create.rb
 ```
 
+### Go
+```bash
+cd sdks/go
+go test ./autonoma/ -v               # run all tests
+go test ./autonoma/ -run TestSignBody # single test
+go build ./autonoma/                  # build check
+```
+
 ### Conformance (all languages)
 ```bash
 cd conformance && npx tsx run.ts
@@ -102,6 +111,7 @@ All language SDKs implement the same protocol with the same core modules:
 | PHP | Eloquent (raw SQL) | Laravel |
 | Java | JDBC | Spring Boot (Spring MVC) |
 | Ruby | ActiveRecord | Rails |
+| Go | database/sql | Gin |
 
 ### Protocol Versioning
 
@@ -115,23 +125,24 @@ Every response (discover/up/down) includes:
 
 ## Multi-Language Rules
 
-This SDK exists in six languages: **TypeScript**, **Python**, **Elixir**, **PHP**, **Java**, and **Ruby**. They are independent implementations that must behave identically, verified by the shared conformance suite.
+This SDK exists in seven languages: **TypeScript**, **Python**, **Elixir**, **PHP**, **Java**, **Ruby**, and **Go**. They are independent implementations that must behave identically, verified by the shared conformance suite.
 
 ### Adding features or fixing bugs
 
-- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all six languages**.
-- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all six pass: `cd conformance && npx tsx run.ts`.
+- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all seven languages**.
+- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all seven pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
 
 ### Breaking changes and versioning
 
-- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all six handlers:
+- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all seven handlers:
   - TypeScript: `sdks/typescript/packages/sdk/src/handler.ts` → `PROTOCOL_VERSION`
   - Python: `sdks/python/src/autonoma/handler.py` → `PROTOCOL_VERSION`
   - Elixir: `sdks/elixir/lib/autonoma/handler.ex` → `@protocol_version`
   - PHP: `sdks/php/src/Handler.php` → `PROTOCOL_VERSION`
   - Java: `sdks/java/autonoma-sdk/src/main/java/ai/autonoma/sdk/AutonomaHandler.java` → `PROTOCOL_VERSION`
   - Ruby: `sdks/ruby/lib/autonoma/handler.rb` → `PROTOCOL_VERSION`
+  - Go: `sdks/go/autonoma/handler.go` → `ProtocolVersion`
 - Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
 
 ## Key Conventions
@@ -142,5 +153,6 @@ This SDK exists in six languages: **TypeScript**, **Python**, **Elixir**, **PHP*
 - PHP: PSR-4 autoloading, Composer (composer.json), Laravel service provider auto-discovery
 - Java: Maven multi-module, Java 17+, records for data types, Spring Boot 3.x for server adapter
 - Ruby: gemspec with no hard runtime dependencies (stdlib only), ActiveRecord/Rails as optional adapters
+- Go: standard Go module, `database/sql` executor adapter, Gin server adapter
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites
 - Protocol responses include `version` and `sdk` metadata for traceability

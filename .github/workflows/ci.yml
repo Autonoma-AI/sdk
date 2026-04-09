@@ -312,6 +312,17 @@ jobs:
           mix deps.get
           mix compile
 
+      # Go (for Go bridge)
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: sdks/go/go.sum
+
+      # Build Go conformance bridge binary
+      - name: Build Go conformance bridge
+        working-directory: sdks/go
+        run: go build -o bridges/conformance_bridge ./bridges/
+
       # Build Java conformance bridge fat JAR
       - name: Build Java conformance bridge
         working-directory: sdks/java

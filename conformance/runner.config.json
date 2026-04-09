@@ -31,6 +31,11 @@
       "command": "ruby",
       "args": ["-Ilib", "bridges/conformance_bridge.rb"],
       "cwd": "../sdks/ruby"
+    },
+    "go": {
+      "command": "./bridges/conformance_bridge",
+      "args": [],
+      "cwd": "../sdks/go"
     }
   }
 }
