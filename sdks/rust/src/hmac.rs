@@ -19,7 +19,7 @@ pub fn verify_signature(body: &str, signature: &str, secret: &str) -> bool {
     constant_time_eq(expected.as_bytes(), signature.as_bytes())
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

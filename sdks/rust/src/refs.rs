@@ -29,7 +29,7 @@ pub fn verify_refs(token: &str, secret: &str) -> Result<Value, String> {
     let (header, body, signature) = (parts[0], parts[1], parts[2]);
     let expected = hmac_sign(&format!("{}.{}", header, body), secret);
 
-    if expected != signature {
+    if !crate::hmac::constant_time_eq(expected.as_bytes(), signature.as_bytes()) {
         return Err("signature mismatch".to_string());
     }
 

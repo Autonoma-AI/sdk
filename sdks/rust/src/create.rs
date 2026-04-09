@@ -1,8 +1,13 @@
 //! Create entities via raw SQL INSERT.
 
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::LazyLock;
 use uuid::Uuid;
+
+static MYSQL_DATETIME_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}").unwrap()
+});
 
 use crate::dialect::Dialect;
 use crate::types::SqlExecutor;
@@ -239,7 +244,25 @@ async fn insert_batch(
         })
         .collect();
 
-    let field_names: Vec<String> = fields_arr[0].keys().cloned().collect();
+    // Compute union of keys across all rows in deterministic (sorted) order
+    let field_set: BTreeSet<String> = fields_arr
+        .iter()
+        .flat_map(|f| f.keys().cloned())
+        .collect();
+    let field_names: Vec<String> = field_set.into_iter().collect();
+
+    // If no fields at all, fall back to individual DEFAULT VALUES inserts
+    if field_names.is_empty() {
+        let mut all_results: Vec<HashMap<String, Value>> = Vec::new();
+        for _ in fields_arr {
+            let rows = insert_one(executor, dialect, db_table, col_map, enum_type_map, &HashMap::new()).await?;
+            if let Some(row) = rows.into_iter().next() {
+                all_results.push(row);
+            }
+        }
+        return Ok(all_results);
+    }
+
     let db_cols_list: Vec<String> = field_names
         .iter()
         .map(|f| dialect.quote_id(col_map.get(f).unwrap_or(f)))
@@ -355,8 +378,7 @@ fn serialize_value(value: &Value, dialect: &dyn Dialect) -> Value {
         Value::String(s) => {
             // MySQL: convert ISO 8601 datetime strings
             if dialect.name() == "mysql" {
-                let re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}").unwrap();
-                if re.is_match(s) {
+                if MYSQL_DATETIME_RE.is_match(s) {
                     let converted = s
                         .replace('T', " ")
                         .replace('Z', "")
