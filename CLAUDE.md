@@ -16,8 +16,10 @@ root/
     typescript/         # TypeScript SDK (pnpm/turbo monorepo)
     elixir/             # Elixir SDK (mix project)
     python/             # Python SDK (pyproject.toml)
+    php/                # PHP/Laravel SDK (composer)
     java/               # Java SDK (Maven multi-module)
     ruby/               # Ruby SDK (gemspec)
+    go/                 # Go SDK (go module)
 ```
 
 ## Commands
@@ -45,6 +47,14 @@ poetry run pytest tests/test_sqlalchemy_adapter.py  # single test file
 poetry run pytest -k "sqlalchemy"                   # tests matching pattern
 ```
 
+### PHP/Laravel
+```bash
+cd sdks/php
+composer install && ./vendor/bin/phpunit         # full install + test
+./vendor/bin/phpunit tests/HmacTest.php          # single test file
+./vendor/bin/phpunit --filter "HMAC"             # tests matching a name pattern
+```
+
 ### Java
 ```bash
 cd sdks/java
@@ -58,6 +68,14 @@ mvn package -DskipTests                    # build JARs (including conformance b
 ```bash
 cd sdks/ruby
 ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_template.rb test/test_graph.rb test/test_handler.rb test/test_create.rb
+```
+
+### Go
+```bash
+cd sdks/go
+go test ./autonoma/ -v               # run all tests
+go test ./autonoma/ -run TestSignBody # single test
+go build ./autonoma/                  # build check
 ```
 
 ### Conformance (all languages)
@@ -90,8 +108,10 @@ All language SDKs implement the same protocol with the same core modules:
 | TypeScript | Prisma, Drizzle | Express, Web (Next/Hono/Deno), Node HTTP |
 | Python | SQLAlchemy, Django | FastAPI, Flask, Django |
 | Elixir | Ecto | Plug (Phoenix) |
+| PHP | Eloquent (raw SQL) | Laravel |
 | Java | JDBC | Spring Boot (Spring MVC) |
 | Ruby | ActiveRecord | Rails |
+| Go | database/sql | Gin |
 
 ### Protocol Versioning
 
@@ -105,22 +125,24 @@ Every response (discover/up/down) includes:
 
 ## Multi-Language Rules
 
-This SDK exists in five languages: **TypeScript**, **Python**, **Elixir**, **Java**, and **Ruby**. They are independent implementations that must behave identically, verified by the shared conformance suite.
+This SDK exists in seven languages: **TypeScript**, **Python**, **Elixir**, **PHP**, **Java**, **Ruby**, and **Go**. They are independent implementations that must behave identically, verified by the shared conformance suite.
 
 ### Adding features or fixing bugs
 
-- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all five languages**.
-- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all five pass: `cd conformance && npx tsx run.ts`.
+- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all seven languages**.
+- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all seven pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
 
 ### Breaking changes and versioning
 
-- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump the version in `protocol/version.txt`. All five SDKs read from this single file:
+- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump the version in `protocol/version.txt`. SDKs that already read from this file do so automatically; for newly added SDKs, wire them up to read from the same file:
   - TypeScript: injected at build time via `define` in `tsup.config.ts` and `vitest.config.ts`
   - Python: read at module load in `handler.py` via `pathlib`
   - Elixir: compiled in via `@external_resource` + `File.read!` in `handler.ex`
   - Java: included as a classpath resource via Maven and read in `AutonomaHandler.java`
   - Ruby: read at require time in `handler.rb` via `File.read`
+  - PHP: `sdks/php/src/Handler.php` → `PROTOCOL_VERSION` (not yet wired to `protocol/version.txt`)
+  - Go: `sdks/go/autonoma/handler.go` → `ProtocolVersion` (not yet wired to `protocol/version.txt`)
 - Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
 
 ## Key Conventions
@@ -128,7 +150,9 @@ This SDK exists in five languages: **TypeScript**, **Python**, **Elixir**, **Jav
 - TypeScript: ESM-only, `verbatimModuleSyntax`, no `.js` extensions in imports
 - Elixir: standard mix project conventions
 - Python: src layout, Poetry (pyproject.toml), extras for adapters (`autonoma-sdk[sqlalchemy]`, `autonoma-sdk[fastapi]`, etc.)
+- PHP: PSR-4 autoloading, Composer (composer.json), Laravel service provider auto-discovery
 - Java: Maven multi-module, Java 17+, records for data types, Spring Boot 3.x for server adapter
 - Ruby: gemspec with no hard runtime dependencies (stdlib only), ActiveRecord/Rails as optional adapters
+- Go: standard Go module, `database/sql` executor adapter, Gin server adapter
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites
 - Protocol responses include `version` and `sdk` metadata for traceability

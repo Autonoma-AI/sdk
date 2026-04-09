@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.6](https://github.com/Autonoma-AI/sdk/compare/v0.1.5...v0.1.6) (2026-04-09)
+
+
+### Features
+
+* add Go SDK with Gin server adapter ([#14](https://github.com/Autonoma-AI/sdk/issues/14)) ([38704b3](https://github.com/Autonoma-AI/sdk/commit/38704b3fd0d4bf3c4da0a0b95789bc9504343b12))
+* add PHP/Laravel SDK ([#8](https://github.com/Autonoma-AI/sdk/issues/8)) ([687a22c](https://github.com/Autonoma-AI/sdk/commit/687a22c6ecc69bf6d54a4ee54b45f393e71a0e42))
+
 ## [0.1.5](https://github.com/Autonoma-AI/sdk/compare/v0.1.4...v0.1.5) (2026-04-09)
 
 
