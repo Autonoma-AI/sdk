@@ -36,7 +36,7 @@ actix-rt = { version = "2", optional = true }
 axum = { version = "0.8", optional = true }
 
 # SQLx (optional)
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "mysql"], optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "mysql", "json"], optional = true }
 
 [[bin]]
 name = "conformance_bridge"
