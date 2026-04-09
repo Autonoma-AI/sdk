@@ -170,6 +170,8 @@ jobs:
     name: Elixir Integration Tests (Postgres)
     runs-on: ubuntu-latest
     needs: elixir
+    env:
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     defaults:
       run:
         working-directory: sdks/elixir
