@@ -1,0 +1,121 @@
+package ai.autonoma.sdk;
+
+/**
+ * SQL query templates for database introspection.
+ * Mirrors the generated sql-queries from the TypeScript SDK.
+ */
+public final class SqlQueries {
+
+    private SqlQueries() {}
+
+    public static final String POSTGRES_TABLES = """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = '{{schema}}'
+          AND table_type = 'BASE TABLE'
+        ORDER BY table_name""";
+
+    public static final String POSTGRES_COLUMNS = """
+        SELECT
+          table_name,
+          column_name,
+          data_type,
+          udt_name,
+          is_nullable,
+          column_default
+        FROM information_schema.columns
+        WHERE table_schema = '{{schema}}'
+        ORDER BY table_name, ordinal_position""";
+
+    public static final String POSTGRES_PRIMARY_KEYS = """
+        SELECT
+          tc.table_name,
+          kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.table_schema = kcu.table_schema
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema = '{{schema}}'
+        ORDER BY tc.table_name, kcu.ordinal_position""";
+
+    public static final String POSTGRES_FOREIGN_KEYS = """
+        SELECT
+          kcu.table_name AS from_table,
+          kcu.column_name AS from_column,
+          ccu.table_name AS to_table,
+          ccu.column_name AS to_column,
+          c.is_nullable
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_name = ccu.constraint_name
+          AND tc.table_schema = ccu.table_schema
+        LEFT JOIN information_schema.columns c
+          ON c.table_schema = kcu.table_schema
+          AND c.table_name = kcu.table_name
+          AND c.column_name = kcu.column_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = '{{schema}}'
+        ORDER BY kcu.table_name, kcu.ordinal_position""";
+
+    public static final String POSTGRES_ENUMS = """
+        SELECT t.typname AS enum_name, e.enumlabel AS enum_value
+        FROM pg_type t
+        JOIN pg_enum e ON t.oid = e.enumtypid
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        ORDER BY t.typname, e.enumsortorder""";
+
+    public static final String MYSQL_TABLES = """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = '{{schema}}'
+          AND table_type = 'BASE TABLE'
+        ORDER BY table_name""";
+
+    public static final String MYSQL_COLUMNS = """
+        SELECT
+          table_name,
+          column_name,
+          data_type,
+          column_type AS udt_name,
+          is_nullable,
+          column_default
+        FROM information_schema.columns
+        WHERE table_schema = '{{schema}}'
+        ORDER BY table_name, ordinal_position""";
+
+    public static final String MYSQL_PRIMARY_KEYS = """
+        SELECT
+          tc.table_name,
+          kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.table_schema = kcu.table_schema
+          AND tc.table_name = kcu.table_name
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema = '{{schema}}'
+        ORDER BY tc.table_name, kcu.ordinal_position""";
+
+    public static final String MYSQL_FOREIGN_KEYS = """
+        SELECT
+          kcu.table_name AS from_table,
+          kcu.column_name AS from_column,
+          kcu.referenced_table_name AS to_table,
+          kcu.referenced_column_name AS to_column,
+          c.is_nullable
+        FROM information_schema.key_column_usage kcu
+        JOIN information_schema.columns c
+          ON c.table_schema = kcu.table_schema
+          AND c.table_name = kcu.table_name
+          AND c.column_name = kcu.column_name
+        WHERE kcu.referenced_table_name IS NOT NULL
+          AND kcu.table_schema = '{{schema}}'
+        ORDER BY kcu.table_name, kcu.ordinal_position""";
+
+    public static final String MYSQL_ENUMS =
+        "SELECT NULL AS enum_name, NULL AS enum_value FROM DUAL WHERE 1 = 0";
+}

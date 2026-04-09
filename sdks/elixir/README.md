@@ -34,7 +34,11 @@ end
 config = %{
   shared_secret: System.get_env("AUTONOMA_SHARED_SECRET"),
   signing_secret: System.get_env("AUTONOMA_SIGNING_SECRET"),
-  adapter: MyApp.AutonomaAdapter
+  adapter: MyApp.AutonomaAdapter,
+  auth: fn user ->
+    token = MyApp.Auth.create_session_token(user["id"])
+    %{"headers" => %{"Authorization" => "Bearer #{token}"}}
+  end
 }
 
 plug Autonoma.Plug.Handler, config

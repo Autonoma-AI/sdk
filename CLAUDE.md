@@ -16,6 +16,7 @@ root/
     typescript/         # TypeScript SDK (pnpm/turbo monorepo)
     elixir/             # Elixir SDK (mix project)
     python/             # Python SDK (pyproject.toml)
+    java/               # Java SDK (Maven multi-module)
     ruby/               # Ruby SDK (gemspec)
     go/                 # Go SDK (go module)
 ```
@@ -43,6 +44,15 @@ cd sdks/python
 poetry install --all-extras && poetry run pytest   # full install + test
 poetry run pytest tests/test_sqlalchemy_adapter.py  # single test file
 poetry run pytest -k "sqlalchemy"                   # tests matching pattern
+```
+
+### Java
+```bash
+cd sdks/java
+mvn compile                               # compile all modules
+mvn test                                   # run all tests
+mvn test -pl autonoma-sdk                  # test only core SDK
+mvn package -DskipTests                    # build JARs (including conformance bridge)
 ```
 
 ### Ruby
@@ -89,6 +99,7 @@ All language SDKs implement the same protocol with the same core modules:
 | TypeScript | Prisma, Drizzle | Express, Web (Next/Hono/Deno), Node HTTP |
 | Python | SQLAlchemy, Django | FastAPI, Flask, Django |
 | Elixir | Ecto | Plug (Phoenix) |
+| Java | JDBC | Spring Boot (Spring MVC) |
 | Ruby | ActiveRecord | Rails |
 | Go | database/sql | Gin |
 
@@ -104,20 +115,21 @@ Every response (discover/up/down) includes:
 
 ## Multi-Language Rules
 
-This SDK exists in five languages: **TypeScript**, **Python**, **Elixir**, **Ruby**, and **Go**. They are independent implementations that must behave identically, verified by the shared conformance suite.
+This SDK exists in six languages: **TypeScript**, **Python**, **Elixir**, **Java**, **Ruby**, and **Go**. They are independent implementations that must behave identically, verified by the shared conformance suite.
 
 ### Adding features or fixing bugs
 
-- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all five languages**.
-- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all five pass: `cd conformance && npx tsx run.ts`.
+- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all six languages**.
+- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all six pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
 
 ### Breaking changes and versioning
 
-- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all five handlers:
+- If a change is **backwards-incompatible** (changes request/response format, removes a field, alters signing behavior), bump `PROTOCOL_VERSION` in all six handlers:
   - TypeScript: `sdks/typescript/packages/sdk/src/handler.ts` → `PROTOCOL_VERSION`
   - Python: `sdks/python/src/autonoma/handler.py` → `PROTOCOL_VERSION`
   - Elixir: `sdks/elixir/lib/autonoma/handler.ex` → `@protocol_version`
+  - Java: `sdks/java/autonoma-sdk/src/main/java/ai/autonoma/sdk/AutonomaHandler.java` → `PROTOCOL_VERSION`
   - Ruby: `sdks/ruby/lib/autonoma/handler.rb` → `PROTOCOL_VERSION`
   - Go: `sdks/go/autonoma/handler.go` → `ProtocolVersion`
 - Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
@@ -127,6 +139,7 @@ This SDK exists in five languages: **TypeScript**, **Python**, **Elixir**, **Rub
 - TypeScript: ESM-only, `verbatimModuleSyntax`, no `.js` extensions in imports
 - Elixir: standard mix project conventions
 - Python: src layout, Poetry (pyproject.toml), extras for adapters (`autonoma-sdk[sqlalchemy]`, `autonoma-sdk[fastapi]`, etc.)
+- Java: Maven multi-module, Java 17+, records for data types, Spring Boot 3.x for server adapter
 - Ruby: gemspec with no hard runtime dependencies (stdlib only), ActiveRecord/Rails as optional adapters
 - Go: standard Go module, `database/sql` executor adapter, Gin server adapter
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites

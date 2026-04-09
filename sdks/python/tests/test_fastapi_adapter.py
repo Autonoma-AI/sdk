@@ -30,6 +30,7 @@ def _make_config() -> HandlerConfig:
         scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,
+        auth=lambda user: {"headers": {"Authorization": "Bearer test-token"}},
     )
 
 

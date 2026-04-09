@@ -26,7 +26,7 @@ app.post('/api/autonoma', createExpressHandler({
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
   auth: async (user) => {
     const session = await createSession(user.id as string)
-    return { token: session.token }
+    return { headers: { Authorization: `Bearer ${session.token}` } }
   },
 }))
 ```
@@ -49,7 +49,7 @@ app.post('/api/autonoma', async (req, reply) => {
 
 ## Auth callback
 
-The `auth` callback receives the first `User` created during setup and must return real credentials that the test runner can use to log in:
+The `auth` callback receives the first `User` record created during setup (or `null` if no User model exists) and must return credentials for the test runner to authenticate:
 
 ```typescript
 // Session cookie
@@ -63,7 +63,12 @@ auth: async (user) => {
 // Bearer token
 auth: async (user) => {
   const token = jwt.sign({ sub: user.id }, SECRET)
-  return { token }
+  return { headers: { Authorization: `Bearer ${token}` } }
+}
+
+// Username + password (for login-page flows)
+auth: async (user) => {
+  return { credentials: { email: user.email as string, password: 'TestP@ssw0rd123!' } }
 }
 ```
 
