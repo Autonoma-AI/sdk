@@ -47,6 +47,7 @@ fn make_config() -> HandlerConfig {
             orm: "sqlx".to_string(),
             server: "actix".to_string(),
         }),
+        introspection_cache: tokio::sync::OnceCell::new(),
     }
 }
 

@@ -3,7 +3,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::create::{create_entities, update_entity};
@@ -18,39 +17,23 @@ use crate::types::{HandlerConfig, HandlerRequest, HandlerResponse, Introspection
 
 pub const PROTOCOL_VERSION: &str = "1.0";
 
-// Cache introspection results per config pointer
-static INTROSPECTION_CACHE: Mutex<Option<HashMap<usize, IntrospectionResult>>> =
-    Mutex::new(None);
-
 async fn get_introspection(config: &HandlerConfig) -> Result<IntrospectionResult, String> {
-    let cache_key = config as *const HandlerConfig as usize;
-    {
-        let guard = INTROSPECTION_CACHE.lock().unwrap();
-        if let Some(ref cache) = *guard {
-            if let Some(result) = cache.get(&cache_key) {
-                return Ok(result.clone());
-            }
-        }
-    }
-
-    let dialect = get_dialect(&config.dialect);
-    let result = introspect_database(
-        config.executor.as_ref(),
-        dialect.as_ref(),
-        &config.scope_field,
-        config.db_schema.as_deref(),
-        config.table_name_map.as_ref(),
-        config.exclude_tables.as_deref(),
-    )
-    .await?;
-
-    {
-        let mut guard = INTROSPECTION_CACHE.lock().unwrap();
-        let cache = guard.get_or_insert_with(HashMap::new);
-        cache.insert(cache_key, result.clone());
-    }
-
-    Ok(result)
+    config
+        .introspection_cache
+        .get_or_try_init(|| async {
+            let dialect = get_dialect(&config.dialect);
+            introspect_database(
+                config.executor.as_ref(),
+                dialect.as_ref(),
+                &config.scope_field,
+                config.db_schema.as_deref(),
+                config.table_name_map.as_ref(),
+                config.exclude_tables.as_deref(),
+            )
+            .await
+        })
+        .await
+        .cloned()
 }
 
 fn build_sdk_meta(config: &HandlerConfig) -> Value {

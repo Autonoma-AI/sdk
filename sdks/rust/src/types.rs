@@ -88,6 +88,9 @@ pub struct HandlerConfig {
     pub exclude_tables: Option<Vec<String>>,
     pub allow_production: bool,
     pub sdk: Option<SdkMeta>,
+    /// Cached introspection result (populated on first request).
+    /// Initialize with `tokio::sync::OnceCell::new()`.
+    pub introspection_cache: tokio::sync::OnceCell<IntrospectionResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
