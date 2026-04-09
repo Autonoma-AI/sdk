@@ -8,12 +8,14 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@SuppressWarnings("unused")
+
 class AutonomaHandlerTest {
 
     @Test
     void handleRequest_invalidSignature() {
         HandlerConfig config = new HandlerConfig(
-            dummyExecutor(), "orgId", "shared", "signing"
+            dummyExecutor(), "orgId", "shared", "signing", dummyAuth()
         );
         HandlerRequest req = new HandlerRequest(
             "{\"action\":\"discover\"}",
@@ -27,7 +29,7 @@ class AutonomaHandlerTest {
     @Test
     void handleRequest_sameSecrets() {
         HandlerConfig config = new HandlerConfig(
-            dummyExecutor(), "orgId", "same", "same"
+            dummyExecutor(), "orgId", "same", "same", dummyAuth()
         );
         HandlerRequest req = new HandlerRequest("{}", Map.of());
         HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
@@ -42,7 +44,7 @@ class AutonomaHandlerTest {
         String sig = HmacUtil.signBody(body, secret);
 
         HandlerConfig config = new HandlerConfig(
-            dummyExecutor(), "orgId", secret, "signing-secret"
+            dummyExecutor(), "orgId", secret, "signing-secret", dummyAuth()
         );
         HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
         HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
@@ -57,7 +59,7 @@ class AutonomaHandlerTest {
         String sig = HmacUtil.signBody(body, secret);
 
         HandlerConfig config = new HandlerConfig(
-            dummyExecutor(), "orgId", secret, "signing-secret"
+            dummyExecutor(), "orgId", secret, "signing-secret", dummyAuth()
         );
         HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
         HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
@@ -72,12 +74,16 @@ class AutonomaHandlerTest {
         String sig = HmacUtil.signBody(body, secret);
 
         HandlerConfig config = new HandlerConfig(
-            dummyExecutor(), "orgId", secret, "signing-secret"
+            dummyExecutor(), "orgId", secret, "signing-secret", dummyAuth()
         );
         HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
         HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
         assertEquals(400, resp.status());
         assertEquals("INVALID_BODY", resp.body().get("code"));
+    }
+
+    private Function<Map<String, Object>, AuthResult> dummyAuth() {
+        return user -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer test-token"));
     }
 
     private SQLExecutor dummyExecutor() {

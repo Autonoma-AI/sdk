@@ -242,11 +242,8 @@ public final class AutonomaHandler {
         if (scopeValue == null) scopeValue = testRunId;
 
         Map<String, Object> firstUser = findFirstUser(refs);
-        Map<String, Object> auth = new LinkedHashMap<>();
-        auth.put("token", "");
-        if (config.getAuth() != null && firstUser != null) {
-            auth = config.getAuth().apply(firstUser);
-        }
+        AuthResult authResult = config.getAuth().apply(firstUser);
+        Map<String, Object> auth = serializeAuthResult(authResult);
 
         String refsToken = RefsUtil.signRefs(
             Map.of("refs", refs, "testRunId", scopeValue, "environment", ""),
@@ -358,5 +355,28 @@ public final class AutonomaHandler {
         schemaDict.put("relations", relationsList);
         schemaDict.put("scopeField", schema.scopeField());
         return schemaDict;
+    }
+
+    private static Map<String, Object> serializeAuthResult(AuthResult result) {
+        Map<String, Object> auth = new LinkedHashMap<>();
+        if (result.cookies() != null) {
+            List<Map<String, Object>> cookiesList = new ArrayList<>();
+            for (AuthCookie c : result.cookies()) {
+                Map<String, Object> cm = new LinkedHashMap<>();
+                cm.put("name", c.name());
+                cm.put("value", c.value());
+                if (c.httpOnly() != null) cm.put("httpOnly", c.httpOnly());
+                if (c.sameSite() != null) cm.put("sameSite", c.sameSite());
+                if (c.path() != null) cm.put("path", c.path());
+                if (c.domain() != null) cm.put("domain", c.domain());
+                if (c.secure() != null) cm.put("secure", c.secure());
+                if (c.maxAge() != null) cm.put("maxAge", c.maxAge());
+                cookiesList.add(cm);
+            }
+            auth.put("cookies", cookiesList);
+        }
+        if (result.headers() != null) auth.put("headers", result.headers());
+        if (result.credentials() != null) auth.put("credentials", result.credentials());
+        return auth;
     }
 }

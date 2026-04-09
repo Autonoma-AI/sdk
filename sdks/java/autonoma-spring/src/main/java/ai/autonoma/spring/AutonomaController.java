@@ -27,7 +27,8 @@ import java.util.Map;
  *     @Bean
  *     public AutonomaController autonomaController(DataSource dataSource) {
  *         SQLExecutor executor = new JdbcSQLExecutor(dataSource);
- *         HandlerConfig config = new HandlerConfig(executor, "organizationId", sharedSecret, signingSecret);
+ *         HandlerConfig config = new HandlerConfig(executor, "organizationId", sharedSecret, signingSecret,
+ *             user -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer " + generateToken(user))));
  *         return new AutonomaController(config);
  *     }
  * }
