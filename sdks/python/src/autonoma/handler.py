@@ -19,14 +19,10 @@ from .teardown import teardown
 
 PROTOCOL_VERSION = "1.0"
 
-# Cache introspection results per config (by id)
-_introspection_cache: dict[int, IntrospectionResult] = {}
-
-
 async def _get_introspection(config: HandlerConfig) -> IntrospectionResult:
-    cache_key = id(config)
-    if cache_key in _introspection_cache:
-        return _introspection_cache[cache_key]
+    cached = getattr(config, "_introspection_cache", None)
+    if cached is not None:
+        return cached
 
     dialect = get_dialect(config.dialect)
     result = await introspect_database(
@@ -37,7 +33,7 @@ async def _get_introspection(config: HandlerConfig) -> IntrospectionResult:
         table_name_map=config.table_name_map,
         exclude_tables=config.exclude_tables,
     )
-    _introspection_cache[cache_key] = result
+    config._introspection_cache = result  # type: ignore[attr-defined]
     return result
 
 

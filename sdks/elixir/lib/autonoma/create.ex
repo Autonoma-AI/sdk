@@ -1,6 +1,8 @@
 defmodule Autonoma.Create do
   @moduledoc "Create entities via raw SQL INSERT."
 
+  @mysql_datetime_re ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+
   def create_entities(executor, dialect, table_map, column_maps, spec, enum_type_maps \\ %{}) do
     Enum.reduce(spec, %{}, fn {model, entity_spec}, acc ->
       db_table = Map.get(table_map, model) || raise "Unknown model \"#{model}\"."
@@ -94,7 +96,17 @@ defmodule Autonoma.Create do
         fields_arr
       end
 
-    field_names = Map.keys(List.first(fields_arr))
+    field_names =
+      fields_arr
+      |> Enum.flat_map(&Map.keys/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    if field_names == [] do
+      Enum.flat_map(fields_arr, fn fields ->
+        insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
+      end)
+    else
     db_cols = Enum.map(field_names, fn f -> dialect.quote_id(Map.get(col_map, f, f)) end)
     col_list = Enum.join(db_cols, ", ")
 
@@ -128,6 +140,7 @@ defmodule Autonoma.Create do
         []
       end
     end)
+    end
   end
 
   defp map_rows_back(rows, col_map) do
@@ -165,7 +178,7 @@ defmodule Autonoma.Create do
   end
   defp serialize_value(value, _dialect) when is_map(value) or is_list(value), do: Jason.encode!(value)
   defp serialize_value(value, dialect) when is_binary(value) do
-    if dialect.name() == "mysql" && Regex.match?(~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, value) do
+    if dialect.name() == "mysql" && Regex.match?(@mysql_datetime_re, value) do
       value |> String.replace("T", " ") |> String.replace("Z", "") |> String.replace(~r/\.\d+$/, "")
     else
       value

@@ -169,7 +169,25 @@ async function insertBatch(
     })
   }
 
-  const fieldNames = Object.keys(fieldsArr[0]!)
+  // Compute the union of keys across all rows in deterministic (sorted) order.
+  const fieldNameSet = new Set<string>()
+  for (const fields of fieldsArr) {
+    for (const key of Object.keys(fields)) {
+      fieldNameSet.add(key)
+    }
+  }
+  const fieldNames = [...fieldNameSet].sort()
+
+  // If no fields at all, fall back to individual DEFAULT VALUES inserts.
+  if (fieldNames.length === 0) {
+    const allResults: Record<string, unknown>[] = []
+    for (const fields of fieldsArr) {
+      const [record] = await insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields)
+      if (record) allResults.push(record)
+    }
+    return allResults
+  }
+
   const dbCols = fieldNames.map((f) => dialect.quoteId(colMap.get(f) ?? f))
   const colList = dbCols.join(', ')
 
@@ -264,6 +282,9 @@ function castParam(
   return placeholder
 }
 
+/** Pre-compiled regex for MySQL datetime detection (avoids re-compilation per call). */
+const MYSQL_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+
 /**
  * Serialize a JS value for SQL insertion.
  * Handles MySQL-specific quirks:
@@ -282,7 +303,7 @@ function serializeValue(value: unknown, dialect: Dialect): unknown {
 
   // DateTime: MySQL doesn't accept ISO 8601 with 'T' and 'Z'
   if (typeof value === 'string' && dialect.name === 'mysql') {
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+    if (MYSQL_DATETIME_RE.test(value)) {
       return value.replace('T', ' ').replace('Z', '').replace(/\.\d+$/, '')
     }
   }

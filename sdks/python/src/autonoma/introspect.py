@@ -229,11 +229,14 @@ def _parse_mysql_enum(column_type: str) -> list[str] | None:
 
 def _map_data_type(data_type: str, udt_name: str, dialect_name: str) -> str:
     dt = data_type.lower()
+    # MySQL: tinyint(1) is conventionally Boolean
+    if dialect_name == "mysql" and dt == "tinyint" and udt_name.lower().startswith("tinyint(1)"):
+        return "Boolean"
     if dt in ("integer", "smallint", "bigint", "int", "mediumint", "tinyint"):
         return "Int"
     if dt in ("numeric", "real", "double precision", "float", "double", "decimal"):
         return "Float"
-    if dt in ("boolean",) or dt == "tinyint(1)":
+    if dt in ("boolean",):
         return "Boolean"
     if dt in ("text", "character varying", "character", "varchar", "char", "mediumtext", "longtext", "tinytext"):
         return "String"

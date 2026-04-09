@@ -221,9 +221,10 @@ defmodule Autonoma.Introspect do
   defp map_data_type(dt, udt, dialect_name) do
     dt = String.downcase(dt || "")
     cond do
+      dialect_name == "mysql" && dt == "tinyint" && String.starts_with?(String.downcase(udt), "tinyint(1)") -> "Boolean"
       dt in ~w(integer smallint bigint int mediumint tinyint) -> "Int"
       dt in ~w(numeric real float double decimal) || dt == "double precision" -> "Float"
-      dt in ~w(boolean) || dt == "tinyint(1)" -> "Boolean"
+      dt in ~w(boolean) -> "Boolean"
       dt in ~w(text varchar char mediumtext longtext tinytext) || dt == "character varying" || dt == "character" -> "String"
       String.contains?(dt, "timestamp") || dt in ~w(date time datetime) -> "DateTime"
       dt in ~w(json jsonb) -> "Json"

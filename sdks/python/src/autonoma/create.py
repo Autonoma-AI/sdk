@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import date, datetime
 from typing import Any
 
 from .types import SQLExecutor
+
+_MYSQL_DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
 
 async def create_entities(
@@ -153,7 +156,21 @@ async def _insert_batch(
             for f in fields_arr
         ]
 
-    field_names = list(fields_arr[0].keys())
+    # Compute the union of keys across all rows in deterministic (sorted) order
+    all_keys: set[str] = set()
+    for f in fields_arr:
+        all_keys.update(f.keys())
+    field_names = sorted(all_keys)
+
+    # If no fields at all, fall back to individual inserts
+    if not field_names:
+        all_results: list[dict[str, Any]] = []
+        for fields in fields_arr:
+            rows = await _insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
+            if rows:
+                all_results.append(rows[0])
+        return all_results
+
     db_cols_list = [dialect.quote_id(col_map.get(f, f)) for f in field_names]
     col_list = ", ".join(db_cols_list)
 
@@ -236,8 +253,7 @@ def _serialize_value(value: Any, dialect: Any) -> Any:
 
     # MySQL: convert ISO 8601 datetime strings
     if isinstance(value, str) and dialect.name == "mysql":
-        import re
-        if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", value):
+        if _MYSQL_DATETIME_RE.match(value):
             return value.replace("T", " ").replace("Z", "").rstrip("0").rstrip(".")
 
     return value

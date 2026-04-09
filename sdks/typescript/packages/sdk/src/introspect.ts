@@ -270,13 +270,17 @@ function parseMySQLEnum(columnType: string): string[] | null {
 function mapDataType(dataType: string, udtName: string, dialectName: string): string {
   const dt = dataType.toLowerCase()
 
+  // MySQL tinyint(1) is conventionally Boolean — check column_type (udtName) before generic tinyint mapping.
+  // data_type from information_schema is just "tinyint"; the display width lives in udt_name (column_type).
+  if (dialectName === 'mysql' && dt === 'tinyint' && udtName.toLowerCase().startsWith('tinyint(1)')) return 'Boolean'
+
   // Integer types
   if (dt === 'integer' || dt === 'smallint' || dt === 'bigint' || dt === 'int' || dt === 'mediumint' || dt === 'tinyint') return 'Int'
 
   // Float types
   if (dt === 'numeric' || dt === 'real' || dt === 'double precision' || dt === 'float' || dt === 'double' || dt === 'decimal') return 'Float'
 
-  // Boolean
+  // Boolean (Postgres native boolean type, or tinyint(1) when data_type includes display width)
   if (dt === 'boolean' || dt === 'tinyint(1)') return 'Boolean'
 
   // String types

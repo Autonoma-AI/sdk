@@ -253,11 +253,15 @@ public final class DatabaseIntrospector {
         if (dataType == null) return "String";
         String dt = dataType.toLowerCase();
 
+        // MySQL-specific: tinyint(1) is Boolean (udt_name / column_type carries the display width)
+        if ("mysql".equals(dialectName) && dt.equals("tinyint") && udtName != null && udtName.startsWith("tinyint(1)"))
+            return "Boolean";
+
         if (dt.equals("integer") || dt.equals("smallint") || dt.equals("bigint") || dt.equals("int") || dt.equals("mediumint") || dt.equals("tinyint"))
             return "Int";
         if (dt.equals("numeric") || dt.equals("real") || dt.equals("double precision") || dt.equals("float") || dt.equals("double") || dt.equals("decimal"))
             return "Float";
-        if (dt.equals("boolean") || dt.equals("tinyint(1)"))
+        if (dt.equals("boolean"))
             return "Boolean";
         if (dt.equals("text") || dt.equals("character varying") || dt.equals("character") || dt.equals("varchar") || dt.equals("char")
             || dt.equals("mediumtext") || dt.equals("longtext") || dt.equals("tinytext"))

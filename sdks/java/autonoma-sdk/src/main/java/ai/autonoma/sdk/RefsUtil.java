@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.Map;
 
@@ -44,7 +45,8 @@ public final class RefsUtil {
         String signature = parts[2];
 
         String expected = hmacBase64url(header + "." + body, secret);
-        if (!expected.equals(signature)) throw new RuntimeException("signature mismatch");
+        if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), signature.getBytes(StandardCharsets.UTF_8)))
+            throw new RuntimeException("signature mismatch");
 
         try {
             byte[] decoded = Base64.getUrlDecoder().decode(body);

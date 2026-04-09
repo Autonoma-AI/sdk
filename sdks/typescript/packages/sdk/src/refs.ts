@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 
 interface RefsPayload {
   refs: Record<string, Record<string, unknown>[]>
@@ -30,7 +30,11 @@ export function verifyRefs(
   const [header, body, signature] = parts
   const expected = hmac(`${header}.${body}`, secret)
 
-  if (expected !== signature) throw new Error('signature mismatch')
+  const expectedBuf = Buffer.from(expected)
+  const signatureBuf = Buffer.from(signature!)
+  if (expectedBuf.length !== signatureBuf.length || !timingSafeEqual(expectedBuf, signatureBuf)) {
+    throw new Error('signature mismatch')
+  }
 
   return JSON.parse(Buffer.from(body!, 'base64url').toString())
 }

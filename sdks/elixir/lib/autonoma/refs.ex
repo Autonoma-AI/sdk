@@ -26,7 +26,7 @@ defmodule Autonoma.Refs do
     [header, body, signature] = parts
     expected = hmac_sign("#{header}.#{body}", secret)
 
-    if expected != signature do
+    if !Autonoma.HMAC.secure_compare(expected, signature) do
       raise "signature mismatch"
     end
 

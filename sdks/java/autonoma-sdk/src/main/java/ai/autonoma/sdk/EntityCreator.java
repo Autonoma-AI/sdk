@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Create entities via raw SQL INSERT.
@@ -20,6 +21,7 @@ import java.util.*;
 public final class EntityCreator {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final Pattern MYSQL_DATETIME_RE = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}");
 
     private EntityCreator() {}
 
@@ -176,7 +178,23 @@ public final class EntityCreator {
             }).toList();
         }
 
-        List<String> fieldNames = new ArrayList<>(fieldsArr.get(0).keySet());
+        // Compute union of keys across all rows in deterministic (sorted) order
+        Set<String> fieldNameSet = new TreeSet<>();
+        for (Map<String, Object> fields : fieldsArr) {
+            fieldNameSet.addAll(fields.keySet());
+        }
+        List<String> fieldNames = new ArrayList<>(fieldNameSet);
+
+        // Fall back to individual inserts when there are no fields
+        if (fieldNames.isEmpty()) {
+            List<Map<String, Object>> results = new ArrayList<>();
+            for (Map<String, Object> fields : fieldsArr) {
+                List<Map<String, Object>> records = insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields);
+                if (!records.isEmpty()) results.add(records.get(0));
+            }
+            return results;
+        }
+
         List<String> dbCols = fieldNames.stream()
             .map(f -> dialect.quoteId(colMap.getOrDefault(f, f)))
             .toList();
@@ -270,7 +288,7 @@ public final class EntityCreator {
 
         // DateTime: MySQL doesn't accept ISO 8601 with 'T' and 'Z'
         if (value instanceof String str && "mysql".equals(dialect.name())) {
-            if (str.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*")) {
+            if (MYSQL_DATETIME_RE.matcher(str).find()) {
                 return str.replace("T", " ").replace("Z", "").replaceAll("\\.\\d+$", "");
             }
         }

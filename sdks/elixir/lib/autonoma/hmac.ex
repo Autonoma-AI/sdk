@@ -26,8 +26,10 @@ defmodule Autonoma.HMAC do
     end
   end
 
-  # Constant-time comparison
-  defp secure_compare(a, b) when byte_size(a) == byte_size(b) do
+  @doc """
+  Constant-time string comparison to prevent timing attacks.
+  """
+  def secure_compare(a, b) when byte_size(a) == byte_size(b) do
     a_bytes = :binary.bin_to_list(a)
     b_bytes = :binary.bin_to_list(b)
 
@@ -38,5 +40,5 @@ defmodule Autonoma.HMAC do
     result == 0
   end
 
-  defp secure_compare(_, _), do: false
+  def secure_compare(_, _), do: false
 end
