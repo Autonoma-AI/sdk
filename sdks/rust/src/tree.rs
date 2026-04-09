@@ -141,10 +141,10 @@ fn walk_node(
             .or_else(|| relation_by_parent_field.get(&prefixed_key))
             .copied();
 
-        let matched_key = if relation_by_parent_field.contains_key(&exact_key) {
-            &exact_key
+        let mut matched_key = if relation_by_parent_field.contains_key(&exact_key) {
+            exact_key.clone()
         } else {
-            &prefixed_key
+            prefixed_key.clone()
         };
 
         // Fallback: match by child model name
@@ -153,6 +153,7 @@ fn walk_node(
                 if rel_key.starts_with(&format!("{}.", model_name))
                     && rel.child_model.to_lowercase() == key.to_lowercase()
                 {
+                    matched_key = rel_key.clone();
                     return Some(*rel);
                 }
             }
@@ -160,7 +161,7 @@ fn walk_node(
         });
 
         if let Some(rel) = relation {
-            let is_on_parent = fk_on_parent.contains(matched_key);
+            let is_on_parent = fk_on_parent.contains(&matched_key);
             if is_on_parent {
                 pre_children.push((rel, value, true));
             } else {
