@@ -1,6 +1,6 @@
 {
   "name": "@autonoma-ai/sdk",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Autonoma Environment Factory SDK — protocol layer",
   "type": "module",
   "exports": {
