@@ -223,6 +223,7 @@ jobs:
       - run: cargo build
       - run: cargo test
       - run: cargo build --features actix
+      - run: cargo build --features axum
 
   # ---------------------------------------------------------------------------
   # Conformance (all languages must produce identical output)

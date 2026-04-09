@@ -8,6 +8,7 @@ license = "MIT"
 [features]
 default = []
 actix = ["dep:actix-web", "dep:actix-rt"]
+axum = ["dep:axum"]
 sqlx-postgres = ["dep:sqlx"]
 sqlx-mysql = ["dep:sqlx"]
 
@@ -30,6 +31,9 @@ thiserror = "2"
 # Actix Web (optional)
 actix-web = { version = "4", optional = true }
 actix-rt = { version = "2", optional = true }
+
+# Axum (optional)
+axum = { version = "0.8", optional = true }
 
 # SQLx (optional)
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "mysql"], optional = true }

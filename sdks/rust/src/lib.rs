@@ -6,10 +6,12 @@
 //! # Features
 //!
 //! - `actix` — Actix Web server adapter
+//! - `axum` — Axum server adapter
 //! - `sqlx-postgres` — SQLx executor for PostgreSQL
 //! - `sqlx-mysql` — SQLx executor for MySQL
 
 pub mod actix;
+pub mod axum;
 pub mod create;
 pub mod dialect;
 pub mod errors;

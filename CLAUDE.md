@@ -57,6 +57,7 @@ cd sdks/rust
 cargo build && cargo test                     # full build + test
 cargo test -- hmac                            # tests matching a name pattern
 cargo build --features actix                  # build with Actix Web adapter
+cargo build --features axum                   # build with Axum adapter
 cargo build --features sqlx-postgres          # build with SQLx Postgres adapter
 ```
 
@@ -91,7 +92,7 @@ All language SDKs implement the same protocol with the same core modules:
 | Python | SQLAlchemy, Django | FastAPI, Flask, Django |
 | Elixir | Ecto | Plug (Phoenix) |
 | Ruby | ActiveRecord | Rails |
-| Rust | SQLx | Actix Web |
+| Rust | SQLx | Actix Web, Axum |
 
 ### Protocol Versioning
 
@@ -129,6 +130,6 @@ This SDK exists in five languages: **TypeScript**, **Python**, **Elixir**, **Rub
 - Elixir: standard mix project conventions
 - Python: src layout, Poetry (pyproject.toml), extras for adapters (`autonoma-sdk[sqlalchemy]`, `autonoma-sdk[fastapi]`, etc.)
 - Ruby: gemspec with no hard runtime dependencies (stdlib only), ActiveRecord/Rails as optional adapters
-- Rust: Cargo crate with optional feature flags (`actix`, `sqlx-postgres`, `sqlx-mysql`), async-trait for executor abstraction
+- Rust: Cargo crate with optional feature flags (`actix`, `axum`, `sqlx-postgres`, `sqlx-mysql`), async-trait for executor abstraction
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites
 - Protocol responses include `version` and `sdk` metadata for traceability
