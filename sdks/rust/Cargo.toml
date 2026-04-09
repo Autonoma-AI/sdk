@@ -26,7 +26,6 @@ rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
-thiserror = "2"
 
 # Actix Web (optional)
 actix-web = { version = "4", optional = true }

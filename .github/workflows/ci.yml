@@ -244,6 +244,8 @@ jobs:
       - run: cargo test
       - run: cargo build --features actix
       - run: cargo build --features axum
+      - run: cargo build --features sqlx-postgres
+      - run: cargo build --features sqlx-mysql
 
   # ---------------------------------------------------------------------------
   # Conformance (all languages must produce identical output)
