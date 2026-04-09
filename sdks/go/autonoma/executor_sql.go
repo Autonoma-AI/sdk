@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // sqlDBExecutor wraps *sql.DB to implement SQLExecutor.
@@ -27,6 +28,13 @@ func NewSQLExecutor(db *sql.DB) SQLExecutor {
 }
 
 func (e *sqlDBExecutor) Query(ctx context.Context, query string, params ...any) ([]map[string]any, error) {
+	if isExecStatement(query) {
+		_, err := e.db.ExecContext(ctx, query, params...)
+		if err != nil {
+			return nil, err
+		}
+		return []map[string]any{}, nil
+	}
 	rows, err := e.db.QueryContext(ctx, query, params...)
 	if err != nil {
 		return nil, err
@@ -49,6 +57,13 @@ func (e *sqlDBExecutor) Transaction(ctx context.Context, fn func(tx SQLExecutor)
 }
 
 func (e *sqlTxExecutor) Query(ctx context.Context, query string, params ...any) ([]map[string]any, error) {
+	if isExecStatement(query) {
+		_, err := e.tx.ExecContext(ctx, query, params...)
+		if err != nil {
+			return nil, err
+		}
+		return []map[string]any{}, nil
+	}
 	rows, err := e.tx.QueryContext(ctx, query, params...)
 	if err != nil {
 		return nil, err
@@ -59,6 +74,19 @@ func (e *sqlTxExecutor) Query(ctx context.Context, query string, params ...any) 
 func (e *sqlTxExecutor) Transaction(ctx context.Context, fn func(tx SQLExecutor) error) error {
 	// Nested transactions — just run the function in the same transaction
 	return fn(e)
+}
+
+// isExecStatement returns true for INSERT/UPDATE/DELETE statements that don't return rows.
+// Statements with RETURNING clauses are treated as queries since they return result sets.
+func isExecStatement(query string) bool {
+	trimmed := strings.TrimSpace(strings.ToUpper(query))
+	isWrite := strings.HasPrefix(trimmed, "INSERT") ||
+		strings.HasPrefix(trimmed, "UPDATE") ||
+		strings.HasPrefix(trimmed, "DELETE")
+	if !isWrite {
+		return false
+	}
+	return !strings.Contains(trimmed, "RETURNING")
 }
 
 // scanRows converts sql.Rows into a slice of maps.

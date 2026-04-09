@@ -335,7 +335,7 @@ func mapDataType(dataType, udtName, dialectName string) string {
 		return "Float"
 	}
 	// Boolean
-	if dt == "boolean" || dt == "tinyint(1)" {
+	if dt == "boolean" || (dt == "tinyint" && strings.HasPrefix(strings.ToLower(udtName), "tinyint(1)")) {
 		return "Boolean"
 	}
 	// String types

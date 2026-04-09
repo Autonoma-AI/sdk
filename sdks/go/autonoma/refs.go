@@ -3,6 +3,7 @@ package autonoma
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -39,7 +40,7 @@ func VerifyRefs(token string, secret string) (*RefsPayload, error) {
 	signature := parts[2]
 
 	expected := hmacBase64URL(header+"."+body, secret)
-	if expected != signature {
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) != 1 {
 		return nil, errors.New("signature mismatch")
 	}
 

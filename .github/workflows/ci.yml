@@ -278,7 +278,7 @@ jobs:
       # Go (for Go bridge)
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           cache-dependency-path: sdks/go/go.sum
 
       # Build Go conformance bridge binary

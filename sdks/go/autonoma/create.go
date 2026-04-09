@@ -258,9 +258,12 @@ func insertBatch(
 
 	// Chunk large batches
 	const maxParams = 32000
-	chunkSize := maxParams / len(fieldNames)
-	if chunkSize < 1 {
-		chunkSize = 1
+	chunkSize := len(fieldsArr)
+	if len(fieldNames) > 0 {
+		chunkSize = maxParams / len(fieldNames)
+		if chunkSize < 1 {
+			chunkSize = 1
+		}
 	}
 
 	var allResults []map[string]any

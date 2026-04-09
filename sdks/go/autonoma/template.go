@@ -2,7 +2,6 @@ package autonoma
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 	"regexp"
 	"strconv"
@@ -132,7 +131,3 @@ func parseArrayLiteral(raw string) []string {
 	return result
 }
 
-// Ensure rand.Float64 returns values matching JS Math.random semantics
-func init() {
-	_ = math.MaxFloat64 // just to use math package
-}
