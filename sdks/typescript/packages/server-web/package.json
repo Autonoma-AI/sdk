@@ -1,6 +1,6 @@
 {
   "name": "@autonoma-ai/server-web",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Web standard (Hono, Next App Router, Bun, Deno) server adapter for Autonoma SDK",
   "type": "module",
   "exports": {
