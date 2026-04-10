@@ -91,9 +91,9 @@ defmodule Autonoma.Create do
     end
   end
 
-  defp insert_batch(_executor, _dialect, _db_table, _col_map, _enum_type_map, []), do: []
+  defp insert_batch(_executor, _dialect, _db_table, _col_map, _enum_type_map, [], _pk_field_name, _pk_field_type), do: []
 
-  defp insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_arr, pk_field_name \\ "id", pk_field_type \\ "String") do
+  defp insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_arr, pk_field_name, pk_field_type) do
 
     # Bug 1: Only generate client-side IDs when PK type is String; Int/BigInt use DB auto-increment
     fields_arr =
