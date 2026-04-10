@@ -62,17 +62,50 @@ async def teardown(
                             [scope_value],
                         )
 
-        # Bug 6: Delete non-cycle nodes in reverse topo order BEFORE cycle nodes
-        # 2. Delete non-cycle nodes in reverse topo order
-        for model in reversed(sorted_models):
-            if model == scope_root_model:
-                continue
-            await _delete_model(tx, dialect, table_map, column_maps, model,
-                                scope_value, scope_field_by_model, refs, schema)
+        # Build condensation graph: each SCC is a super-node, each sorted node
+        # is its own node. Topo-sort the condensation DAG and delete in reverse
+        # order so that dependents of cycles are deleted before the cycle itself.
+        components: list[list[str]] = []
+        node_to_comp: dict[str, int] = {}
 
-        # 3. Delete cycle nodes
         for cycle in cycles:
-            for model in cycle:
+            idx = len(components)
+            components.append(cycle)
+            for node in cycle:
+                node_to_comp[node] = idx
+        for node in sorted_models:
+            node_to_comp[node] = len(components)
+            components.append([node])
+
+        # Build condensation DAG edges (dependency → dependent)
+        cond_adj: dict[int, set[int]] = {i: set() for i in range(len(components))}
+        cond_in_deg: dict[int, int] = {i: 0 for i in range(len(components))}
+        for edge in edge_dicts:
+            if edge["from"] == edge["to"]:
+                continue
+            fc = node_to_comp.get(edge["from"])
+            tc = node_to_comp.get(edge["to"])
+            if fc is not None and tc is not None and fc != tc and fc not in cond_adj[tc]:
+                cond_adj[tc].add(fc)
+                cond_in_deg[fc] = cond_in_deg.get(fc, 0) + 1
+
+        # Kahn's algorithm on the condensation DAG
+        cond_queue = sorted(i for i, d in cond_in_deg.items() if d == 0)
+        cond_order: list[int] = []
+        while cond_queue:
+            cond_queue.sort()
+            idx = cond_queue.pop(0)
+            cond_order.append(idx)
+            for neighbor in cond_adj[idx]:
+                cond_in_deg[neighbor] -= 1
+                if cond_in_deg[neighbor] == 0:
+                    cond_queue.append(neighbor)
+
+        # Delete in reverse condensation order (dependents first)
+        for comp_idx in reversed(cond_order):
+            for model in components[comp_idx]:
+                if model == scope_root_model:
+                    continue
                 await _delete_model(tx, dialect, table_map, column_maps, model,
                                     scope_value, scope_field_by_model, refs, schema)
 
@@ -81,9 +114,10 @@ async def teardown(
             db_table = table_map.get(scope_root_model)
             col_map = column_maps.get(scope_root_model, {})
             if db_table:
-                # Bug 4: Use actual PK field name from schema
+                # Bug 4: Use actual PK field name from schema (composite PK: prefer "id")
                 root_model_info = next((m for m in schema.models if m.name == scope_root_model), None)
-                root_pk_field = next((f for f in root_model_info.fields if f.is_id), None) if root_model_info else None
+                root_id_fields = [f for f in root_model_info.fields if f.is_id] if root_model_info else []
+                root_pk_field = next((f for f in root_id_fields if f.name.lower() == "id"), root_id_fields[0] if root_id_fields else None)
                 root_pk_field_name = root_pk_field.name if root_pk_field else "id"
                 id_col = col_map.get(root_pk_field_name, root_pk_field_name)
                 await tx.query(
@@ -111,8 +145,10 @@ async def _delete_model(
     col_map = column_maps.get(model, {})
 
     # Bug 4: Find actual PK field name from schema
+    # When multiple isId fields exist (composite PK), prefer the one named "id"
     model_info = next((m for m in schema.models if m.name == model), None)
-    pk_field = next((f for f in model_info.fields if f.is_id), None) if model_info else None
+    id_fields = [f for f in model_info.fields if f.is_id] if model_info else []
+    pk_field = next((f for f in id_fields if f.name.lower() == "id"), id_fields[0] if id_fields else None)
     pk_field_name = pk_field.name if pk_field else "id"
 
     scope_fk = scope_field_by_model.get(model)

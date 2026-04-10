@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -59,8 +59,8 @@ def create_fastapi_handler(
 
 
 async def fastapi_handler(
-    request: Request,
     config: HandlerConfig | None = None,
+    request: Request | None = None,
     *,
     config_factory: Callable[[], HandlerConfig] | None = None,
 ) -> JSONResponse:
@@ -73,6 +73,8 @@ async def fastapi_handler(
         raise TypeError("Pass either config or config_factory, not both")
     if config is None and config_factory is None:
         raise TypeError("Either config or config_factory is required")
+    if request is None:
+        raise TypeError("request is required")
 
     enriched = _enrich_config(config if config is not None else config_factory(), "fastapi")
 

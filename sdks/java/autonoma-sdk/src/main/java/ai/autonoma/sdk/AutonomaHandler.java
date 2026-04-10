@@ -156,9 +156,12 @@ public final class AutonomaHandler {
                 ModelInfo modelInfo = schema.models().stream()
                     .filter(m -> m.name().equals(model))
                     .findFirst().orElse(null);
-                FieldInfo pkField = modelInfo != null
-                    ? modelInfo.fields().stream().filter(FieldInfo::isId).findFirst().orElse(null)
-                    : null;
+                // When multiple isId fields exist (composite PK), prefer the one named "id"
+                List<FieldInfo> idFields = modelInfo != null
+                    ? modelInfo.fields().stream().filter(FieldInfo::isId).toList()
+                    : List.of();
+                FieldInfo pkField = idFields.stream().filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
+                    .orElse(idFields.isEmpty() ? null : idFields.get(0));
                 String pkFieldName = pkField != null ? pkField.name() : "id";
 
                 List<Map<String, Object>> resolvedFields = new ArrayList<>();
@@ -245,9 +248,14 @@ public final class AutonomaHandler {
                 ModelInfo deferredModelInfo = schema.models().stream()
                     .filter(m -> m.name().equals(deferred.model()))
                     .findFirst().orElse(null);
-                String deferredPkFieldName = deferredModelInfo != null
-                    ? deferredModelInfo.fields().stream().filter(FieldInfo::isId).findFirst().map(FieldInfo::name).orElse("id")
-                    : "id";
+                // When multiple isId fields exist (composite PK), prefer the one named "id"
+                List<FieldInfo> deferredIdFields = deferredModelInfo != null
+                    ? deferredModelInfo.fields().stream().filter(FieldInfo::isId).toList()
+                    : List.of();
+                FieldInfo deferredPkField = deferredIdFields.stream()
+                    .filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
+                    .orElse(deferredIdFields.isEmpty() ? null : deferredIdFields.get(0));
+                String deferredPkFieldName = deferredPkField != null ? deferredPkField.name() : "id";
 
                 EntityCreator.updateEntity(
                     tx, dialect, introspection.tableMap(), introspection.columnMaps(),

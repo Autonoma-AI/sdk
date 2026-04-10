@@ -31,8 +31,14 @@ pub async fn create_entities(
         let enum_type_map = enum_type_maps.get(model).cloned().unwrap_or_default();
 
         // Bug 4: find actual PK field name from schema
+        // When multiple is_id fields exist (composite PK), prefer the one named "id"
         let model_info = schema_models.iter().find(|m| m.name == *model);
-        let pk_field = model_info.and_then(|mi| mi.fields.iter().find(|f| f.is_id));
+        let id_fields: Vec<&crate::types::FieldInfo> = model_info
+            .map(|mi| mi.fields.iter().filter(|f| f.is_id).collect())
+            .unwrap_or_default();
+        let pk_field = id_fields.iter().find(|f| f.name.eq_ignore_ascii_case("id"))
+            .or(id_fields.first())
+            .copied();
         let pk_field_name = pk_field.map(|f| f.name.as_str()).unwrap_or("id");
         let pk_field_type = pk_field.map(|f| f.field_type.as_str()).unwrap_or("String");
 

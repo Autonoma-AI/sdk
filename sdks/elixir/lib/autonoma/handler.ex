@@ -162,7 +162,8 @@ defmodule Autonoma.Handler do
           deferred_model_info = Enum.find(schema["models"], fn m -> m["name"] == du.model end)
           deferred_pk_field_name =
             if deferred_model_info do
-              pk = Enum.find(deferred_model_info["fields"] || [], fn f -> f["isId"] end)
+              id_fields = Enum.filter(deferred_model_info["fields"] || [], fn f -> f["isId"] end)
+              pk = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
               if pk, do: pk["name"], else: "id"
             else
               "id"
@@ -204,8 +205,10 @@ defmodule Autonoma.Handler do
     {batch, i} = collect_batch(tree.ops, i, model, op.batch, [op])
 
     # Bug 4: Find model info and actual PK field name from schema
+    # When multiple isId fields exist (composite PK), prefer the one named "id"
     model_info = Enum.find(schema["models"], fn m -> m["name"] == model end)
-    pk_field = if model_info, do: Enum.find(model_info["fields"] || [], fn f -> f["isId"] end)
+    id_fields = if model_info, do: Enum.filter(model_info["fields"] || [], fn f -> f["isId"] end), else: []
+    pk_field = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
     pk_field_name = if pk_field, do: pk_field["name"], else: "id"
 
     resolved_fields =

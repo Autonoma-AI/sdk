@@ -12,8 +12,10 @@ defmodule Autonoma.Create do
       is_batch = Map.get(entity_spec, "batch", false)
 
       # Bug 4: find actual PK field name from schema
+      # When multiple isId fields exist (composite PK), prefer the one named "id"
       model_info = Enum.find(schema_models, fn m -> m["name"] == model end)
-      pk_field = if model_info, do: Enum.find(model_info["fields"] || [], fn f -> f["isId"] end)
+      id_fields = if model_info, do: Enum.filter(model_info["fields"] || [], fn f -> f["isId"] end), else: []
+      pk_field = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
       pk_field_name = if pk_field, do: pk_field["name"], else: "id"
       pk_field_type = if pk_field, do: pk_field["type"], else: "String"
 

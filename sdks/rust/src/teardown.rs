@@ -1,7 +1,7 @@
 //! Tear down scoped test data via raw SQL DELETE in reverse topological order.
 
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::dialect::Dialect;
 use crate::graph::{find_deferrable_edge, topo_sort};
@@ -121,40 +121,65 @@ pub async fn teardown(
         }
     }
 
-    // Bug 6: Delete non-cycle nodes in reverse topo order FIRST (dependents before cycle nodes)
-    for model in sorted_models.iter().rev() {
-        if scope_root_model.as_deref() == Some(model.as_str()) {
-            continue;
+    // Build condensation graph: each SCC is a super-node, each sorted node
+    // is its own node. Topo-sort the condensation DAG and delete in reverse
+    // order so that dependents of cycles are deleted before the cycle itself.
+    let mut components: Vec<Vec<String>> = Vec::new();
+    let mut node_to_comp: HashMap<String, usize> = HashMap::new();
+
+    for cycle in &cycles {
+        let idx = components.len();
+        components.push(cycle.clone());
+        for node in cycle {
+            node_to_comp.insert(node.clone(), idx);
         }
-        delete_model(
-            executor,
-            dialect,
-            table_map,
-            column_maps,
-            model,
-            scope_value,
-            &scope_field_by_model,
-            refs,
-            schema,
-        )
-        .await?;
+    }
+    for node in &sorted_models {
+        node_to_comp.insert(node.clone(), components.len());
+        components.push(vec![node.clone()]);
     }
 
-    // Delete cycle nodes AFTER their non-cycle dependents are gone
-    for cycle in &cycles {
-        for model in cycle {
-            delete_model(
-                executor,
-                dialect,
-                table_map,
-                column_maps,
-                model,
-                scope_value,
-                &scope_field_by_model,
-                refs,
-                schema,
-            )
-            .await?;
+    // Build condensation DAG edges (dependency → dependent)
+    let comp_count = components.len();
+    let mut cond_adj: Vec<HashSet<usize>> = vec![HashSet::new(); comp_count];
+    let mut cond_in_deg: Vec<usize> = vec![0; comp_count];
+    for edge in &schema.edges {
+        if edge.from_model == edge.to_model {
+            continue;
+        }
+        if let (Some(&fc), Some(&tc)) = (node_to_comp.get(&edge.from_model), node_to_comp.get(&edge.to_model)) {
+            if fc != tc && !cond_adj[tc].contains(&fc) {
+                cond_adj[tc].insert(fc);
+                cond_in_deg[fc] += 1;
+            }
+        }
+    }
+
+    // Kahn's algorithm on the condensation DAG
+    let mut cond_queue: Vec<usize> = (0..comp_count).filter(|&i| cond_in_deg[i] == 0).collect();
+    cond_queue.sort();
+    let mut cond_order: Vec<usize> = Vec::new();
+    while !cond_queue.is_empty() {
+        cond_queue.sort();
+        let idx = cond_queue.remove(0);
+        cond_order.push(idx);
+        let neighbors: Vec<usize> = cond_adj[idx].iter().cloned().collect();
+        for neighbor in neighbors {
+            cond_in_deg[neighbor] -= 1;
+            if cond_in_deg[neighbor] == 0 {
+                cond_queue.push(neighbor);
+            }
+        }
+    }
+
+    // Delete in reverse condensation order (dependents first)
+    for &comp_idx in cond_order.iter().rev() {
+        for model in &components[comp_idx] {
+            if scope_root_model.as_deref() == Some(model.as_str()) {
+                continue;
+            }
+            delete_model(executor, dialect, table_map, column_maps, model,
+                scope_value, &scope_field_by_model, refs, schema).await?;
         }
     }
 
@@ -162,10 +187,14 @@ pub async fn teardown(
     if let Some(ref root) = scope_root_model {
         if let Some(db_table) = table_map.get(root) {
             let col_map = column_maps.get(root).cloned().unwrap_or_default();
-            // Bug 4: use dynamic PK field from schema
+            // Bug 4: use dynamic PK field from schema (composite PK: prefer "id")
             let root_model_info = schema.models.iter().find(|m| m.name == *root);
-            let root_pk_field_name = root_model_info
-                .and_then(|mi| mi.fields.iter().find(|f| f.is_id))
+            let root_id_fields: Vec<&crate::types::FieldInfo> = root_model_info
+                .map(|mi| mi.fields.iter().filter(|f| f.is_id).collect())
+                .unwrap_or_default();
+            let root_pk_field_name = root_id_fields.iter()
+                .find(|f| f.name.eq_ignore_ascii_case("id"))
+                .or(root_id_fields.first())
                 .map(|f| f.name.as_str())
                 .unwrap_or("id");
             let id_col = col_map
@@ -206,9 +235,14 @@ async fn delete_model(
     let col_map = column_maps.get(model).cloned().unwrap_or_default();
 
     // Bug 4: Find actual PK field name from schema
+    // When multiple is_id fields exist (composite PK), prefer the one named "id"
     let model_info = schema.models.iter().find(|m| m.name == model);
-    let pk_field_name = model_info
-        .and_then(|mi| mi.fields.iter().find(|f| f.is_id))
+    let id_fields: Vec<&crate::types::FieldInfo> = model_info
+        .map(|mi| mi.fields.iter().filter(|f| f.is_id).collect())
+        .unwrap_or_default();
+    let pk_field_name = id_fields.iter()
+        .find(|f| f.name.eq_ignore_ascii_case("id"))
+        .or(id_fields.first())
         .map(|f| f.name.as_str())
         .unwrap_or("id");
 
