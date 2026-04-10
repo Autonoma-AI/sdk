@@ -10,12 +10,18 @@ use Autonoma\Sdk\Types\IntrospectionResult;
 
 class Handler
 {
+    private const PROTOCOL_VERSION_HARDCODED = '1.0';
     public static string $PROTOCOL_VERSION = '';
 
     public static function getProtocolVersion(): string
     {
         if (self::$PROTOCOL_VERSION === '') {
-            self::$PROTOCOL_VERSION = trim(file_get_contents(__DIR__ . '/../../../../protocol/version.txt'));
+            $path = __DIR__ . '/../../../../protocol/version.txt';
+            if (is_file($path)) {
+                self::$PROTOCOL_VERSION = trim(file_get_contents($path));
+            } else {
+                self::$PROTOCOL_VERSION = self::PROTOCOL_VERSION_HARDCODED;
+            }
         }
         return self::$PROTOCOL_VERSION;
     }
@@ -211,7 +217,7 @@ class Handler
                     $scopeEdge = null;
                     foreach ($schema->edges as $e) {
                         if ($e->fromModel === $model &&
-                            strtolower($e->localField) === strtolower($schema->scopeField) &&
+                            strtolower(str_replace('_', '', $e->localField)) === strtolower(str_replace('_', '', $schema->scopeField)) &&
                             $e->fromModel !== $e->toModel) {
                             $scopeEdge = $e;
                             break;
@@ -360,11 +366,11 @@ class Handler
 
     private static function detectScopeValue(array $refs, string $scopeField): ?string
     {
-        $scopeLower = strtolower($scopeField);
+        $scopeNormalized = strtolower(str_replace('_', '', $scopeField));
         foreach ($refs as $records) {
             foreach ($records as $record) {
                 foreach ($record as $key => $value) {
-                    if (strtolower($key) === $scopeLower && is_string($value)) {
+                    if (strtolower(str_replace('_', '', $key)) === $scopeNormalized && is_string($value)) {
                         return $value;
                     }
                 }

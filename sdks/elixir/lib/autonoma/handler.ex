@@ -227,7 +227,7 @@ defmodule Autonoma.Handler do
         fields =
           case Enum.find(schema["edges"], fn e ->
             e["from"] == model &&
-              String.downcase(e["localField"]) == String.downcase(schema["scopeField"]) &&
+              normalize_field(e["localField"]) == normalize_field(schema["scopeField"]) &&
               e["from"] != e["to"]
           end) do
             nil -> fields
@@ -335,13 +335,15 @@ defmodule Autonoma.Handler do
     end)
   end
 
+  defp normalize_field(name), do: name |> String.replace("_", "") |> String.downcase()
+
   defp detect_scope_value(refs, scope_field) do
-    scope_lower = String.downcase(scope_field)
+    scope_normalized = normalize_field(scope_field)
 
     Enum.find_value(refs, fn {_model, records} ->
       Enum.find_value(records, fn record ->
         Enum.find_value(record, fn {key, value} ->
-          if String.downcase(to_string(key)) == scope_lower && is_binary(value) do
+          if normalize_field(to_string(key)) == scope_normalized && is_binary(value) do
             value
           end
         end)

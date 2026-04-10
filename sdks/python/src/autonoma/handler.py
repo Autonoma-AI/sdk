@@ -17,11 +17,14 @@ from .tree import resolve_tree
 from .create import create_entities, update_entity
 from .teardown import teardown
 
-from pathlib import Path as _Path
+def _load_protocol_version() -> str:
+    try:
+        from pathlib import Path
+        return (Path(__file__).resolve().parents[4] / "protocol" / "version.txt").read_text().strip()
+    except (OSError, IndexError):
+        return "1.0"
 
-PROTOCOL_VERSION = (
-    _Path(__file__).resolve().parents[4] / "protocol" / "version.txt"
-).read_text().strip()
+PROTOCOL_VERSION = _load_protocol_version()
 
 async def _get_introspection(config: HandlerConfig) -> IntrospectionResult:
     cached = getattr(config, "_introspection_cache", None)
@@ -168,7 +171,7 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
                 # Inject scope field if applicable
                 scope_edge = None
                 for e in schema.edges:
-                    if e.from_model == model and e.local_field.lower() == schema.scope_field.lower() and e.from_model != e.to_model:
+                    if e.from_model == model and e.local_field.replace("_", "").lower() == schema.scope_field.replace("_", "").lower() and e.from_model != e.to_model:
                         scope_edge = e
                         break
                 if scope_edge and scope_edge.local_field not in fields:
