@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/Autonoma-AI/sdk/compare/v0.1.7...v0.1.8) (2026-04-10)
+
+
+### Bug Fixes
+
+* remove stale CLI and template resolution from all SDKs ([#23](https://github.com/Autonoma-AI/sdk/issues/23)) ([635a99a](https://github.com/Autonoma-AI/sdk/commit/635a99af20eed7ea1983566130485f432252e3f2))
+
 ## [0.1.7](https://github.com/Autonoma-AI/sdk/compare/v0.1.6...v0.1.7) (2026-04-09)
 
 
