@@ -102,6 +102,42 @@
             "cycles": { "length": 1 },
             "cycles_flat_contains": ["A", "B", "C"]
           }
+        },
+        {
+          "description": "sorts non-cycle node that depends on a cycle",
+          "input": {
+            "nodes": ["Root", "A", "B", "C"],
+            "edges": [
+              { "from": "A", "to": "B", "localField": "bId", "foreignField": "id", "nullable": false },
+              { "from": "B", "to": "A", "localField": "aId", "foreignField": "id", "nullable": true },
+              { "from": "C", "to": "A", "localField": "aId", "foreignField": "id", "nullable": false },
+              { "from": "C", "to": "Root", "localField": "rootId", "foreignField": "id", "nullable": false }
+            ]
+          },
+          "assert": {
+            "sorted": { "contains_all": ["Root", "C"], "before": [["Root", "C"]] },
+            "cycles_flat_contains": ["A", "B"]
+          }
+        },
+        {
+          "description": "handles two separate cycles with linking node",
+          "input": {
+            "nodes": ["Root", "A", "B", "C", "D", "Link"],
+            "edges": [
+              { "from": "A", "to": "B", "localField": "bId", "foreignField": "id", "nullable": false },
+              { "from": "B", "to": "A", "localField": "aId", "foreignField": "id", "nullable": true },
+              { "from": "C", "to": "D", "localField": "dId", "foreignField": "id", "nullable": false },
+              { "from": "D", "to": "C", "localField": "cId", "foreignField": "id", "nullable": true },
+              { "from": "Link", "to": "A", "localField": "aId", "foreignField": "id", "nullable": false },
+              { "from": "Link", "to": "C", "localField": "cId", "foreignField": "id", "nullable": false },
+              { "from": "A", "to": "Root", "localField": "rootId", "foreignField": "id", "nullable": false }
+            ]
+          },
+          "assert": {
+            "sorted": { "contains_all": ["Root", "Link"], "before": [["Root", "Link"]] },
+            "cycles": { "length": 2 },
+            "cycles_flat_contains": ["A", "B", "C", "D"]
+          }
         }
       ]
     },

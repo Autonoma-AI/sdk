@@ -39,16 +39,29 @@ func CreateEntities(
 		}
 
 		// Bug 4: find actual PK field name from schema
+		// When multiple IsId fields exist (composite PK), prefer the one named "id"
 		pkFieldName := "id"
 		pkFieldType := "String"
 		for _, mi := range schemaModels {
 			if mi.Name == model {
+				var firstName, firstType string
 				for _, f := range mi.Fields {
 					if f.IsId {
-						pkFieldName = f.Name
-						pkFieldType = f.Type
-						break
+						if firstName == "" {
+							firstName = f.Name
+							firstType = f.Type
+						}
+						if strings.EqualFold(f.Name, "id") {
+							pkFieldName = f.Name
+							pkFieldType = f.Type
+							firstName = ""
+							break
+						}
 					}
+				}
+				if firstName != "" {
+					pkFieldName = firstName
+					pkFieldType = firstType
 				}
 				break
 			}

@@ -132,7 +132,8 @@ async function handleUp(
 
       // Replace temp IDs with real IDs in all fields
       const modelInfo = schema.models.find((m) => m.name === model)
-      const pkField = modelInfo?.fields.find((f) => f.isId)
+      const idFields = modelInfo?.fields.filter((f) => f.isId) ?? []
+      const pkField = idFields.find((f) => f.name.toLowerCase() === 'id') ?? idFields[0]
       const pkFieldName = pkField?.name ?? 'id'
       const resolvedFields = batch.map((b) => {
         const fields = { ...b.fields }
@@ -200,7 +201,8 @@ async function handleUp(
       }
 
       const deferredModelInfo = schema.models.find((m) => m.name === deferred.model)
-      const deferredPkFieldName = deferredModelInfo?.fields.find((f) => f.isId)?.name ?? 'id'
+      const deferredIdFields = deferredModelInfo?.fields.filter((f) => f.isId) ?? []
+      const deferredPkFieldName = (deferredIdFields.find((f) => f.name.toLowerCase() === 'id') ?? deferredIdFields[0])?.name ?? 'id'
       await updateEntity(tx, dialect, tableMap, columnMaps, deferred.model, String(realTargetId), { [deferred.field]: realRefId }, enumTypeMaps, deferredPkFieldName)
     }
   })
