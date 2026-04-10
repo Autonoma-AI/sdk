@@ -64,18 +64,18 @@ export async function teardown(
       }
     }
 
-    // Delete cycle nodes
-    for (const cycle of cycles) {
-      for (const model of cycle) {
-        await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs)
-      }
-    }
-
-    // Delete in reverse topo order (dependents first)
+    // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
     const reversed = [...sorted].reverse()
     for (const model of reversed) {
       if (model === scopeRootModel) continue // deleted last
-      await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs)
+      await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
+    }
+
+    // Delete cycle nodes after their non-cycle dependents are gone
+    for (const cycle of cycles) {
+      for (const model of cycle) {
+        await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
+      }
     }
 
     // Delete the scope root entity last
@@ -83,7 +83,9 @@ export async function teardown(
       const dbTable = tableMap.get(scopeRootModel)
       const colMap = columnMaps.get(scopeRootModel) ?? new Map<string, string>()
       if (dbTable) {
-        const idCol = colMap.get('id') ?? 'id'
+        const rootModelInfo = schema.models.find((m) => m.name === scopeRootModel)
+        const rootPkFieldName = rootModelInfo?.fields.find((f) => f.isId)?.name ?? 'id'
+        const idCol = colMap.get(rootPkFieldName) ?? rootPkFieldName
         await tx.query(
           `DELETE FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} = ${dialect.param(1)}`,
           [scopeValue],
@@ -101,11 +103,16 @@ async function deleteModel(
   model: string,
   scopeValue: string,
   scopeFieldByModel: Map<string, string>,
-  refs?: Record<string, Record<string, unknown>[]>,
+  refs: Record<string, Record<string, unknown>[]> | undefined,
+  schema: SchemaInfo,
 ): Promise<void> {
   const dbTable = tableMap.get(model)
   if (!dbTable) return
   const colMap = columnMaps.get(model) ?? new Map<string, string>()
+
+  // Find actual PK field name from schema
+  const modelInfo = schema.models.find((m) => m.name === model)
+  const pkFieldName = modelInfo?.fields.find((f) => f.isId)?.name ?? 'id'
 
   const scopeFK = scopeFieldByModel.get(model)
   if (scopeFK) {
@@ -118,10 +125,10 @@ async function deleteModel(
   } else if (refs?.[model]) {
     // No FK to scope root, but we created records → delete by IDs
     const ids = refs[model]
-      .map((r) => r.id)
-      .filter((id): id is string => typeof id === 'string')
+      .map((r) => r[pkFieldName])
+      .filter((id): id is string | number => id != null)
     if (ids.length > 0) {
-      const idCol = colMap.get('id') ?? 'id'
+      const idCol = colMap.get(pkFieldName) ?? pkFieldName
       const placeholders = ids.map((_, i) => dialect.param(i + 1)).join(', ')
       await tx.query(
         `DELETE FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} IN (${placeholders})`,

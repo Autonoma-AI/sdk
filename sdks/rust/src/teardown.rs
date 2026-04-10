@@ -121,24 +121,7 @@ pub async fn teardown(
         }
     }
 
-    // Delete cycle nodes
-    for cycle in &cycles {
-        for model in cycle {
-            delete_model(
-                executor,
-                dialect,
-                table_map,
-                column_maps,
-                model,
-                scope_value,
-                &scope_field_by_model,
-                refs,
-            )
-            .await?;
-        }
-    }
-
-    // Delete in reverse topo order
+    // Bug 6: Delete non-cycle nodes in reverse topo order FIRST (dependents before cycle nodes)
     for model in sorted_models.iter().rev() {
         if scope_root_model.as_deref() == Some(model.as_str()) {
             continue;
@@ -152,18 +135,43 @@ pub async fn teardown(
             scope_value,
             &scope_field_by_model,
             refs,
+            schema,
         )
         .await?;
+    }
+
+    // Delete cycle nodes AFTER their non-cycle dependents are gone
+    for cycle in &cycles {
+        for model in cycle {
+            delete_model(
+                executor,
+                dialect,
+                table_map,
+                column_maps,
+                model,
+                scope_value,
+                &scope_field_by_model,
+                refs,
+                schema,
+            )
+            .await?;
+        }
     }
 
     // Delete scope root last
     if let Some(ref root) = scope_root_model {
         if let Some(db_table) = table_map.get(root) {
             let col_map = column_maps.get(root).cloned().unwrap_or_default();
+            // Bug 4: use dynamic PK field from schema
+            let root_model_info = schema.models.iter().find(|m| m.name == *root);
+            let root_pk_field_name = root_model_info
+                .and_then(|mi| mi.fields.iter().find(|f| f.is_id))
+                .map(|f| f.name.as_str())
+                .unwrap_or("id");
             let id_col = col_map
-                .get("id")
+                .get(root_pk_field_name)
                 .cloned()
-                .unwrap_or_else(|| "id".to_string());
+                .unwrap_or_else(|| root_pk_field_name.to_string());
             let sql = format!(
                 "DELETE FROM {} WHERE {} = {}",
                 dialect.quote_id(db_table),
@@ -189,12 +197,20 @@ async fn delete_model(
     scope_value: &str,
     scope_field_by_model: &HashMap<String, String>,
     refs: Option<&Value>,
+    schema: &SchemaInfo,
 ) -> Result<(), String> {
     let db_table = match table_map.get(model) {
         Some(t) => t,
         None => return Ok(()),
     };
     let col_map = column_maps.get(model).cloned().unwrap_or_default();
+
+    // Bug 4: Find actual PK field name from schema
+    let model_info = schema.models.iter().find(|m| m.name == model);
+    let pk_field_name = model_info
+        .and_then(|mi| mi.fields.iter().find(|f| f.is_id))
+        .map(|f| f.name.as_str())
+        .unwrap_or("id");
 
     if let Some(scope_fk) = scope_field_by_model.get(model) {
         let db_col = col_map
@@ -211,17 +227,18 @@ async fn delete_model(
             .query(&sql, Some(&[Value::String(scope_value.to_string())]))
             .await?;
     } else if let Some(ref_records) = refs.and_then(|r| r.get(model)).and_then(|v| v.as_array()) {
+        // Bug 3: Accept any non-null value for IDs (not just strings)
         let ids: Vec<Value> = ref_records
             .iter()
-            .filter_map(|r| r.get("id"))
-            .filter(|v| v.is_string())
+            .filter_map(|r| r.get(pk_field_name))
+            .filter(|v| !v.is_null())
             .cloned()
             .collect();
         if !ids.is_empty() {
             let id_col = col_map
-                .get("id")
+                .get(pk_field_name)
                 .cloned()
-                .unwrap_or_else(|| "id".to_string());
+                .unwrap_or_else(|| pk_field_name.to_string());
             let placeholders: Vec<String> =
                 (0..ids.len()).map(|i| dialect.param(i + 1)).collect();
             let sql = format!(

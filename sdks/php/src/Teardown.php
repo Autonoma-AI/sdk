@@ -60,7 +60,7 @@ class Teardown
         $executor->transaction(function (SQLExecutorInterface $tx) use (
             $dialect, $tableMap, $columnMaps, $scopeRootModel,
             $scopeFieldByModel, $sortedModels, $cycles, $edgeDicts,
-            $scopeValue, $refs,
+            $scopeValue, $refs, $schema,
         ) {
             // Break cycles by nullifying deferrable FKs
             foreach ($cycles as $cycle) {
@@ -88,23 +88,23 @@ class Teardown
                 }
             }
 
-            // Delete cycle nodes
-            foreach ($cycles as $cycle) {
-                foreach ($cycle as $model) {
-                    self::deleteModel(
-                        $tx, $dialect, $tableMap, $columnMaps, $model,
-                        $scopeValue, $scopeFieldByModel, $refs,
-                    );
-                }
-            }
-
-            // Delete in reverse topo order
+            // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
             foreach (array_reverse($sortedModels) as $model) {
                 if ($model === $scopeRootModel) continue;
                 self::deleteModel(
                     $tx, $dialect, $tableMap, $columnMaps, $model,
-                    $scopeValue, $scopeFieldByModel, $refs,
+                    $scopeValue, $scopeFieldByModel, $refs, $schema,
                 );
+            }
+
+            // Delete cycle nodes after their non-cycle dependents are gone
+            foreach ($cycles as $cycle) {
+                foreach ($cycle as $model) {
+                    self::deleteModel(
+                        $tx, $dialect, $tableMap, $columnMaps, $model,
+                        $scopeValue, $scopeFieldByModel, $refs, $schema,
+                    );
+                }
             }
 
             // Delete scope root last
@@ -112,7 +112,24 @@ class Teardown
                 $dbTable = $tableMap[$scopeRootModel] ?? null;
                 $colMap = $columnMaps[$scopeRootModel] ?? [];
                 if ($dbTable !== null) {
-                    $idCol = $colMap['id'] ?? 'id';
+                    // Find PK field name for scope root model
+                    $rootModelInfo = null;
+                    foreach ($schema->models as $m) {
+                        if ($m->name === $scopeRootModel) {
+                            $rootModelInfo = $m;
+                            break;
+                        }
+                    }
+                    $rootPkFieldName = 'id';
+                    if ($rootModelInfo !== null) {
+                        foreach ($rootModelInfo->fields as $f) {
+                            if ($f->isId) {
+                                $rootPkFieldName = $f->name;
+                                break;
+                            }
+                        }
+                    }
+                    $idCol = $colMap[$rootPkFieldName] ?? $rootPkFieldName;
                     $tx->query(
                         sprintf(
                             'DELETE FROM %s WHERE %s = %s',
@@ -136,10 +153,29 @@ class Teardown
         string $scopeValue,
         array $scopeFieldByModel,
         ?array $refs,
+        SchemaInfo $schema,
     ): void {
         $dbTable = $tableMap[$model] ?? null;
         if ($dbTable === null) return;
         $colMap = $columnMaps[$model] ?? [];
+
+        // Find actual PK field name from schema
+        $modelInfo = null;
+        foreach ($schema->models as $m) {
+            if ($m->name === $model) {
+                $modelInfo = $m;
+                break;
+            }
+        }
+        $pkFieldName = 'id';
+        if ($modelInfo !== null) {
+            foreach ($modelInfo->fields as $f) {
+                if ($f->isId) {
+                    $pkFieldName = $f->name;
+                    break;
+                }
+            }
+        }
 
         $scopeFk = $scopeFieldByModel[$model] ?? null;
         if ($scopeFk !== null) {
@@ -156,12 +192,13 @@ class Teardown
         } elseif ($refs !== null && isset($refs[$model])) {
             $ids = [];
             foreach ($refs[$model] as $r) {
-                if (isset($r['id']) && is_string($r['id'])) {
-                    $ids[] = $r['id'];
+                $id = $r[$pkFieldName] ?? null;
+                if ($id !== null) {
+                    $ids[] = $id;
                 }
             }
             if (!empty($ids)) {
-                $idCol = $colMap['id'] ?? 'id';
+                $idCol = $colMap[$pkFieldName] ?? $pkFieldName;
                 $placeholders = implode(', ', array_map(fn($i) => $dialect->param($i + 1), range(0, count($ids) - 1)));
                 $tx->query(
                     sprintf(

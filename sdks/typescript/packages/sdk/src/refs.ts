@@ -40,7 +40,9 @@ export function verifyRefs(
 }
 
 function base64url(obj: unknown): string {
-  return Buffer.from(JSON.stringify(obj)).toString('base64url')
+  return Buffer.from(JSON.stringify(obj, (_key, value) =>
+    typeof value === 'bigint' ? value.toString() : value
+  )).toString('base64url')
 }
 
 function hmac(data: string, secret: string): string {

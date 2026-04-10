@@ -180,7 +180,7 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 
 	tree := ResolveTree(create, schema, testRunID)
 	refs := make(map[string][]map[string]any)
-	idMap := make(map[string]string)
+	idMap := make(map[string]any)
 
 	err = config.Executor.Transaction(ctx, func(tx SQLExecutor) error {
 		i := 0
@@ -204,11 +204,25 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 				}
 			}
 
+			// Bug 4: find actual PK field name from schema
+			pkFieldName := "id"
+			for _, mi := range schema.Models {
+				if mi.Name == model {
+					for _, f := range mi.Fields {
+						if f.IsId {
+							pkFieldName = f.Name
+							break
+						}
+					}
+					break
+				}
+			}
+
 			resolvedFields := make([]map[string]any, len(batch))
 			for j, b := range batch {
 				fields := make(map[string]any)
 				for k, v := range b.Fields {
-					if k == "id" {
+					if k == pkFieldName {
 						continue
 					}
 					fields[k] = v
@@ -256,7 +270,7 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 				model: {Count: len(resolvedFields), Fields: resolvedFields, Batch: op.Batch},
 			}
 
-			created, err := CreateEntities(ctx, tx, dialect, introspection.TableMap, introspection.ColumnMaps, spec, introspection.EnumTypeMaps)
+			created, err := CreateEntities(ctx, tx, dialect, introspection.TableMap, introspection.ColumnMaps, spec, introspection.EnumTypeMaps, schema.Models)
 			if err != nil {
 				return err
 			}
@@ -267,10 +281,11 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 			}
 			refs[model] = append(refs[model], records...)
 
+			// Bug 3: accept any non-nil value for idMap, not just strings
 			for j, b := range batch {
 				if j < len(records) {
 					record := records[j]
-					if id, ok := record["id"].(string); ok {
+					if id := record[pkFieldName]; id != nil {
 						idMap[b.TempID] = id
 					}
 				}
@@ -283,17 +298,31 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 		for _, deferred := range tree.DeferredUpdates {
 			realTargetID := idMap[deferred.TargetTempID]
 			refTempID, aliasExists := tree.Aliases[deferred.RefAlias]
-			var realRefID string
+			var realRefID any
 			if aliasExists {
 				realRefID = idMap[refTempID]
 			}
 
-			if realTargetID == "" || realRefID == "" {
+			if realTargetID == nil || realRefID == nil {
 				return fmt.Errorf(`_ref "%s" could not be resolved. Ensure the referenced node has _alias defined in the scenario`, deferred.RefAlias)
 			}
 
+			// Bug 4: find PK field name for deferred model
+			deferredPkFieldName := "id"
+			for _, mi := range schema.Models {
+				if mi.Name == deferred.Model {
+					for _, f := range mi.Fields {
+						if f.IsId {
+							deferredPkFieldName = f.Name
+							break
+						}
+					}
+					break
+				}
+			}
+
 			err := UpdateEntity(ctx, tx, dialect, introspection.TableMap, introspection.ColumnMaps,
-				deferred.Model, realTargetID, map[string]any{deferred.Field: realRefID}, introspection.EnumTypeMaps)
+				deferred.Model, fmt.Sprintf("%v", realTargetID), map[string]any{deferred.Field: realRefID}, introspection.EnumTypeMaps, deferredPkFieldName)
 			if err != nil {
 				return err
 			}
@@ -373,9 +402,11 @@ func handleDown(ctx context.Context, config *HandlerConfig, body map[string]any)
 	return &HandlerResponse{Status: 200, Body: resp}, nil
 }
 
+// Bug 8: match both "user" and "users" (case-insensitive)
 func findFirstUser(refs map[string][]map[string]any) map[string]any {
 	for model, records := range refs {
-		if strings.EqualFold(model, "user") && len(records) > 0 {
+		normalized := strings.ToLower(model)
+		if (normalized == "user" || normalized == "users") && len(records) > 0 {
 			return records[0]
 		}
 	}

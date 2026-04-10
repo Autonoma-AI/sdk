@@ -1,5 +1,7 @@
 package ai.autonoma.sdk;
 
+import ai.autonoma.sdk.types.FieldInfo;
+import ai.autonoma.sdk.types.ModelInfo;
 import ai.autonoma.sdk.types.SQLExecutor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,7 +33,8 @@ public final class EntityCreator {
             Map<String, String> tableMap,
             Map<String, Map<String, String>> columnMaps,
             Map<String, Map<String, Object>> spec,
-            Map<String, Map<String, String>> enumTypeMaps) {
+            Map<String, Map<String, String>> enumTypeMaps,
+            List<ModelInfo> schemaModels) {
 
         Map<String, List<Map<String, Object>>> results = new LinkedHashMap<>();
 
@@ -44,16 +47,26 @@ public final class EntityCreator {
             Map<String, String> colMap = columnMaps.getOrDefault(model, Map.of());
             Map<String, String> enumTypeMap = enumTypeMaps != null ? enumTypeMaps.getOrDefault(model, Map.of()) : Map.of();
 
+            // Bug 4: find actual PK field name from schema
+            ModelInfo modelInfo = schemaModels != null
+                ? schemaModels.stream().filter(m -> m.name().equals(model)).findFirst().orElse(null)
+                : null;
+            FieldInfo pkField = modelInfo != null
+                ? modelInfo.fields().stream().filter(FieldInfo::isId).findFirst().orElse(null)
+                : null;
+            String pkFieldName = pkField != null ? pkField.name() : "id";
+            String pkFieldType = pkField != null ? pkField.type() : "String";
+
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> fieldsList = (List<Map<String, Object>>) entitySpec.get("fields");
             boolean batch = Boolean.TRUE.equals(entitySpec.get("batch"));
 
             if (batch && !fieldsList.isEmpty()) {
-                results.put(model, insertBatch(executor, dialect, dbTable, colMap, enumTypeMap, fieldsList));
+                results.put(model, insertBatch(executor, dialect, dbTable, colMap, enumTypeMap, fieldsList, pkFieldName, pkFieldType));
             } else {
                 List<Map<String, Object>> created = new ArrayList<>();
                 for (Map<String, Object> fields : fieldsList) {
-                    List<Map<String, Object>> records = insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields);
+                    List<Map<String, Object>> records = insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields, pkFieldName, pkFieldType);
                     if (!records.isEmpty()) created.add(records.get(0));
                 }
                 results.put(model, created);
@@ -74,7 +87,8 @@ public final class EntityCreator {
             String model,
             String id,
             Map<String, Object> fields,
-            Map<String, Map<String, String>> enumTypeMaps) {
+            Map<String, Map<String, String>> enumTypeMaps,
+            String pkFieldName) {
 
         String dbTable = tableMap.get(model);
         if (dbTable == null) throw new RuntimeException("Unknown model \"" + model + "\" for update.");
@@ -92,7 +106,7 @@ public final class EntityCreator {
             paramIdx++;
         }
 
-        String idCol = colMap.getOrDefault("id", "id");
+        String idCol = colMap.getOrDefault(pkFieldName, pkFieldName);
         params.add(id);
 
         String sql = "UPDATE " + dialect.quoteId(dbTable) + " SET " + String.join(", ", setClauses)
@@ -108,13 +122,15 @@ public final class EntityCreator {
             String dbTable,
             Map<String, String> colMap,
             Map<String, String> enumTypeMap,
-            Map<String, Object> fields) {
+            Map<String, Object> fields,
+            String pkFieldName,
+            String pkFieldType) {
 
-        // Generate client-side UUID when none provided and table has 'id' column
-        String idFieldName = reverseGet(colMap, findIdCol(colMap));
-        if (idFieldName != null && !fields.containsKey(idFieldName)) {
+        // Generate client-side UUID when none provided and PK type is String.
+        // Int/BigInt PKs use DB auto-increment, so skip UUID generation.
+        if (pkFieldName != null && !fields.containsKey(pkFieldName) && "String".equals(pkFieldType)) {
             fields = new LinkedHashMap<>(fields);
-            fields.put(idFieldName, UUID.randomUUID().toString());
+            fields.put(pkFieldName, UUID.randomUUID().toString());
         }
 
         if (fields.isEmpty()) {
@@ -146,8 +162,8 @@ public final class EntityCreator {
         // MySQL: INSERT then SELECT back
         executor.query("INSERT INTO " + dialect.quoteId(dbTable) + " (" + colList + ") VALUES (" + valList + ")", params.toArray());
 
-        String idCol = findIdCol(colMap);
-        Object id = fields.get(idFieldName != null ? idFieldName : "id");
+        String idCol = colMap.getOrDefault(pkFieldName, pkFieldName);
+        Object id = fields.get(pkFieldName != null ? pkFieldName : "id");
         return mapRowsBack(
             executor.query("SELECT * FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(idCol) + " = " + dialect.param(1), id),
             colMap
@@ -160,18 +176,20 @@ public final class EntityCreator {
             String dbTable,
             Map<String, String> colMap,
             Map<String, String> enumTypeMap,
-            List<Map<String, Object>> fieldsArr) {
+            List<Map<String, Object>> fieldsArr,
+            String pkFieldName,
+            String pkFieldType) {
 
         if (fieldsArr.isEmpty()) return List.of();
 
-        // Generate client-side IDs
-        String idFieldName = reverseGet(colMap, findIdCol(colMap));
-        if (idFieldName != null) {
-            String finalIdFieldName = idFieldName;
+        // Generate client-side IDs only when PK type is String.
+        // Int/BigInt PKs use DB auto-increment.
+        if (pkFieldName != null && "String".equals(pkFieldType)) {
+            String finalPkFieldName = pkFieldName;
             fieldsArr = fieldsArr.stream().map(fields -> {
-                if (!fields.containsKey(finalIdFieldName)) {
+                if (!fields.containsKey(finalPkFieldName)) {
                     Map<String, Object> copy = new LinkedHashMap<>(fields);
-                    copy.put(finalIdFieldName, UUID.randomUUID().toString());
+                    copy.put(finalPkFieldName, UUID.randomUUID().toString());
                     return copy;
                 }
                 return fields;
@@ -189,7 +207,7 @@ public final class EntityCreator {
         if (fieldNames.isEmpty()) {
             List<Map<String, Object>> results = new ArrayList<>();
             for (Map<String, Object> fields : fieldsArr) {
-                List<Map<String, Object>> records = insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields);
+                List<Map<String, Object>> records = insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields, pkFieldName, pkFieldType);
                 if (!records.isEmpty()) results.add(records.get(0));
             }
             return results;
@@ -253,17 +271,6 @@ public final class EntityCreator {
         return result;
     }
 
-    private static String findIdCol(Map<String, String> colMap) {
-        return colMap.getOrDefault("id", "id");
-    }
-
-    private static String reverseGet(Map<String, String> map, String dbName) {
-        for (var entry : map.entrySet()) {
-            if (entry.getValue().equals(dbName)) return entry.getKey();
-        }
-        return null;
-    }
-
     private static String castParam(Dialect dialect, int paramIdx, Map<String, String> enumTypeMap, String fieldName) {
         String placeholder = dialect.param(paramIdx);
         if ("postgres".equals(dialect.name())) {
@@ -277,8 +284,12 @@ public final class EntityCreator {
     private static Object serializeValue(Object value, Dialect dialect) {
         if (value == null) return null;
 
-        // JSON: stringify maps and lists
-        if (value instanceof Map || value instanceof List) {
+        // JSON: stringify objects/dicts for JSON/JSONB columns.
+        // Arrays are returned as native arrays for Postgres ARRAY columns.
+        if (value instanceof List) {
+            return value;
+        }
+        if (value instanceof Map) {
             try {
                 return MAPPER.writeValueAsString(value);
             } catch (Exception e) {

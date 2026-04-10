@@ -115,7 +115,7 @@ async function handleUp(
 
   const tree = resolveTree(create, schema, testRunId)
   const refs: Record<string, Record<string, unknown>[]> = {}
-  const idMap = new Map<string, string>()
+  const idMap = new Map<string, string | number>()
 
   await config.executor.transaction(async (tx) => {
     let i = 0
@@ -132,9 +132,11 @@ async function handleUp(
 
       // Replace temp IDs with real IDs in all fields
       const modelInfo = schema.models.find((m) => m.name === model)
+      const pkField = modelInfo?.fields.find((f) => f.isId)
+      const pkFieldName = pkField?.name ?? 'id'
       const resolvedFields = batch.map((b) => {
         const fields = { ...b.fields }
-        delete fields.id
+        delete fields[pkFieldName]
         for (const [key, value] of Object.entries(fields)) {
           if (typeof value === 'string' && value.startsWith('__temp_')) {
             const realId = idMap.get(value)
@@ -167,7 +169,7 @@ async function handleUp(
       }
 
       const context = { testRunId, refs }
-      const created = await createEntities(tx, dialect, tableMap, columnMaps, spec, context, enumTypeMaps)
+      const created = await createEntities(tx, dialect, tableMap, columnMaps, spec, context, enumTypeMaps, schema.models)
       const records = created[model] ?? []
 
       if (!refs[model]) refs[model] = []
@@ -175,8 +177,11 @@ async function handleUp(
 
       for (let j = 0; j < batch.length; j++) {
         const record = records[j]
-        if (record && typeof record.id === 'string') {
-          idMap.set(batch[j]!.tempId, record.id)
+        if (record) {
+          const recordId = record[pkFieldName]
+          if (recordId != null) {
+            idMap.set(batch[j]!.tempId, recordId as string | number)
+          }
         }
       }
 
@@ -195,7 +200,9 @@ async function handleUp(
         )
       }
 
-      await updateEntity(tx, dialect, tableMap, columnMaps, deferred.model, realTargetId, { [deferred.field]: realRefId }, enumTypeMaps)
+      const deferredModelInfo = schema.models.find((m) => m.name === deferred.model)
+      const deferredPkFieldName = deferredModelInfo?.fields.find((f) => f.isId)?.name ?? 'id'
+      await updateEntity(tx, dialect, tableMap, columnMaps, deferred.model, String(realTargetId), { [deferred.field]: realRefId }, enumTypeMaps, deferredPkFieldName)
     }
   })
 
@@ -239,7 +246,8 @@ function findFirstUser(
   refs: Record<string, Record<string, unknown>[]>,
 ): Record<string, unknown> | null {
   for (const [model, records] of Object.entries(refs)) {
-    if (model.toLowerCase() === 'user' && records.length > 0) {
+    const normalized = model.toLowerCase()
+    if ((normalized === 'user' || normalized === 'users') && records.length > 0) {
       return records[0]!
     }
   }

@@ -3,7 +3,7 @@ defmodule Autonoma.Create do
 
   @mysql_datetime_re ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
 
-  def create_entities(executor, dialect, table_map, column_maps, spec, enum_type_maps \\ %{}) do
+  def create_entities(executor, dialect, table_map, column_maps, spec, enum_type_maps \\ %{}, schema_models \\ []) do
     Enum.reduce(spec, %{}, fn {model, entity_spec}, acc ->
       db_table = Map.get(table_map, model) || raise "Unknown model \"#{model}\"."
       col_map = Map.get(column_maps, model, %{})
@@ -11,12 +11,18 @@ defmodule Autonoma.Create do
       fields_list = Map.get(entity_spec, "fields", [])
       is_batch = Map.get(entity_spec, "batch", false)
 
+      # Bug 4: find actual PK field name from schema
+      model_info = Enum.find(schema_models, fn m -> m["name"] == model end)
+      pk_field = if model_info, do: Enum.find(model_info["fields"] || [], fn f -> f["isId"] end)
+      pk_field_name = if pk_field, do: pk_field["name"], else: "id"
+      pk_field_type = if pk_field, do: pk_field["type"], else: "String"
+
       records =
         if is_batch && length(fields_list) > 0 do
-          insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_list)
+          insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_list, pk_field_name, pk_field_type)
         else
           Enum.flat_map(fields_list, fn fields ->
-            insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
+            insert_one(executor, dialect, db_table, col_map, enum_type_map, fields, pk_field_name, pk_field_type)
           end)
         end
 
@@ -24,7 +30,7 @@ defmodule Autonoma.Create do
     end)
   end
 
-  def update_entity(executor, dialect, table_map, column_maps, model, record_id, fields, enum_type_maps \\ %{}) do
+  def update_entity(executor, dialect, table_map, column_maps, model, record_id, fields, enum_type_maps \\ %{}, pk_field_name \\ "id") do
     db_table = Map.get(table_map, model) || raise "Unknown model \"#{model}\" for update."
     col_map = Map.get(column_maps, model, %{})
     enum_type_map = Map.get(enum_type_maps, model, %{})
@@ -36,17 +42,21 @@ defmodule Autonoma.Create do
         {clauses ++ [clause], ps ++ [serialize_value(value, dialect)], idx + 1}
       end)
 
-    id_col = Map.get(col_map, "id", "id")
+    id_col = Map.get(col_map, pk_field_name, pk_field_name)
     sql = "UPDATE #{dialect.quote_id(db_table)} SET #{Enum.join(set_clauses, ", ")} WHERE #{dialect.quote_id(id_col)} = #{dialect.param(param_idx)}"
     executor.(:query, sql, params ++ [record_id])
   end
 
   # --- Internal ---
 
-  defp insert_one(executor, dialect, db_table, col_map, enum_type_map, fields) do
-    # Generate client-side UUID for 'id' column
-    id_field = reverse_get(col_map, find_id_col(col_map))
-    fields = if id_field && !Map.has_key?(fields, id_field), do: Map.put(fields, id_field, UUID.uuid4()), else: fields
+  defp insert_one(executor, dialect, db_table, col_map, enum_type_map, fields, pk_field_name \\ "id", pk_field_type \\ "String") do
+    # Bug 1: Only generate UUID when PK type is String; Int/BigInt use DB auto-increment
+    fields =
+      if pk_field_name && !Map.has_key?(fields, pk_field_name) && pk_field_type == "String" do
+        Map.put(fields, pk_field_name, UUID.uuid4())
+      else
+        fields
+      end
 
     entries = Map.to_list(fields)
 
@@ -73,8 +83,8 @@ defmodule Autonoma.Create do
         executor.(:query, sql, params) |> map_rows_back(col_map)
       else
         executor.(:query, "INSERT INTO #{dialect.quote_id(db_table)} (#{col_list}) VALUES (#{val_list})", params)
-        id_col = find_id_col(col_map)
-        record_id = Map.get(fields, id_field || "id")
+        id_col = Map.get(col_map, pk_field_name, pk_field_name)
+        record_id = Map.get(fields, pk_field_name)
         executor.(:query, "SELECT * FROM #{dialect.quote_id(db_table)} WHERE #{dialect.quote_id(id_col)} = #{dialect.param(1)}", [record_id])
         |> map_rows_back(col_map)
       end
@@ -83,14 +93,13 @@ defmodule Autonoma.Create do
 
   defp insert_batch(_executor, _dialect, _db_table, _col_map, _enum_type_map, []), do: []
 
-  defp insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_arr) do
+  defp insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_arr, pk_field_name \\ "id", pk_field_type \\ "String") do
 
-    # Generate client-side IDs
-    id_field = reverse_get(col_map, find_id_col(col_map))
+    # Bug 1: Only generate client-side IDs when PK type is String; Int/BigInt use DB auto-increment
     fields_arr =
-      if id_field do
+      if pk_field_name && pk_field_type == "String" do
         Enum.map(fields_arr, fn f ->
-          if Map.has_key?(f, id_field), do: f, else: Map.put(f, id_field, UUID.uuid4())
+          if Map.has_key?(f, pk_field_name), do: f, else: Map.put(f, pk_field_name, UUID.uuid4())
         end)
       else
         fields_arr
@@ -150,12 +159,6 @@ defmodule Autonoma.Create do
     end)
   end
 
-  defp find_id_col(col_map), do: Map.get(col_map, "id", "id")
-
-  defp reverse_get(map, db_name) do
-    Enum.find_value(map, fn {k, v} -> if v == db_name, do: k end)
-  end
-
   defp cast_param(dialect, idx, enum_type_map, field_name) do
     placeholder = dialect.param(idx)
     if dialect.name() == "postgres" do
@@ -176,7 +179,9 @@ defmodule Autonoma.Create do
       DateTime.to_iso8601(dt)
     end
   end
-  defp serialize_value(value, _dialect) when is_map(value) or is_list(value), do: Jason.encode!(value)
+  # Bug 2: Only JSON-encode maps/dicts, NOT lists. Return lists as native values for Postgres ARRAY columns.
+  defp serialize_value(value, _dialect) when is_map(value), do: Jason.encode!(value)
+  defp serialize_value(value, _dialect) when is_list(value), do: value
   defp serialize_value(value, dialect) when is_binary(value) do
     if dialect.name() == "mysql" && Regex.match?(@mysql_datetime_re, value) do
       value |> String.replace("T", " ") |> String.replace("Z", "") |> String.replace(~r/\.\d+$/, "")

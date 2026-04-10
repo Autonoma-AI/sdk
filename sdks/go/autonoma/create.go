@@ -20,6 +20,7 @@ func CreateEntities(
 	columnMaps map[string]map[string]string,
 	spec map[string]ResolvedEntitySpec,
 	enumTypeMaps map[string]map[string]string,
+	schemaModels []ModelInfo,
 ) (map[string][]map[string]any, error) {
 	results := make(map[string][]map[string]any)
 
@@ -37,8 +38,24 @@ func CreateEntities(
 			enumTypeMap = make(map[string]string)
 		}
 
+		// Bug 4: find actual PK field name from schema
+		pkFieldName := "id"
+		pkFieldType := "String"
+		for _, mi := range schemaModels {
+			if mi.Name == model {
+				for _, f := range mi.Fields {
+					if f.IsId {
+						pkFieldName = f.Name
+						pkFieldType = f.Type
+						break
+					}
+				}
+				break
+			}
+		}
+
 		if entitySpec.Batch && len(entitySpec.Fields) > 0 {
-			records, err := insertBatch(ctx, executor, dialect, dbTable, colMap, enumTypeMap, entitySpec.Fields)
+			records, err := insertBatch(ctx, executor, dialect, dbTable, colMap, enumTypeMap, entitySpec.Fields, pkFieldName, pkFieldType)
 			if err != nil {
 				return nil, err
 			}
@@ -46,7 +63,7 @@ func CreateEntities(
 		} else {
 			var created []map[string]any
 			for _, fields := range entitySpec.Fields {
-				records, err := insertOne(ctx, executor, dialect, dbTable, colMap, enumTypeMap, fields)
+				records, err := insertOne(ctx, executor, dialect, dbTable, colMap, enumTypeMap, fields, pkFieldName, pkFieldType)
 				if err != nil {
 					return nil, err
 				}
@@ -72,6 +89,7 @@ func UpdateEntity(
 	id string,
 	fields map[string]any,
 	enumTypeMaps map[string]map[string]string,
+	pkFieldName string,
 ) error {
 	dbTable, ok := tableMap[model]
 	if !ok {
@@ -84,6 +102,10 @@ func UpdateEntity(
 	enumTypeMap := enumTypeMaps[model]
 	if enumTypeMap == nil {
 		enumTypeMap = make(map[string]string)
+	}
+
+	if pkFieldName == "" {
+		pkFieldName = "id"
 	}
 
 	var setClauses []string
@@ -100,9 +122,9 @@ func UpdateEntity(
 		paramIdx++
 	}
 
-	idCol := colMap["id"]
+	idCol := colMap[pkFieldName]
 	if idCol == "" {
-		idCol = "id"
+		idCol = pkFieldName
 	}
 	params = append(params, id)
 
@@ -124,29 +146,21 @@ func insertOne(
 	colMap map[string]string,
 	enumTypeMap map[string]string,
 	fields map[string]any,
+	pkFieldName string,
+	pkFieldType string,
 ) ([]map[string]any, error) {
-	// Generate client-side ID if needed
-	idFieldName := reverseGetMap(colMap, findIDCol(colMap))
-	if idFieldName != "" {
-		if _, exists := fields[idFieldName]; !exists {
+	// Bug 1: Only generate client-side UUID when PK type is String.
+	// Int/BigInt PKs use DB auto-increment.
+	if pkFieldName != "" && pkFieldType == "String" {
+		if _, exists := fields[pkFieldName]; !exists {
 			fieldsCopy := make(map[string]any, len(fields)+1)
 			for k, v := range fields {
 				fieldsCopy[k] = v
 			}
-			fieldsCopy[idFieldName] = uuid.New().String()
+			fieldsCopy[pkFieldName] = uuid.New().String()
 			fields = fieldsCopy
 		}
 	}
-
-	// Remove "id" key if it exists as nil
-	cleanFields := make(map[string]any)
-	for k, v := range fields {
-		if k == "id" && v == nil {
-			continue
-		}
-		cleanFields[k] = v
-	}
-	fields = cleanFields
 
 	if len(fields) == 0 {
 		rows, err := executor.Query(ctx, fmt.Sprintf("INSERT INTO %s DEFAULT VALUES RETURNING *", dialect.QuoteID(dbTable)))
@@ -193,11 +207,11 @@ func insertOne(
 		return nil, err
 	}
 
-	idCol := findIDCol(colMap)
-	idValue := fields[idFieldName]
-	if idFieldName == "" {
-		idValue = fields["id"]
+	idCol := colMap[pkFieldName]
+	if idCol == "" {
+		idCol = pkFieldName
 	}
+	idValue := fields[pkFieldName]
 
 	selectSQL := fmt.Sprintf("SELECT * FROM %s WHERE %s = %s",
 		dialect.QuoteID(dbTable), dialect.QuoteID(idCol), dialect.Param(1))
@@ -216,22 +230,24 @@ func insertBatch(
 	colMap map[string]string,
 	enumTypeMap map[string]string,
 	fieldsArr []map[string]any,
+	pkFieldName string,
+	pkFieldType string,
 ) ([]map[string]any, error) {
 	if len(fieldsArr) == 0 {
 		return nil, nil
 	}
 
-	// Generate client-side IDs
-	idFieldName := reverseGetMap(colMap, findIDCol(colMap))
-	if idFieldName != "" {
+	// Bug 1: Only generate client-side UUIDs when PK type is String.
+	// Int/BigInt PKs use DB auto-increment.
+	if pkFieldName != "" && pkFieldType == "String" {
 		newFieldsArr := make([]map[string]any, len(fieldsArr))
 		for i, fields := range fieldsArr {
-			if _, exists := fields[idFieldName]; !exists {
+			if _, exists := fields[pkFieldName]; !exists {
 				fieldsCopy := make(map[string]any, len(fields)+1)
 				for k, v := range fields {
 					fieldsCopy[k] = v
 				}
-				fieldsCopy[idFieldName] = uuid.New().String()
+				fieldsCopy[pkFieldName] = uuid.New().String()
 				newFieldsArr[i] = fieldsCopy
 			} else {
 				newFieldsArr[i] = fields
@@ -337,13 +353,6 @@ func mapRowsBack(rows []map[string]any, colMap map[string]string) []map[string]a
 	return result
 }
 
-func findIDCol(colMap map[string]string) string {
-	if v, ok := colMap["id"]; ok {
-		return v
-	}
-	return "id"
-}
-
 func castParam(dialect *Dialect, paramIdx int, enumTypeMap map[string]string, fieldName string) string {
 	placeholder := dialect.Param(paramIdx)
 	if dialect.Name == "postgres" {
@@ -369,12 +378,9 @@ func serializeValue(value any, dialect *Dialect) any {
 		return t.Format(time.RFC3339Nano)
 	}
 
-	// JSON: maps and slices need to be stringified
-	switch v := value.(type) {
-	case map[string]any:
-		b, _ := json.Marshal(v)
-		return string(b)
-	case []any:
+	// JSON: stringify maps for JSON/JSONB columns.
+	// Arrays are returned as native values for Postgres ARRAY columns.
+	if v, ok := value.(map[string]any); ok {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}

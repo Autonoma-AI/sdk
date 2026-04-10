@@ -9,7 +9,7 @@ module Autonoma
     MYSQL_DATETIME_RE = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
 
     # Create entities from a resolved spec. Spec maps model name -> {count, fields[], batch}.
-    def self.create_entities(executor, dialect, table_map, column_maps, spec, enum_type_maps = {})
+    def self.create_entities(executor, dialect, table_map, column_maps, spec, enum_type_maps = {}, schema_models = [])
       enum_type_maps ||= {}
       results = {}
 
@@ -20,14 +20,20 @@ module Autonoma
         col_map = column_maps[model] || {}
         enum_type_map = enum_type_maps[model] || {}
 
+        # Bug 4: find actual PK field name from schema
+        model_info = schema_models.find { |m| m.name == model }
+        pk_field = model_info&.fields&.find { |f| f.is_id }
+        pk_field_name = pk_field&.name || "id"
+        pk_field_type = pk_field&.type || "String"
+
         fields_list = entity_spec["fields"] || entity_spec[:fields] || []
         is_batch = entity_spec["batch"] || entity_spec[:batch] || false
 
         results[model] = if is_batch && fields_list.any?
-                           insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_list)
+                           insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_list, pk_field_name, pk_field_type)
                          else
                            fields_list.map do |fields|
-                             rows = insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
+                             rows = insert_one(executor, dialect, db_table, col_map, enum_type_map, fields, pk_field_name, pk_field_type)
                              rows.first
                            end.compact
                          end
@@ -37,7 +43,7 @@ module Autonoma
     end
 
     # Update a single record by primary key. Used for circular FK backfill.
-    def self.update_entity(executor, dialect, table_map, column_maps, model, record_id, fields, enum_type_maps = nil)
+    def self.update_entity(executor, dialect, table_map, column_maps, model, record_id, fields, enum_type_maps = nil, pk_field_name = "id")
       db_table = table_map[model]
       raise "Unknown model \"#{model}\" for update." unless db_table
 
@@ -55,7 +61,7 @@ module Autonoma
         param_idx += 1
       end
 
-      id_col = col_map["id"] || "id"
+      id_col = col_map[pk_field_name] || pk_field_name
       params << record_id
 
       sql = "UPDATE #{dialect.quote_id(db_table)} SET #{set_clauses.join(', ')} WHERE #{dialect.quote_id(id_col)} = #{dialect.param(param_idx)}"
@@ -64,11 +70,11 @@ module Autonoma
 
     # --- Internal helpers ---
 
-    def self.insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
-      # Generate client-side UUID for 'id' column if not provided
-      id_field_name = reverse_get(col_map, find_id_col(col_map))
-      if id_field_name && !fields.key?(id_field_name)
-        fields = fields.merge(id_field_name => SecureRandom.uuid)
+    def self.insert_one(executor, dialect, db_table, col_map, enum_type_map, fields, pk_field_name = "id", pk_field_type = "String")
+      # Generate client-side UUID only when PK type is String.
+      # Int/BigInt PKs use DB auto-increment, so we skip UUID generation for those.
+      if pk_field_name && !fields.key?(pk_field_name) && pk_field_type == "String"
+        fields = fields.merge(pk_field_name => SecureRandom.uuid)
       end
 
       entries = fields.to_a
@@ -79,8 +85,8 @@ module Autonoma
         end
 
         executor.query("INSERT INTO #{dialect.quote_id(db_table)} () VALUES ()")
-        id_col = find_id_col(col_map)
-        record_id = fields[id_field_name || "id"]
+        id_col = col_map[pk_field_name] || pk_field_name
+        record_id = fields[pk_field_name]
         raise "Cannot fetch inserted row without RETURNING support and a known id" if record_id.nil?
 
         return map_rows_back(
@@ -118,8 +124,8 @@ module Autonoma
         "INSERT INTO #{dialect.quote_id(db_table)} (#{col_list}) VALUES (#{val_list})",
         params
       )
-      id_col = find_id_col(col_map)
-      record_id = fields[id_field_name || "id"]
+      id_col = col_map[pk_field_name] || pk_field_name
+      record_id = fields[pk_field_name]
       map_rows_back(
         executor.query(
           "SELECT * FROM #{dialect.quote_id(db_table)} WHERE #{dialect.quote_id(id_col)} = #{dialect.param(1)}",
@@ -129,14 +135,14 @@ module Autonoma
       )
     end
 
-    def self.insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_arr)
+    def self.insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_arr, pk_field_name = "id", pk_field_type = "String")
       return [] if fields_arr.empty?
 
-      # Generate client-side IDs
-      id_field_name = reverse_get(col_map, find_id_col(col_map))
-      if id_field_name
+      # Generate client-side IDs only when PK type is String.
+      # Int/BigInt PKs use DB auto-increment.
+      if pk_field_name && pk_field_type == "String"
         fields_arr = fields_arr.map do |f|
-          f.key?(id_field_name) ? f : f.merge(id_field_name => SecureRandom.uuid)
+          f.key?(pk_field_name) ? f : f.merge(pk_field_name => SecureRandom.uuid)
         end
       end
 
@@ -186,10 +192,10 @@ module Autonoma
             params
           )
           # Select back inserted rows by client-generated IDs
-          if id_field_name
-            ids = chunk.map { |f| f[id_field_name] }.compact
+          if pk_field_name
+            ids = chunk.map { |f| f[pk_field_name] }.compact
             if ids.any?
-              id_col = find_id_col(col_map)
+              id_col = col_map[pk_field_name] || pk_field_name
               placeholders = ids.each_with_index.map { |_, i| dialect.param(i + 1) }.join(", ")
               all_results.concat(
                 map_rows_back(
@@ -215,15 +221,6 @@ module Autonoma
       rows.map { |row| row.transform_keys { |k| reverse[k] || k } }
     end
 
-    def self.find_id_col(col_map)
-      col_map["id"] || "id"
-    end
-
-    def self.reverse_get(mapping, db_name)
-      mapping.each { |key, val| return key if val == db_name }
-      nil
-    end
-
     def self.cast_param(dialect, param_idx, enum_type_map, field_name)
       placeholder = dialect.param(param_idx)
       if dialect.name == "postgres"
@@ -236,8 +233,10 @@ module Autonoma
     def self.serialize_value(value, dialect)
       return value if value.nil?
 
-      # JSON: stringify hashes/arrays
-      return JSON.generate(value) if value.is_a?(Hash) || value.is_a?(Array)
+      # JSON: stringify hashes (objects) for JSON/JSONB columns.
+      # Arrays are returned as-is for Postgres ARRAY columns.
+      return value if value.is_a?(Array)
+      return JSON.generate(value) if value.is_a?(Hash)
 
       # Time objects
       if value.is_a?(Time)
@@ -260,7 +259,7 @@ module Autonoma
       value
     end
 
-    private_class_method :insert_one, :insert_batch, :map_rows_back, :find_id_col,
-                         :reverse_get, :cast_param, :serialize_value
+    private_class_method :insert_one, :insert_batch, :map_rows_back,
+                         :cast_param, :serialize_value
   end
 end
