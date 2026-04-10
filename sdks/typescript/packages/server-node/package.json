@@ -1,6 +1,6 @@
 {
   "name": "@autonoma-ai/server-node",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Node.js http server adapter for Autonoma SDK",
   "type": "module",
   "exports": {

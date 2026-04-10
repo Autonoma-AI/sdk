@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/Autonoma-AI/sdk/compare/v0.1.9...v0.1.10) (2026-04-10)
+
+
+### Bug Fixes
+
+* auto-trigger publish on release and add LICENSE to all SDKs ([#27](https://github.com/Autonoma-AI/sdk/issues/27)) ([a844216](https://github.com/Autonoma-AI/sdk/commit/a844216af92a019069968d31c17e6d2672c83c98))
+
 ## [0.1.9](https://github.com/Autonoma-AI/sdk/compare/v0.1.8...v0.1.9) (2026-04-10)
 
 
