@@ -1,6 +1,5 @@
-"""Autonoma SDK — SQLAlchemy ORM adapter."""
+"""Autonoma SDK — SQLAlchemy executor."""
 
-from autonoma_sqlalchemy.adapter import SQLAlchemyAdapter
 from autonoma_sqlalchemy.executor import sqlalchemy_executor, SQLAlchemyExecutor
 
-__all__ = ["SQLAlchemyAdapter", "sqlalchemy_executor", "SQLAlchemyExecutor"]
+__all__ = ["sqlalchemy_executor", "SQLAlchemyExecutor"]

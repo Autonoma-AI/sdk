@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 
 @dataclass
@@ -82,14 +82,6 @@ class HandlerRequest:
 class HandlerResponse:
     status: int
     body: dict[str, Any]
-
-
-# Legacy ORM adapter protocol — kept for backward compat
-@runtime_checkable
-class OrmAdapter(Protocol):
-    def get_schema(self) -> dict[str, Any]: ...
-    async def create_entities(self, spec: dict[str, Any], context: dict[str, Any]) -> dict[str, list[dict[str, Any]]]: ...
-    async def teardown(self, scope_value: str, refs: Optional[dict[str, Any]] = None) -> None: ...
 
 
 @dataclass
