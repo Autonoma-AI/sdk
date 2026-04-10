@@ -76,9 +76,9 @@ pub trait SqlExecutor: Send + Sync {
 }
 
 /// Context passed to the auth callback alongside the user record.
-pub struct AuthContext {
-    pub scope_value: String,
-    pub refs: HashMap<String, Vec<HashMap<String, Value>>>,
+pub struct AuthContext<'a> {
+    pub scope_value: &'a str,
+    pub refs: &'a HashMap<String, Vec<HashMap<String, Value>>>,
 }
 
 /// Configuration for the Autonoma request handler.
@@ -87,7 +87,7 @@ pub struct HandlerConfig {
     pub scope_field: String,
     pub shared_secret: String,
     pub signing_secret: String,
-    pub auth: Box<dyn Fn(Option<&HashMap<String, Value>>, &AuthContext) -> HashMap<String, Value> + Send + Sync>,
+    pub auth: Box<dyn Fn(Option<&HashMap<String, Value>>, &AuthContext<'_>) -> HashMap<String, Value> + Send + Sync>,
     pub dialect: String,
     pub db_schema: Option<String>,
     pub table_name_map: Option<HashMap<String, String>>,

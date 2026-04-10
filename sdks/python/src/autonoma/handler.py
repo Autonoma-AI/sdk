@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 import uuid
@@ -241,10 +240,9 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
 
     first_user = _find_first_user(refs)
     auth_context = AuthContext(scope_value=scope_value, refs=refs)
-    if asyncio.iscoroutinefunction(config.auth):
-        auth = await config.auth(first_user, auth_context)
-    else:
-        auth = config.auth(first_user, auth_context)
+    auth = config.auth(first_user, auth_context)
+    if inspect.isawaitable(auth):
+        auth = await auth
 
     refs_token = sign_refs(
         {"refs": refs, "testRunId": scope_value, "environment": ""},

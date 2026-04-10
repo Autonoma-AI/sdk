@@ -102,7 +102,7 @@ export interface HandlerConfig {
   /**
    * Auth callback — called after entity creation during `up`.
    * Receives the first User record from refs (or null if no User model exists)
-   * and a context object with scope_value and refs.
+   * and a context object with scopeValue and refs.
    * Must return auth credentials for the test runner.
    */
   auth: (user: Record<string, unknown> | null, context: AuthContext) => Promise<AuthResult> | AuthResult

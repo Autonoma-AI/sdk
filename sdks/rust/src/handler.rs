@@ -378,7 +378,7 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
         .unwrap_or_else(|| test_run_id.clone());
 
     let first_user = find_first_user(&refs);
-    let auth_context = AuthContext { scope_value: scope_value.clone(), refs: refs.clone() };
+    let auth_context = AuthContext { scope_value: &scope_value, refs: &refs };
     let auth = (config.auth)(first_user.as_ref(), &auth_context);
 
     // Convert refs to Value

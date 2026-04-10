@@ -361,7 +361,7 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 	firstUser := findFirstUser(refs)
 	authCtx := AuthContext{ScopeValue: scopeValue, Refs: refs}
 	auth := map[string]any{"token": ""}
-	if config.Auth != nil && firstUser != nil {
+	if config.Auth != nil {
 		authResult, err := config.Auth(firstUser, authCtx)
 		if err != nil {
 			return nil, err
