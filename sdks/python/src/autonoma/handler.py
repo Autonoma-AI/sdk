@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import uuid
 from datetime import datetime, timezone
@@ -10,7 +12,7 @@ from typing import Any
 from .hmac_util import verify_signature
 from .refs import sign_refs, verify_refs
 from .errors import AutonomaError, invalid_signature, invalid_body, unknown_action, production_blocked, invalid_refs_token, same_secrets
-from .types import HandlerConfig, HandlerRequest, HandlerResponse, IntrospectionResult
+from .types import AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, IntrospectionResult
 from .dialect import get_dialect
 from .introspect import introspect_database
 from .tree import resolve_tree
@@ -235,7 +237,11 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
     scope_value = _detect_scope_value(refs, schema.scope_field) or test_run_id
 
     first_user = _find_first_user(refs)
-    auth = config.auth(first_user)
+    auth_context = AuthContext(scope_value=scope_value, refs=refs)
+    if asyncio.iscoroutinefunction(config.auth):
+        auth = await config.auth(first_user, auth_context)
+    else:
+        auth = config.auth(first_user, auth_context)
 
     refs_token = sign_refs(
         {"refs": refs, "testRunId": scope_value, "environment": ""},

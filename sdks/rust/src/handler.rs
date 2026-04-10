@@ -13,7 +13,7 @@ use crate::introspect::introspect_database;
 use crate::refs::{sign_refs, verify_refs};
 use crate::teardown::teardown;
 use crate::tree::resolve_tree;
-use crate::types::{HandlerConfig, HandlerRequest, HandlerResponse, IntrospectionResult};
+use crate::types::{AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, IntrospectionResult};
 
 pub const PROTOCOL_VERSION: &str = include_str!("../../../protocol/version.txt").trim_ascii();
 
@@ -367,7 +367,8 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
         .unwrap_or_else(|| test_run_id.clone());
 
     let first_user = find_first_user(&refs);
-    let auth = (config.auth)(first_user.as_ref());
+    let auth_context = AuthContext { scope_value: scope_value.clone(), refs: refs.clone() };
+    let auth = (config.auth)(first_user.as_ref(), &auth_context);
 
     // Convert refs to Value
     let refs_map: serde_json::Map<String, Value> = refs

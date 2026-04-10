@@ -24,6 +24,8 @@ module Autonoma
 
   HandlerResponse = Struct.new(:status, :body, keyword_init: true)
 
+  AuthContext = Struct.new(:scope_value, :refs, keyword_init: true)
+
   HandlerConfig = Struct.new(
     :executor,
     :scope_field,

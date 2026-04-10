@@ -4,6 +4,7 @@ import ai.autonoma.sdk.types.*;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -82,8 +83,8 @@ class AutonomaHandlerTest {
         assertEquals("INVALID_BODY", resp.body().get("code"));
     }
 
-    private Function<Map<String, Object>, AuthResult> dummyAuth() {
-        return user -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer test-token"));
+    private BiFunction<Map<String, Object>, AuthContext, AuthResult> dummyAuth() {
+        return (user, ctx) -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer test-token"));
     }
 
     private SQLExecutor dummyExecutor() {

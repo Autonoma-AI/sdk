@@ -65,7 +65,7 @@ def handler_view():
         scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,
-        auth=lambda user: {"headers": {"Authorization": "Bearer test-token"}},
+        auth=lambda user, ctx: {"headers": {"Authorization": "Bearer test-token"}},
     )
     return create_django_handler(config)
 

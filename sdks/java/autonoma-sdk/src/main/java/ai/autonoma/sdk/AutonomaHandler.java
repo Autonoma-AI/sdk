@@ -263,7 +263,8 @@ public final class AutonomaHandler {
         if (scopeValue == null) scopeValue = testRunId;
 
         Map<String, Object> firstUser = findFirstUser(refs);
-        AuthResult authResult = config.getAuth().apply(firstUser);
+        AuthContext authContext = new AuthContext(scopeValue, refs);
+        AuthResult authResult = config.getAuth().apply(firstUser, authContext);
         Map<String, Object> auth = serializeAuthResult(authResult);
 
         String refsToken = RefsUtil.signRefs(
