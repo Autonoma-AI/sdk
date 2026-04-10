@@ -16,7 +16,11 @@ require_relative "teardown"
 
 module Autonoma
   module Handler
-    PROTOCOL_VERSION = File.read(File.expand_path("../../../../protocol/version.txt", __dir__)).strip
+    PROTOCOL_VERSION = begin
+      File.read(File.expand_path("../../../../protocol/version.txt", __dir__)).strip
+    rescue Errno::ENOENT, Errno::EACCES
+      "1.0"
+    end
 
     def self.handle_request(config, req)
       if config.shared_secret == config.signing_secret
@@ -156,7 +160,7 @@ module Autonoma
           pk_field_name = pk_field&.name || "id"
 
           resolved_fields = batch.map do |b|
-            fields = b.fields.reject { |k, _| k == pk_field_name }
+            fields = b.fields.dup
 
             # Replace temp IDs with real IDs
             fields.each do |key, value|
@@ -168,7 +172,7 @@ module Autonoma
 
             # Inject scope field if applicable
             scope_edge = schema.edges.find do |e|
-              e.from_model == model && e.local_field.downcase == schema.scope_field.downcase && e.from_model != e.to_model
+              e.from_model == model && e.local_field.delete('_').downcase == schema.scope_field.delete('_').downcase && e.from_model != e.to_model
             end
             if scope_edge && !fields.key?(scope_edge.local_field)
               scope_val = detect_scope_value(refs, schema.scope_field)
@@ -272,11 +276,11 @@ module Autonoma
     end
 
     def self.detect_scope_value(refs, scope_field)
-      scope_lower = scope_field.downcase
+      scope_normalized = scope_field.delete('_').downcase
       refs.each_value do |records|
         records.each do |record|
           record.each do |key, value|
-            return value if key.downcase == scope_lower && value.is_a?(String)
+            return value if key.delete('_').downcase == scope_normalized && value.is_a?(String)
           end
         end
       end

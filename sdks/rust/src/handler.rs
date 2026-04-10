@@ -211,12 +211,7 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
 
         let mut resolved_fields: Vec<HashMap<String, Value>> = Vec::new();
         for b in &batch_ops {
-            let mut fields: HashMap<String, Value> = b
-                .fields
-                .iter()
-                .filter(|(k, _)| k.as_str() != pk_field_name)
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
+            let mut fields: HashMap<String, Value> = b.fields.clone();
 
             // Replace temp IDs with real IDs (Bug 3: use Value, not just String)
             for (key, value) in fields.clone() {
@@ -232,7 +227,7 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
             // Inject scope field if applicable
             let scope_edge = schema.edges.iter().find(|e| {
                 e.from_model == *model
-                    && e.local_field.to_lowercase() == schema.scope_field.to_lowercase()
+                    && normalize_field(&e.local_field) == normalize_field(&schema.scope_field)
                     && e.from_model != e.to_model
             });
             if let Some(se) = scope_edge {
@@ -474,15 +469,19 @@ fn find_first_user(refs: &HashMap<String, Vec<HashMap<String, Value>>>) -> Optio
     None
 }
 
+fn normalize_field(name: &str) -> String {
+    name.replace('_', "").to_lowercase()
+}
+
 fn detect_scope_value(
     refs: &HashMap<String, Vec<HashMap<String, Value>>>,
     scope_field: &str,
 ) -> Option<String> {
-    let scope_lower = scope_field.to_lowercase();
+    let scope_normalized = normalize_field(scope_field);
     for records in refs.values() {
         for record in records {
             for (key, value) in record {
-                if key.to_lowercase() == scope_lower {
+                if normalize_field(key) == scope_normalized {
                     if let Some(s) = value.as_str() {
                         return Some(s.to_string());
                     }
