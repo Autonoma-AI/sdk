@@ -73,6 +73,7 @@ describe('Drizzle executor + PostgreSQL (testcontainers)', { timeout: 120_000 },
   })
 
   afterAll(async () => {
+    pool?.on('error', () => {}) // Suppress connection termination errors during container shutdown
     await pool?.end()
     await container?.stop()
   })
