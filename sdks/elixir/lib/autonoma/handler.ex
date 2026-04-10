@@ -1,7 +1,7 @@
 defmodule Autonoma.Handler do
   @moduledoc """
   Request routing for discover/up/down protocol actions.
-  Supports both SQL-first (executor) and legacy (adapter) config paths.
+  Requires an executor-based config.
   """
 
   alias Autonoma.{Error, HMAC, Refs, Dialect, Introspect, Tree, Create, TeardownSQL}
@@ -20,12 +20,16 @@ defmodule Autonoma.Handler do
     case Process.get(cache_key) do
       nil ->
         dialect = get_dialect(config)
-        result = Introspect.introspect(config.executor, dialect, [
-          scope_field: config.scope_field,
-          schema: Map.get(config, :db_schema),
-          table_name_map: Map.get(config, :table_name_map),
-          exclude_tables: Map.get(config, :exclude_tables, ["_prisma_migrations"])
-        ])
+        opts =
+          [
+            scope_field: config.scope_field,
+            schema: Map.get(config, :db_schema),
+            table_name_map: Map.get(config, :table_name_map),
+            exclude_tables: Map.get(config, :exclude_tables, ["_prisma_migrations"])
+          ]
+          |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+
+        result = Introspect.introspect(config.executor, dialect, opts)
         Process.put(cache_key, result)
         result
       cached ->
@@ -49,7 +53,6 @@ defmodule Autonoma.Handler do
       cond do
         Map.has_key?(sdk, "orm") -> sdk["orm"]
         Map.has_key?(sdk, :orm) -> sdk[:orm]
-        Map.has_key?(config, :adapter) -> get_adapter_name(config.adapter)
         true -> "unknown"
       end
 
@@ -70,10 +73,6 @@ defmodule Autonoma.Handler do
       }
     }
   end
-
-  defp get_adapter_name(%Autonoma.Ecto.Adapter{}), do: "ecto"
-  defp get_adapter_name(%{name: name}), do: name
-  defp get_adapter_name(_), do: "unknown"
 
   # ---------------------------------------------------------------------------
   # Main entry point
@@ -107,17 +106,11 @@ defmodule Autonoma.Handler do
       action = Map.get(body, "action")
       unless action, do: raise(Error.invalid_body("missing action"))
 
-      sql_first? = Map.has_key?(config, :executor)
-
       case action do
-        "discover" ->
-          if sql_first?, do: handle_discover_sql(config), else: handle_discover_legacy(config)
-        "up" ->
-          if sql_first?, do: handle_up_sql(config, body), else: handle_up_legacy(config, body)
-        "down" ->
-          if sql_first?, do: handle_down_sql(config, body), else: handle_down_legacy(config, body)
-        other ->
-          raise Error.unknown_action(other)
+        "discover" -> handle_discover_sql(config)
+        "up" -> handle_up_sql(config, body)
+        "down" -> handle_down_sql(config, body)
+        other -> raise Error.unknown_action(other)
       end
     rescue
       e in Error ->
@@ -216,7 +209,7 @@ defmodule Autonoma.Handler do
 
     resolved_fields =
       Enum.map(batch, fn b ->
-        fields = Map.delete(b.fields, pk_field_name)
+        fields = b.fields
 
         # Replace temp IDs with real IDs
         fields =
@@ -234,7 +227,7 @@ defmodule Autonoma.Handler do
         fields =
           case Enum.find(schema["edges"], fn e ->
             e["from"] == model &&
-              String.downcase(e["localField"]) == String.downcase(schema["scopeField"]) &&
+              normalize_field(e["localField"]) == normalize_field(schema["scopeField"]) &&
               e["from"] != e["to"]
           end) do
             nil -> fields
@@ -328,92 +321,6 @@ defmodule Autonoma.Handler do
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"ok" => true})}
   end
 
-  # ===========================================================================
-  # Legacy adapter path (backward compat)
-  # ===========================================================================
-
-  defp handle_discover_legacy(config) do
-    {schema, _adapter} = adapter_get_schema(config.adapter)
-    %{status: 200, body: Map.merge(build_sdk_meta(config), %{"schema" => schema})}
-  end
-
-  defp handle_up_legacy(config, body) do
-    create = Map.get(body, "create")
-    unless create, do: raise(Error.invalid_body("missing \"create\" in request body"))
-
-    test_run_id = Map.get(body, "testRunId", generate_uuid())
-
-    context = %{"testRunId" => test_run_id, "refs" => %{}}
-    {:ok, refs} = adapter_create_entities(config.adapter, create, context)
-
-    refs_token =
-      Refs.sign(
-        %{"refs" => refs, "testRunId" => test_run_id, "environment" => ""},
-        config.signing_secret
-      )
-
-    first_user = find_first_user(refs)
-    auth = config.auth.(first_user)
-
-    %{status: 200, body: Map.merge(build_sdk_meta(config), %{"auth" => auth, "refs" => refs, "refsToken" => refs_token})}
-  end
-
-  defp handle_down_legacy(config, body) do
-    refs_token = Map.get(body, "refsToken")
-    unless refs_token, do: raise(Error.invalid_body("missing refsToken"))
-
-    payload =
-      try do
-        Refs.verify!(refs_token, config.signing_secret)
-      rescue
-        e -> raise Error.invalid_refs_token(Exception.message(e))
-      end
-
-    adapter_teardown(config.adapter, payload["testRunId"], payload["refs"])
-
-    %{status: 200, body: Map.merge(build_sdk_meta(config), %{"ok" => true})}
-  end
-
-  # ---------------------------------------------------------------------------
-  # Legacy adapter dispatch
-  # ---------------------------------------------------------------------------
-
-  defp adapter_get_schema(%Autonoma.Ecto.Adapter{} = adapter) do
-    Autonoma.Ecto.Adapter.get_schema(adapter)
-  end
-
-  defp adapter_get_schema(%{get_schema: fun}) when is_function(fun, 0) do
-    {fun.(), nil}
-  end
-
-  defp adapter_get_schema(adapter) when is_atom(adapter) do
-    {adapter.get_schema(), nil}
-  end
-
-  defp adapter_create_entities(%Autonoma.Ecto.Adapter{} = adapter, spec, context) do
-    Autonoma.Ecto.Adapter.create_entities(adapter, spec, context)
-  end
-
-  defp adapter_create_entities(%{create_entities: fun}, spec, context) when is_function(fun, 2) do
-    fun.(spec, context)
-  end
-
-  defp adapter_create_entities(adapter, spec, context) when is_atom(adapter) do
-    adapter.create_entities(spec, context)
-  end
-
-  defp adapter_teardown(%Autonoma.Ecto.Adapter{} = adapter, scope_value, refs) do
-    Autonoma.Ecto.Adapter.teardown(adapter, scope_value, refs)
-  end
-
-  defp adapter_teardown(%{teardown: fun}, scope_value, refs) when is_function(fun, 2) do
-    fun.(scope_value, refs)
-  end
-
-  defp adapter_teardown(adapter, scope_value, refs) when is_atom(adapter) do
-    adapter.teardown(scope_value, refs)
-  end
-
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
@@ -428,13 +335,15 @@ defmodule Autonoma.Handler do
     end)
   end
 
+  defp normalize_field(name), do: name |> String.replace("_", "") |> String.downcase()
+
   defp detect_scope_value(refs, scope_field) do
-    scope_lower = String.downcase(scope_field)
+    scope_normalized = normalize_field(scope_field)
 
     Enum.find_value(refs, fn {_model, records} ->
       Enum.find_value(records, fn record ->
         Enum.find_value(record, fn {key, value} ->
-          if String.downcase(to_string(key)) == scope_lower && is_binary(value) do
+          if normalize_field(to_string(key)) == scope_normalized && is_binary(value) do
             value
           end
         end)

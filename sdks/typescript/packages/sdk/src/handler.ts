@@ -136,7 +136,6 @@ async function handleUp(
       const pkFieldName = pkField?.name ?? 'id'
       const resolvedFields = batch.map((b) => {
         const fields = { ...b.fields }
-        delete fields[pkFieldName]
         for (const [key, value] of Object.entries(fields)) {
           if (typeof value === 'string' && value.startsWith('__temp_')) {
             const realId = idMap.get(value)
@@ -145,7 +144,7 @@ async function handleUp(
         }
         // Inject scope field if applicable
         const scopeEdge = schema.edges.find(
-          (e) => e.from === model && e.localField.toLowerCase() === schema.scopeField.toLowerCase() && e.from !== e.to,
+          (e) => e.from === model && e.localField.replace(/_/g, '').toLowerCase() === schema.scopeField.replace(/_/g, '').toLowerCase() && e.from !== e.to,
         )
         if (scopeEdge && !(scopeEdge.localField in fields)) {
           const scopeVal = detectScopeValue(refs, schema.scopeField)
@@ -258,11 +257,11 @@ function detectScopeValue(
   refs: Record<string, Record<string, unknown>[]>,
   scopeField: string,
 ): string | null {
-  const scopeLower = scopeField.toLowerCase()
+  const scopeNormalized = scopeField.replace(/_/g, '').toLowerCase()
   for (const records of Object.values(refs)) {
     for (const record of records) {
       for (const [key, value] of Object.entries(record)) {
-        if (key.toLowerCase() === scopeLower && typeof value === 'string') {
+        if (key.replace(/_/g, '').toLowerCase() === scopeNormalized && typeof value === 'string') {
           return value
         }
       }

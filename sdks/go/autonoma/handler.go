@@ -220,11 +220,8 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 
 			resolvedFields := make([]map[string]any, len(batch))
 			for j, b := range batch {
-				fields := make(map[string]any)
+				fields := make(map[string]any, len(b.Fields))
 				for k, v := range b.Fields {
-					if k == pkFieldName {
-						continue
-					}
 					fields[k] = v
 				}
 
@@ -239,7 +236,7 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 
 				// Inject scope field if applicable
 				for _, edge := range schema.Edges {
-					if edge.From == model && strings.EqualFold(edge.LocalField, schema.ScopeField) && edge.From != edge.To {
+					if edge.From == model && normalizeField(edge.LocalField) == normalizeField(schema.ScopeField) && edge.From != edge.To {
 						if _, exists := fields[edge.LocalField]; !exists {
 							scopeVal := detectScopeValue(refs, schema.ScopeField)
 							if scopeVal != "" {
@@ -413,12 +410,16 @@ func findFirstUser(refs map[string][]map[string]any) map[string]any {
 	return nil
 }
 
+func normalizeField(name string) string {
+	return strings.ToLower(strings.ReplaceAll(name, "_", ""))
+}
+
 func detectScopeValue(refs map[string][]map[string]any, scopeField string) string {
-	scopeLower := strings.ToLower(scopeField)
+	scopeNormalized := normalizeField(scopeField)
 	for _, records := range refs {
 		for _, record := range records {
 			for key, value := range record {
-				if strings.ToLower(key) == scopeLower {
+				if normalizeField(key) == scopeNormalized {
 					if s, ok := value.(string); ok {
 						return s
 					}

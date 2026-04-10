@@ -164,7 +164,6 @@ public final class AutonomaHandler {
                 List<Map<String, Object>> resolvedFields = new ArrayList<>();
                 for (CreateOp b : batch) {
                     Map<String, Object> fields = new LinkedHashMap<>(b.fields());
-                    fields.remove(pkFieldName);
 
                     // Replace temp IDs with real IDs
                     for (var fe : new ArrayList<>(fields.entrySet())) {
@@ -178,7 +177,7 @@ public final class AutonomaHandler {
                     FKEdge scopeEdge = null;
                     for (FKEdge e : schema.edges()) {
                         if (e.from().equals(model)
-                            && e.localField().equalsIgnoreCase(schema.scopeField())
+                            && normalizeField(e.localField()).equals(normalizeField(schema.scopeField()))
                             && !e.from().equals(e.to())) {
                             scopeEdge = e;
                             break;
@@ -321,12 +320,16 @@ public final class AutonomaHandler {
         return null;
     }
 
+    private static String normalizeField(String name) {
+        return name.replace("_", "").toLowerCase();
+    }
+
     private static String detectScopeValue(Map<String, List<Map<String, Object>>> refs, String scopeField) {
-        String scopeLower = scopeField.toLowerCase();
+        String scopeNormalized = normalizeField(scopeField);
         for (List<Map<String, Object>> records : refs.values()) {
             for (Map<String, Object> record : records) {
                 for (var entry : record.entrySet()) {
-                    if (entry.getKey().toLowerCase().equals(scopeLower) && entry.getValue() instanceof String s) {
+                    if (normalizeField(entry.getKey()).equals(scopeNormalized) && entry.getValue() instanceof String s) {
                         return s;
                     }
                 }

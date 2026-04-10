@@ -8,23 +8,43 @@ defmodule Autonoma.Plug.HandlerTest do
   @shared_secret "test-shared-secret-1234"
   @signing_secret "test-signing-secret-5678"
 
-  defp make_config do
-    adapter = %{
-      name: "fake",
-      get_schema: fn ->
-        %{
-          "models" => [%{"name" => "User", "fields" => [%{"name" => "id", "type" => "string", "isRequired" => true, "isId" => true, "hasDefault" => true}]}],
-          "edges" => [],
-          "relations" => [],
-          "scopeField" => "organizationId"
-        }
-      end,
-      create_entities: fn _spec, _ctx -> {:ok, %{"User" => [%{"id" => "user-1"}]}} end,
-      teardown: fn _scope, _refs -> :ok end
-    }
+  defp fake_executor do
+    fn
+      :query, sql, _params ->
+        sql_lower = String.downcase(sql) |> String.trim()
 
+        cond do
+          String.starts_with?(sql_lower, "select table_name") ->
+            [%{"table_name" => "user"}]
+
+          String.contains?(sql_lower, "column_name") ->
+            [
+              %{"table_name" => "user", "column_name" => "id", "data_type" => "uuid",
+                "udt_name" => "uuid", "is_nullable" => "NO", "column_default" => "gen_random_uuid()"},
+              %{"table_name" => "user", "column_name" => "email", "data_type" => "character varying",
+                "udt_name" => "varchar", "is_nullable" => "NO", "column_default" => nil}
+            ]
+
+          String.starts_with?(sql_lower, "insert") ->
+            [%{"id" => "user-1", "email" => "test@test.com"}]
+
+          true ->
+            []
+        end
+
+      :transaction, fun, _opts ->
+        tx = fn :query, sql, params ->
+          fake_executor().(:query, sql, params)
+        end
+
+        fun.(tx)
+    end
+  end
+
+  defp make_config do
     %{
-      adapter: adapter,
+      executor: fake_executor(),
+      scope_field: "organizationId",
       shared_secret: @shared_secret,
       signing_secret: @signing_secret,
       auth: fn user ->
@@ -54,7 +74,7 @@ defmodule Autonoma.Plug.HandlerTest do
   end
 
   test "up returns refs and auth" do
-    conn = post_action("up", %{"create" => %{"User" => %{"fields" => [%{"id" => "u1"}]}}})
+    conn = post_action("up", %{"create" => %{"User" => [%{"id" => "u1"}]}})
     assert conn.status == 200
     body = Jason.decode!(conn.resp_body)
     assert is_map(body["refs"])
