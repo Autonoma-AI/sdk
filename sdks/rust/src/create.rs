@@ -10,7 +10,7 @@ static MYSQL_DATETIME_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 });
 
 use crate::dialect::Dialect;
-use crate::types::SqlExecutor;
+use crate::types::{ModelInfo, SqlExecutor};
 
 pub async fn create_entities(
     executor: &dyn SqlExecutor,
@@ -19,6 +19,7 @@ pub async fn create_entities(
     column_maps: &HashMap<String, HashMap<String, String>>,
     spec: &HashMap<String, Value>,
     enum_type_maps: &HashMap<String, HashMap<String, String>>,
+    schema_models: &[ModelInfo],
 ) -> Result<HashMap<String, Vec<HashMap<String, Value>>>, String> {
     let mut results: HashMap<String, Vec<HashMap<String, Value>>> = HashMap::new();
 
@@ -28,6 +29,12 @@ pub async fn create_entities(
             .ok_or_else(|| format!("Unknown model \"{}\". Not found in database tables.", model))?;
         let col_map = column_maps.get(model).cloned().unwrap_or_default();
         let enum_type_map = enum_type_maps.get(model).cloned().unwrap_or_default();
+
+        // Bug 4: find actual PK field name from schema
+        let model_info = schema_models.iter().find(|m| m.name == *model);
+        let pk_field = model_info.and_then(|mi| mi.fields.iter().find(|f| f.is_id));
+        let pk_field_name = pk_field.map(|f| f.name.as_str()).unwrap_or("id");
+        let pk_field_type = pk_field.map(|f| f.field_type.as_str()).unwrap_or("String");
 
         let fields_list = entity_spec
             .get("fields")
@@ -55,6 +62,8 @@ pub async fn create_entities(
                 &col_map,
                 &enum_type_map,
                 &fields_list,
+                pk_field_name,
+                pk_field_type,
             )
             .await?;
             results.insert(model.clone(), rows);
@@ -68,6 +77,8 @@ pub async fn create_entities(
                     &col_map,
                     &enum_type_map,
                     fields,
+                    pk_field_name,
+                    pk_field_type,
                 )
                 .await?;
                 if let Some(row) = rows.into_iter().next() {
@@ -90,6 +101,7 @@ pub async fn update_entity(
     record_id: &str,
     fields: &HashMap<String, Value>,
     enum_type_maps: &HashMap<String, HashMap<String, String>>,
+    pk_field_name: &str,
 ) -> Result<(), String> {
     let db_table = table_map
         .get(model)
@@ -115,7 +127,7 @@ pub async fn update_entity(
         param_idx += 1;
     }
 
-    let id_col = col_map.get("id").cloned().unwrap_or_else(|| "id".to_string());
+    let id_col = col_map.get(pk_field_name).cloned().unwrap_or_else(|| pk_field_name.to_string());
     params.push(Value::String(record_id.to_string()));
 
     let sql = format!(
@@ -138,15 +150,15 @@ async fn insert_one(
     col_map: &HashMap<String, String>,
     enum_type_map: &HashMap<String, String>,
     fields: &HashMap<String, Value>,
+    pk_field_name: &str,
+    pk_field_type: &str,
 ) -> Result<Vec<HashMap<String, Value>>, String> {
     let mut fields = fields.clone();
 
-    // Generate client-side UUID for 'id' column if not provided
-    let id_field_name = reverse_get(col_map, &find_id_col(col_map));
-    if let Some(ref idf) = id_field_name {
-        if !fields.contains_key(idf) {
-            fields.insert(idf.clone(), Value::String(Uuid::new_v4().to_string()));
-        }
+    // Bug 1 + Bug 4: Generate client-side UUID only when PK type is String.
+    // Int/BigInt PKs use DB auto-increment, so skip UUID generation for those.
+    if pk_field_type == "String" && !fields.contains_key(pk_field_name) {
+        fields.insert(pk_field_name.to_string(), Value::String(Uuid::new_v4().to_string()));
     }
 
     let entries: Vec<(String, Value)> = fields.into_iter().collect();
@@ -198,10 +210,10 @@ async fn insert_one(
     );
     executor.query(&sql, Some(&params)).await?;
 
-    let id_col = find_id_col(col_map);
+    let id_col = col_map.get(pk_field_name).cloned().unwrap_or_else(|| pk_field_name.to_string());
     let record_id = entries
         .iter()
-        .find(|(k, _)| Some(k) == id_field_name.as_ref())
+        .find(|(k, _)| k == pk_field_name)
         .map(|(_, v)| v.clone())
         .unwrap_or(Value::Null);
 
@@ -224,21 +236,20 @@ async fn insert_batch(
     col_map: &HashMap<String, String>,
     enum_type_map: &HashMap<String, String>,
     fields_arr: &[HashMap<String, Value>],
+    pk_field_name: &str,
+    pk_field_type: &str,
 ) -> Result<Vec<HashMap<String, Value>>, String> {
     if fields_arr.is_empty() {
         return Ok(Vec::new());
     }
 
-    // Generate client-side IDs
-    let id_field_name = reverse_get(col_map, &find_id_col(col_map));
+    // Bug 1 + Bug 4: Generate client-side IDs only when PK type is String
     let fields_arr: Vec<HashMap<String, Value>> = fields_arr
         .iter()
         .map(|f| {
             let mut f = f.clone();
-            if let Some(ref idf) = id_field_name {
-                if !f.contains_key(idf) {
-                    f.insert(idf.clone(), Value::String(Uuid::new_v4().to_string()));
-                }
+            if pk_field_type == "String" && !f.contains_key(pk_field_name) {
+                f.insert(pk_field_name.to_string(), Value::String(Uuid::new_v4().to_string()));
             }
             f
         })
@@ -255,7 +266,7 @@ async fn insert_batch(
     if field_names.is_empty() {
         let mut all_results: Vec<HashMap<String, Value>> = Vec::new();
         for _ in fields_arr {
-            let rows = insert_one(executor, dialect, db_table, col_map, enum_type_map, &HashMap::new()).await?;
+            let rows = insert_one(executor, dialect, db_table, col_map, enum_type_map, &HashMap::new(), pk_field_name, pk_field_type).await?;
             if let Some(row) = rows.into_iter().next() {
                 all_results.push(row);
             }
@@ -340,20 +351,6 @@ fn map_rows_back(
         .collect()
 }
 
-fn find_id_col(col_map: &HashMap<String, String>) -> String {
-    col_map
-        .get("id")
-        .cloned()
-        .unwrap_or_else(|| "id".to_string())
-}
-
-fn reverse_get(mapping: &HashMap<String, String>, db_name: &str) -> Option<String> {
-    mapping
-        .iter()
-        .find(|(_, v)| v.as_str() == db_name)
-        .map(|(k, _)| k.clone())
-}
-
 fn cast_param(
     dialect: &dyn Dialect,
     param_idx: usize,
@@ -372,9 +369,12 @@ fn cast_param(
 fn serialize_value(value: &Value, dialect: &dyn Dialect) -> Value {
     match value {
         Value::Null => Value::Null,
-        Value::Object(_) | Value::Array(_) => {
+        // Bug 2: Only stringify objects/maps for JSON columns.
+        // Arrays are returned as native serde_json::Value::Array for Postgres ARRAY columns.
+        Value::Object(_) => {
             Value::String(serde_json::to_string(value).unwrap_or_default())
         }
+        Value::Array(_) => value.clone(),
         Value::String(s) => {
             // MySQL: convert ISO 8601 datetime strings
             if dialect.name() == "mysql" {

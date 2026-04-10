@@ -165,7 +165,17 @@ defmodule Autonoma.Handler do
             raise "\"_ref\" \"#{du.ref_alias}\" could not be resolved. Ensure the referenced node has _alias defined in the scenario."
           end
 
-          Create.update_entity(tx, dialect, table_map, column_maps, du.model, real_target_id, %{du.field => real_ref_id}, enum_type_maps)
+          # Bug 4: Use dynamic PK name for deferred updates
+          deferred_model_info = Enum.find(schema["models"], fn m -> m["name"] == du.model end)
+          deferred_pk_field_name =
+            if deferred_model_info do
+              pk = Enum.find(deferred_model_info["fields"] || [], fn f -> f["isId"] end)
+              if pk, do: pk["name"], else: "id"
+            else
+              "id"
+            end
+
+          Create.update_entity(tx, dialect, table_map, column_maps, du.model, to_string(real_target_id), %{du.field => real_ref_id}, enum_type_maps, deferred_pk_field_name)
         end)
 
         {refs, id_map}
@@ -199,12 +209,14 @@ defmodule Autonoma.Handler do
     # Collect consecutive ops for the same model with same batch flag
     {batch, i} = collect_batch(tree.ops, i, model, op.batch, [op])
 
-    # Find model info
+    # Bug 4: Find model info and actual PK field name from schema
     model_info = Enum.find(schema["models"], fn m -> m["name"] == model end)
+    pk_field = if model_info, do: Enum.find(model_info["fields"] || [], fn f -> f["isId"] end)
+    pk_field_name = if pk_field, do: pk_field["name"], else: "id"
 
     resolved_fields =
       Enum.map(batch, fn b ->
-        fields = Map.delete(b.fields, "id")
+        fields = Map.delete(b.fields, pk_field_name)
 
         # Replace temp IDs with real IDs
         fields =
@@ -259,20 +271,22 @@ defmodule Autonoma.Handler do
     is_batch = op.batch
     spec = %{model => %{"count" => length(resolved_fields), "fields" => resolved_fields, "batch" => is_batch}}
 
-    created = Create.create_entities(tx, dialect, table_map, column_maps, spec, enum_type_maps)
+    created = Create.create_entities(tx, dialect, table_map, column_maps, spec, enum_type_maps, schema["models"] || [])
     records = Map.get(created, model, [])
 
     refs =
       Map.update(refs, model, records, fn existing -> existing ++ records end)
 
+    # Bug 3: Accept any non-nil value for id_map, not just strings
+    # Bug 4: Use dynamic pk_field_name instead of hardcoded "id"
     id_map =
       batch
       |> Enum.with_index()
       |> Enum.reduce(id_map, fn {b, j}, acc ->
         record = Enum.at(records, j)
         if record do
-          record_id = Map.get(record, "id")
-          if is_binary(record_id), do: Map.put(acc, b.temp_id, record_id), else: acc
+          record_id = Map.get(record, pk_field_name)
+          if record_id != nil, do: Map.put(acc, b.temp_id, record_id), else: acc
         else
           acc
         end
@@ -404,9 +418,11 @@ defmodule Autonoma.Handler do
   # Helpers
   # ---------------------------------------------------------------------------
 
+  # Bug 8: Match both "user" and "users" (case-insensitive)
   defp find_first_user(refs) do
     Enum.find_value(refs, fn {model, records} ->
-      if String.downcase(model) == "user" && records != [] do
+      normalized = String.downcase(model)
+      if (normalized == "user" || normalized == "users") && records != [] do
         List.first(records)
       end
     end)

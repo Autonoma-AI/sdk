@@ -180,10 +180,22 @@ class Handler
                     }
                 }
 
+                // Bug 4: find actual PK field name from schema
+                $pkField = null;
+                if ($modelInfo !== null) {
+                    foreach ($modelInfo->fields as $f) {
+                        if ($f->isId) {
+                            $pkField = $f;
+                            break;
+                        }
+                    }
+                }
+                $pkFieldName = $pkField !== null ? $pkField->name : 'id';
+
                 $resolvedFields = [];
                 foreach ($batch as $b) {
                     $fields = $b->fields;
-                    unset($fields['id']);
+                    unset($fields[$pkFieldName]);
 
                     // Replace temp IDs with real IDs
                     foreach ($fields as $key => &$value) {
@@ -228,7 +240,7 @@ class Handler
                 }
 
                 $spec = [$model => ['count' => count($resolvedFields), 'fields' => $resolvedFields, 'batch' => $op->batch]];
-                $created = Create::createEntities($tx, $dialect, $introspection->tableMap, $introspection->columnMaps, $spec, $introspection->enumTypeMaps);
+                $created = Create::createEntities($tx, $dialect, $introspection->tableMap, $introspection->columnMaps, $spec, $introspection->enumTypeMaps, $schema->models);
                 $records = $created[$model] ?? [];
 
                 if (!isset($refs[$model])) {
@@ -239,8 +251,8 @@ class Handler
                 foreach ($batch as $j => $b) {
                     if ($j < count($records)) {
                         $record = $records[$j];
-                        $recordId = $record['id'] ?? null;
-                        if (is_string($recordId)) {
+                        $recordId = $record[$pkFieldName] ?? null;
+                        if ($recordId !== null) {
                             $idMap[$b->tempId] = $recordId;
                         }
                     }
@@ -262,10 +274,28 @@ class Handler
                     );
                 }
 
+                // Find PK field name for the deferred model
+                $deferredModelInfo = null;
+                foreach ($schema->models as $m) {
+                    if ($m->name === $deferred->model) {
+                        $deferredModelInfo = $m;
+                        break;
+                    }
+                }
+                $deferredPkFieldName = 'id';
+                if ($deferredModelInfo !== null) {
+                    foreach ($deferredModelInfo->fields as $f) {
+                        if ($f->isId) {
+                            $deferredPkFieldName = $f->name;
+                            break;
+                        }
+                    }
+                }
+
                 Create::updateEntity(
                     $tx, $dialect, $introspection->tableMap, $introspection->columnMaps,
-                    $deferred->model, $realTargetId, [$deferred->field => $realRefId],
-                    $introspection->enumTypeMaps,
+                    $deferred->model, (string) $realTargetId, [$deferred->field => $realRefId],
+                    $introspection->enumTypeMaps, $deferredPkFieldName,
                 );
             }
         });
@@ -321,7 +351,8 @@ class Handler
     private static function findFirstUser(array $refs): ?array
     {
         foreach ($refs as $model => $records) {
-            if (strtolower($model) === 'user' && !empty($records)) {
+            $normalized = strtolower($model);
+            if (($normalized === 'user' || $normalized === 'users') && !empty($records)) {
                 return $records[0];
             }
         }

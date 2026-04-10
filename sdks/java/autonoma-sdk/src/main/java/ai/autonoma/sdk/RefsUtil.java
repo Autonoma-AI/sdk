@@ -1,21 +1,81 @@
 package ai.autonoma.sdk;
 
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * JWT-like token (header.payload.signature) for signing/verifying created entity refs.
  */
 public final class RefsUtil {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = createMapper();
+
+    private static ObjectMapper createMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        SimpleModule module = new SimpleModule();
+
+        // LocalDateTime -> ISO string
+        module.addSerializer(LocalDateTime.class, new StdSerializer<LocalDateTime>(LocalDateTime.class) {
+            @Override
+            public void serialize(LocalDateTime value, JsonGenerator gen, SerializerProvider provider) throws IOException {
+                gen.writeString(value.atZone(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT));
+            }
+        });
+
+        // Instant -> ISO string
+        module.addSerializer(Instant.class, new StdSerializer<Instant>(Instant.class) {
+            @Override
+            public void serialize(Instant value, JsonGenerator gen, SerializerProvider provider) throws IOException {
+                gen.writeString(value.toString());
+            }
+        });
+
+        // Timestamp -> ISO string
+        module.addSerializer(Timestamp.class, new StdSerializer<Timestamp>(Timestamp.class) {
+            @Override
+            public void serialize(Timestamp value, JsonGenerator gen, SerializerProvider provider) throws IOException {
+                gen.writeString(value.toInstant().toString());
+            }
+        });
+
+        // BigDecimal -> number (not string)
+        module.addSerializer(BigDecimal.class, new StdSerializer<BigDecimal>(BigDecimal.class) {
+            @Override
+            public void serialize(BigDecimal value, JsonGenerator gen, SerializerProvider provider) throws IOException {
+                gen.writeNumber(value);
+            }
+        });
+
+        // UUID -> string
+        module.addSerializer(UUID.class, new StdSerializer<UUID>(UUID.class) {
+            @Override
+            public void serialize(UUID value, JsonGenerator gen, SerializerProvider provider) throws IOException {
+                gen.writeString(value.toString());
+            }
+        });
+
+        mapper.registerModule(module);
+        return mapper;
+    }
 
     private RefsUtil() {}
 

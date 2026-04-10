@@ -71,19 +71,19 @@ public final class TeardownExecutor {
                 }
             }
 
-            // Delete cycle nodes
-            for (List<String> cycle : sortResult.cycles()) {
-                for (String model : cycle) {
-                    deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs);
-                }
-            }
-
-            // Delete in reverse topo order
+            // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
             List<String> reversed = new ArrayList<>(sortResult.sorted());
             Collections.reverse(reversed);
             for (String model : reversed) {
                 if (model.equals(finalScopeRoot)) continue;
-                deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs);
+                deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
+            }
+
+            // Delete cycle nodes after their non-cycle dependents are gone
+            for (List<String> cycle : sortResult.cycles()) {
+                for (String model : cycle) {
+                    deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
+                }
             }
 
             // Delete scope root last
@@ -91,7 +91,13 @@ public final class TeardownExecutor {
                 String dbTable = tableMap.get(finalScopeRoot);
                 Map<String, String> colMap = columnMaps.getOrDefault(finalScopeRoot, Map.of());
                 if (dbTable != null) {
-                    String idCol = colMap.getOrDefault("id", "id");
+                    ModelInfo rootModelInfo = schema.models().stream()
+                        .filter(m -> m.name().equals(finalScopeRoot))
+                        .findFirst().orElse(null);
+                    String rootPkFieldName = rootModelInfo != null
+                        ? rootModelInfo.fields().stream().filter(FieldInfo::isId).findFirst().map(FieldInfo::name).orElse("id")
+                        : "id";
+                    String idCol = colMap.getOrDefault(rootPkFieldName, rootPkFieldName);
                     tx.query("DELETE FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(idCol)
                         + " = " + dialect.param(1), scopeValue);
                 }
@@ -109,11 +115,20 @@ public final class TeardownExecutor {
             String model,
             String scopeValue,
             Map<String, String> scopeFieldByModel,
-            Map<String, List<Map<String, Object>>> refs) {
+            Map<String, List<Map<String, Object>>> refs,
+            SchemaInfo schema) {
 
         String dbTable = tableMap.get(model);
         if (dbTable == null) return;
         Map<String, String> colMap = columnMaps.getOrDefault(model, Map.of());
+
+        // Find actual PK field name from schema
+        ModelInfo modelInfo = schema.models().stream()
+            .filter(m -> m.name().equals(model))
+            .findFirst().orElse(null);
+        String pkFieldName = modelInfo != null
+            ? modelInfo.fields().stream().filter(FieldInfo::isId).findFirst().map(FieldInfo::name).orElse("id")
+            : "id";
 
         String scopeFK = scopeFieldByModel.get(model);
         if (scopeFK != null) {
@@ -121,13 +136,12 @@ public final class TeardownExecutor {
             tx.query("DELETE FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(dbCol)
                 + " = " + dialect.param(1), scopeValue);
         } else if (refs != null && refs.containsKey(model)) {
-            List<String> ids = refs.get(model).stream()
-                .map(r -> r.get("id"))
-                .filter(id -> id instanceof String)
-                .map(id -> (String) id)
+            List<Object> ids = refs.get(model).stream()
+                .map(r -> r.get(pkFieldName))
+                .filter(Objects::nonNull)
                 .toList();
             if (!ids.isEmpty()) {
-                String idCol = colMap.getOrDefault("id", "id");
+                String idCol = colMap.getOrDefault(pkFieldName, pkFieldName);
                 StringJoiner placeholders = new StringJoiner(", ");
                 for (int idx = 0; idx < ids.size(); idx++) {
                     placeholders.add(dialect.param(idx + 1));

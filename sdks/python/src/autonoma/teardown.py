@@ -45,7 +45,7 @@ async def teardown(
     cycles: list[list[str]] = result["cycles"]
 
     async def do_teardown(tx: SQLExecutor) -> None:
-        # Break cycles by nullifying deferrable FKs
+        # 1. Break cycles by nullifying deferrable FKs
         for cycle in cycles:
             edge = find_deferrable_edge(cycle, edge_dicts)
             if edge:
@@ -62,25 +62,30 @@ async def teardown(
                             [scope_value],
                         )
 
-        # Delete cycle nodes
-        for cycle in cycles:
-            for model in cycle:
-                await _delete_model(tx, dialect, table_map, column_maps, model,
-                                    scope_value, scope_field_by_model, refs)
-
-        # Delete in reverse topo order
+        # Bug 6: Delete non-cycle nodes in reverse topo order BEFORE cycle nodes
+        # 2. Delete non-cycle nodes in reverse topo order
         for model in reversed(sorted_models):
             if model == scope_root_model:
                 continue
             await _delete_model(tx, dialect, table_map, column_maps, model,
-                                scope_value, scope_field_by_model, refs)
+                                scope_value, scope_field_by_model, refs, schema)
 
-        # Delete scope root last
+        # 3. Delete cycle nodes
+        for cycle in cycles:
+            for model in cycle:
+                await _delete_model(tx, dialect, table_map, column_maps, model,
+                                    scope_value, scope_field_by_model, refs, schema)
+
+        # 4. Delete scope root last
         if scope_root_model:
             db_table = table_map.get(scope_root_model)
             col_map = column_maps.get(scope_root_model, {})
             if db_table:
-                id_col = col_map.get("id", "id")
+                # Bug 4: Use actual PK field name from schema
+                root_model_info = next((m for m in schema.models if m.name == scope_root_model), None)
+                root_pk_field = next((f for f in root_model_info.fields if f.is_id), None) if root_model_info else None
+                root_pk_field_name = root_pk_field.name if root_pk_field else "id"
+                id_col = col_map.get(root_pk_field_name, root_pk_field_name)
                 await tx.query(
                     f"DELETE FROM {dialect.quote_id(db_table)} WHERE {dialect.quote_id(id_col)} = {dialect.param(1)}",
                     [scope_value],
@@ -98,11 +103,17 @@ async def _delete_model(
     scope_value: str,
     scope_field_by_model: dict[str, str],
     refs: dict[str, list[dict[str, Any]]] | None,
+    schema: SchemaInfo,
 ) -> None:
     db_table = table_map.get(model)
     if not db_table:
         return
     col_map = column_maps.get(model, {})
+
+    # Bug 4: Find actual PK field name from schema
+    model_info = next((m for m in schema.models if m.name == model), None)
+    pk_field = next((f for f in model_info.fields if f.is_id), None) if model_info else None
+    pk_field_name = pk_field.name if pk_field else "id"
 
     scope_fk = scope_field_by_model.get(model)
     if scope_fk:
@@ -112,9 +123,10 @@ async def _delete_model(
             [scope_value],
         )
     elif refs and model in refs:
-        ids = [r.get("id") for r in refs[model] if isinstance(r.get("id"), str)]
+        # Bug 3/4: Use pk_field_name and accept both str and int IDs
+        ids = [r.get(pk_field_name) for r in refs[model] if r.get(pk_field_name) is not None]
         if ids:
-            id_col = col_map.get("id", "id")
+            id_col = col_map.get(pk_field_name, pk_field_name)
             placeholders = ", ".join(dialect.param(i + 1) for i in range(len(ids)))
             await tx.query(
                 f"DELETE FROM {dialect.quote_id(db_table)} WHERE {dialect.quote_id(id_col)} IN ({placeholders})",

@@ -134,7 +134,7 @@ public final class AutonomaHandler {
 
         ResolvedTree tree = TreeResolver.resolveTree(create, schema);
         Map<String, List<Map<String, Object>>> refs = new LinkedHashMap<>();
-        Map<String, String> idMap = new LinkedHashMap<>();
+        Map<String, Object> idMap = new LinkedHashMap<>();
 
         config.getExecutor().transaction(tx -> {
             int i = 0;
@@ -152,20 +152,24 @@ public final class AutonomaHandler {
                     batch.add(tree.ops().get(i));
                 }
 
-                // Find model info
+                // Find model info and dynamic PK field
                 ModelInfo modelInfo = schema.models().stream()
                     .filter(m -> m.name().equals(model))
                     .findFirst().orElse(null);
+                FieldInfo pkField = modelInfo != null
+                    ? modelInfo.fields().stream().filter(FieldInfo::isId).findFirst().orElse(null)
+                    : null;
+                String pkFieldName = pkField != null ? pkField.name() : "id";
 
                 List<Map<String, Object>> resolvedFields = new ArrayList<>();
                 for (CreateOp b : batch) {
                     Map<String, Object> fields = new LinkedHashMap<>(b.fields());
-                    fields.remove("id");
+                    fields.remove(pkFieldName);
 
                     // Replace temp IDs with real IDs
                     for (var fe : new ArrayList<>(fields.entrySet())) {
                         if (fe.getValue() instanceof String s && s.startsWith("__temp_")) {
-                            String realId = idMap.get(s);
+                            Object realId = idMap.get(s);
                             if (realId != null) fields.put(fe.getKey(), realId);
                         }
                     }
@@ -208,7 +212,7 @@ public final class AutonomaHandler {
 
                 Map<String, List<Map<String, Object>>> created = EntityCreator.createEntities(
                     tx, dialect, introspection.tableMap(), introspection.columnMaps(),
-                    spec, introspection.enumTypeMaps()
+                    spec, introspection.enumTypeMaps(), schema.models()
                 );
                 List<Map<String, Object>> records = created.getOrDefault(model, List.of());
 
@@ -216,9 +220,9 @@ public final class AutonomaHandler {
 
                 for (int j = 0; j < batch.size(); j++) {
                     if (j < records.size()) {
-                        Object recordId = records.get(j).get("id");
-                        if (recordId instanceof String s) {
-                            idMap.put(batch.get(j).tempId(), s);
+                        Object recordId = records.get(j).get(pkFieldName);
+                        if (recordId != null) {
+                            idMap.put(batch.get(j).tempId(), recordId);
                         }
                     }
                 }
@@ -228,9 +232,9 @@ public final class AutonomaHandler {
 
             // Resolve deferred FK updates
             for (DeferredUpdate deferred : tree.deferredUpdates()) {
-                String realTargetId = idMap.get(deferred.targetTempId());
+                Object realTargetId = idMap.get(deferred.targetTempId());
                 String refTempId = tree.aliases().get(deferred.refAlias());
-                String realRefId = refTempId != null ? idMap.get(refTempId) : null;
+                Object realRefId = refTempId != null ? idMap.get(refTempId) : null;
 
                 if (realTargetId == null || realRefId == null) {
                     throw new RuntimeException(
@@ -239,10 +243,17 @@ public final class AutonomaHandler {
                     );
                 }
 
+                ModelInfo deferredModelInfo = schema.models().stream()
+                    .filter(m -> m.name().equals(deferred.model()))
+                    .findFirst().orElse(null);
+                String deferredPkFieldName = deferredModelInfo != null
+                    ? deferredModelInfo.fields().stream().filter(FieldInfo::isId).findFirst().map(FieldInfo::name).orElse("id")
+                    : "id";
+
                 EntityCreator.updateEntity(
                     tx, dialect, introspection.tableMap(), introspection.columnMaps(),
-                    deferred.model(), realTargetId, Map.of(deferred.field(), realRefId),
-                    introspection.enumTypeMaps()
+                    deferred.model(), String.valueOf(realTargetId), Map.of(deferred.field(), realRefId),
+                    introspection.enumTypeMaps(), deferredPkFieldName
                 );
             }
 
@@ -302,7 +313,8 @@ public final class AutonomaHandler {
 
     private static Map<String, Object> findFirstUser(Map<String, List<Map<String, Object>>> refs) {
         for (var entry : refs.entrySet()) {
-            if (entry.getKey().equalsIgnoreCase("user") && !entry.getValue().isEmpty()) {
+            String normalized = entry.getKey().toLowerCase();
+            if (("user".equals(normalized) || "users".equals(normalized)) && !entry.getValue().isEmpty()) {
                 return entry.getValue().get(0);
             }
         }

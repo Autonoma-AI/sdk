@@ -184,7 +184,8 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
 
     let tree = resolve_tree(create, schema);
     let mut refs: HashMap<String, Vec<HashMap<String, Value>>> = HashMap::new();
-    let mut id_map: HashMap<String, String> = HashMap::new();
+    // Bug 3: id_map accepts both String and numeric values (not just String)
+    let mut id_map: HashMap<String, Value> = HashMap::new();
 
     // Process operations
     let mut i = 0;
@@ -203,24 +204,26 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
 
         let batch_ops: Vec<&crate::types::CreateOp> = tree.ops[i..=batch_end].iter().collect();
 
-        // Find model info for auto-populating fields
+        // Bug 4: Find model info for PK field name
         let model_info = schema.models.iter().find(|m| m.name == *model);
+        let pk_field = model_info.and_then(|mi| mi.fields.iter().find(|f| f.is_id));
+        let pk_field_name = pk_field.map(|f| f.name.as_str()).unwrap_or("id");
 
         let mut resolved_fields: Vec<HashMap<String, Value>> = Vec::new();
         for b in &batch_ops {
             let mut fields: HashMap<String, Value> = b
                 .fields
                 .iter()
-                .filter(|(k, _)| k.as_str() != "id")
+                .filter(|(k, _)| k.as_str() != pk_field_name)
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
 
-            // Replace temp IDs with real IDs
+            // Replace temp IDs with real IDs (Bug 3: use Value, not just String)
             for (key, value) in fields.clone() {
                 if let Some(s) = value.as_str() {
                     if s.starts_with("__temp_") {
                         if let Some(real_id) = id_map.get(s) {
-                            fields.insert(key, Value::String(real_id.clone()));
+                            fields.insert(key, real_id.clone());
                         }
                     }
                 }
@@ -286,6 +289,7 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
             &introspection.column_maps,
             &spec,
             &introspection.enum_type_maps,
+            &schema.models,
         )
         .await
         .map_err(|e| AutonomaError {
@@ -298,10 +302,13 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
 
         refs.entry(model.clone()).or_default().extend(records.clone());
 
+        // Bug 3 + Bug 4: Use dynamic PK field, accept any non-null value
         for (j, b) in batch_ops.iter().enumerate() {
             if j < records.len() {
-                if let Some(record_id) = records[j].get("id").and_then(|v| v.as_str()) {
-                    id_map.insert(b.temp_id.clone(), record_id.to_string());
+                if let Some(record_id) = records[j].get(pk_field_name) {
+                    if !record_id.is_null() {
+                        id_map.insert(b.temp_id.clone(), record_id.clone());
+                    }
                 }
             }
         }
@@ -318,16 +325,28 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
         match (real_target_id, real_ref_id) {
             (Some(target_id), Some(ref_id)) => {
                 let fields: HashMap<String, Value> =
-                    [(deferred.field.clone(), Value::String(ref_id.clone()))].into();
+                    [(deferred.field.clone(), ref_id.clone())].into();
+                // Bug 4: find dynamic PK for deferred model
+                let deferred_model_info = schema.models.iter().find(|m| m.name == deferred.model);
+                let deferred_pk_field_name = deferred_model_info
+                    .and_then(|mi| mi.fields.iter().find(|f| f.is_id))
+                    .map(|f| f.name.as_str())
+                    .unwrap_or("id");
+                let target_id_str = match target_id {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    _ => target_id.to_string(),
+                };
                 update_entity(
                     config.executor.as_ref(),
                     dialect.as_ref(),
                     &introspection.table_map,
                     &introspection.column_maps,
                     &deferred.model,
-                    target_id,
+                    &target_id_str,
                     &fields,
                     &introspection.enum_type_maps,
+                    deferred_pk_field_name,
                 )
                 .await
                 .map_err(|e| AutonomaError {
@@ -446,7 +465,9 @@ async fn handle_down(config: &HandlerConfig, body: &Value) -> Result<HandlerResp
 
 fn find_first_user(refs: &HashMap<String, Vec<HashMap<String, Value>>>) -> Option<HashMap<String, Value>> {
     for (model, records) in refs {
-        if model.to_lowercase() == "user" && !records.is_empty() {
+        // Bug 8: Match both "user" and "users" (case-insensitive)
+        let normalized = model.to_lowercase();
+        if (normalized == "user" || normalized == "users") && !records.is_empty() {
             return Some(records[0].clone());
         }
     }

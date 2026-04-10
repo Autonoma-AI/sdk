@@ -77,23 +77,23 @@ func Teardown(
 			}
 		}
 
-		// Delete cycle nodes
-		for _, cycle := range result.Cycles {
-			for _, model := range cycle {
-				if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs); err != nil {
-					return err
-				}
-			}
-		}
-
-		// Delete in reverse topo order
+		// Bug 6: Delete non-cycle nodes in reverse topo order FIRST (dependents before cycle nodes)
 		for i := len(result.Sorted) - 1; i >= 0; i-- {
 			model := result.Sorted[i]
 			if model == scopeRootModel {
 				continue
 			}
-			if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs); err != nil {
+			if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
 				return err
+			}
+		}
+
+		// Delete cycle nodes AFTER their non-cycle dependents are gone
+		for _, cycle := range result.Cycles {
+			for _, model := range cycle {
+				if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -105,9 +105,22 @@ func Teardown(
 				colMap = make(map[string]string)
 			}
 			if dbTable != "" {
-				idCol := colMap["id"]
+				// Bug 4: find actual PK field name from schema
+				rootPkFieldName := "id"
+				for _, mi := range schema.Models {
+					if mi.Name == scopeRootModel {
+						for _, f := range mi.Fields {
+							if f.IsId {
+								rootPkFieldName = f.Name
+								break
+							}
+						}
+						break
+					}
+				}
+				idCol := colMap[rootPkFieldName]
 				if idCol == "" {
-					idCol = "id"
+					idCol = rootPkFieldName
 				}
 				sql := fmt.Sprintf("DELETE FROM %s WHERE %s = %s",
 					dialect.QuoteID(dbTable),
@@ -133,6 +146,7 @@ func deleteModel(
 	scopeValue string,
 	scopeFieldByModel map[string]string,
 	refs map[string][]map[string]any,
+	schema SchemaInfo,
 ) error {
 	dbTable := tableMap[model]
 	if dbTable == "" {
@@ -141,6 +155,20 @@ func deleteModel(
 	colMap := columnMaps[model]
 	if colMap == nil {
 		colMap = make(map[string]string)
+	}
+
+	// Bug 4: find actual PK field name from schema
+	pkFieldName := "id"
+	for _, mi := range schema.Models {
+		if mi.Name == model {
+			for _, f := range mi.Fields {
+				if f.IsId {
+					pkFieldName = f.Name
+					break
+				}
+			}
+			break
+		}
 	}
 
 	scopeFK, hasScopeFK := scopeFieldByModel[model]
@@ -160,18 +188,17 @@ func deleteModel(
 	if refs != nil {
 		records := refs[model]
 		if len(records) > 0 {
+			// Bug 3: accept any non-nil value, not just strings
 			var ids []any
 			for _, r := range records {
-				if id, ok := r["id"]; ok {
-					if s, ok := id.(string); ok {
-						ids = append(ids, s)
-					}
+				if id, ok := r[pkFieldName]; ok && id != nil {
+					ids = append(ids, id)
 				}
 			}
 			if len(ids) > 0 {
-				idCol := colMap["id"]
+				idCol := colMap[pkFieldName]
 				if idCol == "" {
-					idCol = "id"
+					idCol = pkFieldName
 				}
 				var placeholders []string
 				for i := range ids {

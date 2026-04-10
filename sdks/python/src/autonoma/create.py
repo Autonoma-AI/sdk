@@ -8,7 +8,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from .types import SQLExecutor
+from .types import SQLExecutor, ModelInfo
 
 _MYSQL_DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
@@ -20,9 +20,11 @@ async def create_entities(
     column_maps: dict[str, dict[str, str]],
     spec: dict[str, dict[str, Any]],
     enum_type_maps: dict[str, dict[str, str]] | None = None,
+    schema_models: list[ModelInfo] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Create entities from a resolved spec. Spec maps model name → {count, fields[], batch}."""
     enum_type_maps = enum_type_maps or {}
+    schema_models = schema_models or []
     results: dict[str, list[dict[str, Any]]] = {}
 
     for model, entity_spec in spec.items():
@@ -32,15 +34,21 @@ async def create_entities(
         col_map = column_maps.get(model, {})
         enum_type_map = enum_type_maps.get(model, {})
 
+        # Bug 4: find actual PK field name from schema
+        model_info = next((m for m in schema_models if m.name == model), None)
+        pk_field = next((f for f in model_info.fields if f.is_id), None) if model_info else None
+        pk_field_name = pk_field.name if pk_field else "id"
+        pk_field_type = pk_field.type if pk_field else "String"
+
         fields_list: list[dict[str, Any]] = entity_spec.get("fields", [])
         is_batch = entity_spec.get("batch", False)
 
         if is_batch and fields_list:
-            results[model] = await _insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_list)
+            results[model] = await _insert_batch(executor, dialect, db_table, col_map, enum_type_map, fields_list, pk_field_name, pk_field_type)
         else:
             created: list[dict[str, Any]] = []
             for fields in fields_list:
-                rows = await _insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
+                rows = await _insert_one(executor, dialect, db_table, col_map, enum_type_map, fields, pk_field_name, pk_field_type)
                 if rows:
                     created.append(rows[0])
             results[model] = created
@@ -57,6 +65,7 @@ async def update_entity(
     record_id: str,
     fields: dict[str, Any],
     enum_type_maps: dict[str, dict[str, str]] | None = None,
+    pk_field_name: str = "id",
 ) -> None:
     """Update a single record by primary key. Used for circular FK backfill."""
     db_table = table_map.get(model)
@@ -75,7 +84,7 @@ async def update_entity(
         params.append(_serialize_value(value, dialect))
         param_idx += 1
 
-    id_col = col_map.get("id", "id")
+    id_col = col_map.get(pk_field_name, pk_field_name)
     params.append(record_id)
 
     sql = f"UPDATE {dialect.quote_id(db_table)} SET {', '.join(set_clauses)} WHERE {dialect.quote_id(id_col)} = {dialect.param(param_idx)}"
@@ -91,11 +100,13 @@ async def _insert_one(
     col_map: dict[str, str],
     enum_type_map: dict[str, str],
     fields: dict[str, Any],
+    pk_field_name: str = "id",
+    pk_field_type: str = "String",
 ) -> list[dict[str, Any]]:
-    # Generate client-side UUID for 'id' column if not provided
-    id_field_name = _reverse_get(col_map, _find_id_col(col_map))
-    if id_field_name and id_field_name not in fields:
-        fields = {**fields, id_field_name: str(uuid.uuid4())}
+    # Bug 1: Only generate client-side UUID when PK type is String.
+    # Int/BigInt PKs use DB auto-increment, so skip UUID generation.
+    if pk_field_name and pk_field_name not in fields and pk_field_type == "String":
+        fields = {**fields, pk_field_name: str(uuid.uuid4())}
 
     entries = list(fields.items())
     if not entries:
@@ -126,8 +137,8 @@ async def _insert_one(
         f"INSERT INTO {dialect.quote_id(db_table)} ({col_list}) VALUES ({val_list})",
         params,
     )
-    id_col = _find_id_col(col_map)
-    record_id = fields.get(id_field_name or "id")
+    id_col = col_map.get(pk_field_name, pk_field_name)
+    record_id = fields.get(pk_field_name)
     return _map_rows_back(
         await executor.query(
             f"SELECT * FROM {dialect.quote_id(db_table)} WHERE {dialect.quote_id(id_col)} = {dialect.param(1)}",
@@ -144,15 +155,17 @@ async def _insert_batch(
     col_map: dict[str, str],
     enum_type_map: dict[str, str],
     fields_arr: list[dict[str, Any]],
+    pk_field_name: str = "id",
+    pk_field_type: str = "String",
 ) -> list[dict[str, Any]]:
     if not fields_arr:
         return []
 
-    # Generate client-side IDs
-    id_field_name = _reverse_get(col_map, _find_id_col(col_map))
-    if id_field_name:
+    # Bug 1: Only generate client-side IDs when PK type is String.
+    # Int/BigInt PKs use DB auto-increment.
+    if pk_field_name and pk_field_type == "String":
         fields_arr = [
-            {**f, id_field_name: str(uuid.uuid4())} if id_field_name not in f else f
+            {**f, pk_field_name: str(uuid.uuid4())} if pk_field_name not in f else f
             for f in fields_arr
         ]
 
@@ -166,7 +179,7 @@ async def _insert_batch(
     if not field_names:
         all_results: list[dict[str, Any]] = []
         for fields in fields_arr:
-            rows = await _insert_one(executor, dialect, db_table, col_map, enum_type_map, fields)
+            rows = await _insert_one(executor, dialect, db_table, col_map, enum_type_map, fields, pk_field_name, pk_field_type)
             if rows:
                 all_results.append(rows[0])
         return all_results
@@ -214,17 +227,6 @@ def _map_rows_back(rows: list[dict[str, Any]], col_map: dict[str, str]) -> list[
     return [{reverse.get(k, k): v for k, v in row.items()} for row in rows]
 
 
-def _find_id_col(col_map: dict[str, str]) -> str:
-    return col_map.get("id", "id")
-
-
-def _reverse_get(mapping: dict[str, str], db_name: str) -> str | None:
-    for key, val in mapping.items():
-        if val == db_name:
-            return key
-    return None
-
-
 def _cast_param(dialect: Any, param_idx: int, enum_type_map: dict[str, str], field_name: str) -> str:
     placeholder = dialect.param(param_idx)
     if dialect.name == "postgres":
@@ -238,9 +240,13 @@ def _serialize_value(value: Any, dialect: Any) -> Any:
     if value is None:
         return value
 
-    # JSON: stringify objects/dicts/lists
-    if isinstance(value, (dict, list)):
+    # Bug 2: Only stringify dicts for JSON/JSONB columns.
+    # Lists are returned as native arrays for Postgres ARRAY columns.
+    if isinstance(value, dict):
         return json.dumps(value)
+
+    if isinstance(value, list):
+        return value
 
     # Date/datetime objects
     if isinstance(value, datetime):

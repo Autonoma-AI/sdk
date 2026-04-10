@@ -7,9 +7,28 @@ class Refs
     public static function signRefs(array $payload, string $secret): string
     {
         $header = self::base64urlEncode(json_encode(['alg' => 'HS256', 'typ' => 'REFS'], JSON_UNESCAPED_SLASHES));
-        $body = self::base64urlEncode(json_encode($payload, JSON_UNESCAPED_SLASHES));
+        $body = self::base64urlEncode(json_encode(self::serializeForJson($payload), JSON_UNESCAPED_SLASHES));
         $signature = self::hmacSign("{$header}.{$body}", $secret);
         return "{$header}.{$body}.{$signature}";
+    }
+
+    /**
+     * Recursively serialize a value for JSON encoding.
+     * Converts DateTime/DateTimeImmutable to ISO 8601 strings.
+     */
+    private static function serializeForJson(mixed $value): mixed
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('c');
+        }
+        if (is_array($value)) {
+            $result = [];
+            foreach ($value as $k => $v) {
+                $result[$k] = self::serializeForJson($v);
+            }
+            return $result;
+        }
+        return $value;
     }
 
     /** Verify and decode a refs token. Returns payload array or throws. */

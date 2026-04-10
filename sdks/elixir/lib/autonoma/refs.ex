@@ -8,7 +8,8 @@ defmodule Autonoma.Refs do
   """
   def sign(payload, secret) do
     header = base64url_encode(Jason.encode!(%{"alg" => "HS256", "typ" => "REFS"}))
-    body = base64url_encode(Jason.encode!(payload))
+    # Bug 7: sanitize payload before JSON encoding to handle DateTime, NaiveDateTime, Decimal, etc.
+    body = base64url_encode(Jason.encode!(sanitize_for_json(payload)))
     signature = hmac_sign("#{header}.#{body}", secret)
     "#{header}.#{body}.#{signature}"
   end
@@ -34,6 +35,25 @@ defmodule Autonoma.Refs do
     |> base64url_decode()
     |> Jason.decode!()
   end
+
+  # Bug 7: Recursively sanitize values that Jason can't encode natively
+  defp sanitize_for_json(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp sanitize_for_json(%NaiveDateTime{} = dt), do: NaiveDateTime.to_iso8601(dt)
+  defp sanitize_for_json(%Date{} = d), do: Date.to_iso8601(d)
+  defp sanitize_for_json(%{__struct__: _} = struct) do
+    # Handle Decimal and other structs by converting to string
+    to_string(struct)
+  end
+  defp sanitize_for_json(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {k, sanitize_for_json(v)} end)
+  end
+  defp sanitize_for_json(list) when is_list(list) do
+    Enum.map(list, &sanitize_for_json/1)
+  end
+  defp sanitize_for_json(tuple) when is_tuple(tuple) do
+    tuple |> Tuple.to_list() |> Enum.map(&sanitize_for_json/1)
+  end
+  defp sanitize_for_json(value), do: value
 
   defp base64url_encode(data) do
     Base.url_encode64(data, padding: false)

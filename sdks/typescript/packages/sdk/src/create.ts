@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { SQLExecutor, ResolvedEntitySpec, CreateContext } from './types'
+import type { SQLExecutor, ResolvedEntitySpec, CreateContext, ModelInfo } from './types'
 import type { Dialect } from './dialect'
 
 /**
@@ -20,6 +20,7 @@ export async function createEntities(
   spec: Record<string, ResolvedEntitySpec>,
   _context: CreateContext,
   enumTypeMaps: Map<string, Map<string, string>> = new Map(),
+  schemaModels: ModelInfo[] = [],
 ): Promise<Record<string, Record<string, unknown>[]>> {
   const results: Record<string, Record<string, unknown>[]> = {}
 
@@ -29,12 +30,18 @@ export async function createEntities(
     const colMap = columnMaps.get(model) ?? new Map<string, string>()
     const enumTypeMap = enumTypeMaps.get(model) ?? new Map<string, string>()
 
+    // Bug 4: find actual PK field name from schema
+    const modelInfo = schemaModels.find((m) => m.name === model)
+    const pkField = modelInfo?.fields.find((f) => f.isId)
+    const pkFieldName = pkField?.name ?? 'id'
+    const pkFieldType = pkField?.type ?? 'String'
+
     if (entitySpec.batch && entitySpec.fields.length > 0) {
-      results[model] = await insertBatch(executor, dialect, dbTable, colMap, enumTypeMap, entitySpec.fields)
+      results[model] = await insertBatch(executor, dialect, dbTable, colMap, enumTypeMap, entitySpec.fields, pkFieldName, pkFieldType)
     } else {
       const created: Record<string, unknown>[] = []
       for (const fields of entitySpec.fields) {
-        const [record] = await insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields)
+        const [record] = await insertOne(executor, dialect, dbTable, colMap, enumTypeMap, fields, pkFieldName, pkFieldType)
         if (record) created.push(record)
       }
       results[model] = created
@@ -56,6 +63,7 @@ export async function updateEntity(
   id: string,
   fields: Record<string, unknown>,
   enumTypeMaps: Map<string, Map<string, string>> = new Map(),
+  pkFieldName: string = 'id',
 ): Promise<void> {
   const dbTable = tableMap.get(model)
   if (!dbTable) throw new Error(`Unknown model "${model}" for update.`)
@@ -73,7 +81,7 @@ export async function updateEntity(
     paramIdx++
   }
 
-  const idCol = colMap.get('id') ?? 'id'
+  const idCol = colMap.get(pkFieldName) ?? pkFieldName
   params.push(id)
 
   const sql = `UPDATE ${dialect.quoteId(dbTable)} SET ${setClauses.join(', ')} WHERE ${dialect.quoteId(idCol)} = ${dialect.param(paramIdx)}`
@@ -89,16 +97,13 @@ async function insertOne(
   colMap: Map<string, string>,
   enumTypeMap: Map<string, string>,
   fields: Record<string, unknown>,
+  pkFieldName: string = 'id',
+  pkFieldType: string = 'String',
 ): Promise<Record<string, unknown>[]> {
-  // Generate a client-side ID when none is provided and the table has an 'id' column.
-  // Many ORMs (e.g. Prisma's @default(cuid())) generate IDs in the application
-  // layer, not as DB-level defaults. Without this, INSERT would send NULL for
-  // the PK column and fail with a NOT NULL violation.
-  // Tables whose PK is not named 'id' (e.g. WebApplicationData uses applicationId
-  // as its PK) already have their PK set via FK wiring, so we skip injection.
-  const idFieldName = reverseGet(colMap, findIdCol(colMap))
-  if (idFieldName && fields[idFieldName] === undefined) {
-    fields = { ...fields, [idFieldName]: randomUUID() }
+  // Generate a client-side ID when none is provided and the PK type is String.
+  // Int/BigInt PKs use DB auto-increment, so we skip UUID generation for those.
+  if (pkFieldName && fields[pkFieldName] === undefined && pkFieldType === 'String') {
+    fields = { ...fields, [pkFieldName]: randomUUID() }
   }
 
   const entries = Object.entries(fields)
@@ -135,8 +140,8 @@ async function insertOne(
     params,
   )
 
-  const idCol = findIdCol(colMap)
-  const id = fields[idFieldName ?? 'id']
+  const idCol = colMap.get(pkFieldName) ?? pkFieldName
+  const id = fields[pkFieldName]
 
   return mapRowsBack(
     await executor.query(
@@ -154,16 +159,17 @@ async function insertBatch(
   colMap: Map<string, string>,
   enumTypeMap: Map<string, string>,
   fieldsArr: Record<string, unknown>[],
+  pkFieldName: string = 'id',
+  pkFieldType: string = 'String',
 ): Promise<Record<string, unknown>[]> {
   if (fieldsArr.length === 0) return []
 
-  // Generate client-side IDs for batch records, same as insertOne.
-  // Only inject if the table actually has an 'id' column.
-  const idFieldName = reverseGet(colMap, findIdCol(colMap))
-  if (idFieldName) {
+  // Generate client-side IDs for batch records when the PK type is String.
+  // Int/BigInt PKs use DB auto-increment.
+  if (pkFieldName && pkFieldType === 'String') {
     fieldsArr = fieldsArr.map((fields) => {
-      if (fields[idFieldName] === undefined) {
-        return { ...fields, [idFieldName]: randomUUID() }
+      if (fields[pkFieldName] === undefined) {
+        return { ...fields, [pkFieldName]: randomUUID() }
       }
       return fields
     })
@@ -253,16 +259,6 @@ function mapRowsBack(
   })
 }
 
-function findIdCol(colMap: Map<string, string>): string {
-  return colMap.get('id') ?? 'id'
-}
-
-function reverseGet(map: Map<string, string>, dbName: string): string | null {
-  for (const [key, val] of map) {
-    if (val === dbName) return key
-  }
-  return null
-}
 
 /**
  * Build a parameter placeholder with an optional Postgres enum cast.
@@ -294,10 +290,10 @@ const MYSQL_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
 function serializeValue(value: unknown, dialect: Dialect): unknown {
   if (value === null || value === undefined) return null
 
-  // JSON: Both MySQL and Postgres need stringified JSON when using parameterized
-  // queries with explicit casts (e.g. $1::jsonb). Postgres $queryRawUnsafe cannot
-  // pass JS objects directly as parameters.
+  // JSON: stringify objects/dicts for JSON/JSONB columns.
+  // Arrays are returned as native arrays for Postgres ARRAY columns.
   if (typeof value === 'object' && !(value instanceof Date)) {
+    if (Array.isArray(value)) return value
     return JSON.stringify(value)
   }
 

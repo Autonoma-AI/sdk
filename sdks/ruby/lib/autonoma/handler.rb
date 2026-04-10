@@ -150,11 +150,13 @@ module Autonoma
             batch << tree.ops[i]
           end
 
-          # Find model info for auto-populating fields
+          # Find model info for auto-populating fields and dynamic PK
           model_info = schema.models.find { |m| m.name == model }
+          pk_field = model_info&.fields&.find { |f| f.is_id }
+          pk_field_name = pk_field&.name || "id"
 
           resolved_fields = batch.map do |b|
-            fields = b.fields.reject { |k, _| k == "id" }
+            fields = b.fields.reject { |k, _| k == pk_field_name }
 
             # Replace temp IDs with real IDs
             fields.each do |key, value|
@@ -186,7 +188,7 @@ module Autonoma
           end
 
           spec = { model => { "count" => resolved_fields.length, "fields" => resolved_fields, "batch" => op.batch } }
-          created = Create.create_entities(tx, dialect, introspection.table_map, introspection.column_maps, spec, introspection.enum_type_maps)
+          created = Create.create_entities(tx, dialect, introspection.table_map, introspection.column_maps, spec, introspection.enum_type_maps, schema.models)
           records = created[model] || []
 
           refs[model] = (refs[model] || []) + records
@@ -195,8 +197,8 @@ module Autonoma
             next unless j < records.length
 
             record = records[j]
-            record_id = record["id"]
-            id_map[b.temp_id] = record_id if record_id.is_a?(String)
+            record_id = record[pk_field_name]
+            id_map[b.temp_id] = record_id unless record_id.nil?
           end
 
           i += 1
@@ -213,10 +215,12 @@ module Autonoma
                   "Ensure the referenced node has _alias defined in the scenario."
           end
 
+          deferred_model_info = schema.models.find { |m| m.name == deferred.model }
+          deferred_pk_field_name = deferred_model_info&.fields&.find { |f| f.is_id }&.name || "id"
           Create.update_entity(
             tx, dialect, introspection.table_map, introspection.column_maps,
             deferred.model, real_target_id, { deferred.field => real_ref_id },
-            introspection.enum_type_maps
+            introspection.enum_type_maps, deferred_pk_field_name
           )
         end
       end
@@ -261,7 +265,8 @@ module Autonoma
 
     def self.find_first_user(refs)
       refs.each do |model, records|
-        return records.first if model.downcase == "user" && records.any?
+        normalized = model.downcase
+        return records.first if (normalized == "user" || normalized == "users") && records.any?
       end
       nil
     end

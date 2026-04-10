@@ -4,12 +4,26 @@ import base64
 import hashlib
 import hmac
 import json
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
+
+def _default_serializer(obj: object) -> str:
+    """Custom JSON serializer for types not serializable by default json module."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, UUID):
+        return str(obj)
+    if isinstance(obj, Decimal):
+        return str(obj)
+    return str(obj)
 
 
 def sign_refs(payload: dict, secret: str) -> str:
     """Sign a refs payload into a 3-part token string."""
     header = _base64url_encode(json.dumps({"alg": "HS256", "typ": "REFS"}, separators=(",", ":")).encode())
-    body = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode())
+    body = _base64url_encode(json.dumps(payload, separators=(",", ":"), default=_default_serializer).encode())
     signature = _hmac_sign(f"{header}.{body}", secret)
     return f"{header}.{body}.{signature}"
 

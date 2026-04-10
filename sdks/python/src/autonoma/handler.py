@@ -132,7 +132,7 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
 
     tree = resolve_tree(create, schema)
     refs: dict[str, list[dict[str, Any]]] = {}
-    id_map: dict[str, str] = {}
+    id_map: dict[str, Any] = {}
 
     async def do_up(tx: Any) -> None:
         nonlocal refs
@@ -150,9 +150,13 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
             # Find model info for auto-populating fields
             model_info = next((m for m in schema.models if m.name == model), None)
 
+            # Bug 4: find actual PK field name from schema
+            pk_field = next((f for f in model_info.fields if f.is_id), None) if model_info else None
+            pk_field_name = pk_field.name if pk_field else "id"
+
             resolved_fields: list[dict[str, Any]] = []
             for b in batch:
-                fields = {k: v for k, v in b.fields.items() if k != "id"}
+                fields = {k: v for k, v in b.fields.items() if k != pk_field_name}
 
                 # Replace temp IDs with real IDs
                 for key, value in list(fields.items()):
@@ -182,18 +186,20 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
                 resolved_fields.append(fields)
 
             spec = {model: {"count": len(resolved_fields), "fields": resolved_fields, "batch": op.batch}}
-            created = await create_entities(tx, dialect, introspection.table_map, introspection.column_maps, spec, introspection.enum_type_maps)
+            created = await create_entities(tx, dialect, introspection.table_map, introspection.column_maps, spec, introspection.enum_type_maps, schema.models)
             records = created.get(model, [])
 
             if model not in refs:
                 refs[model] = []
             refs[model].extend(records)
 
+            # Bug 3: Accept both str and int IDs in id_map (remove isinstance check)
+            # Bug 4: Use pk_field_name instead of hardcoded "id"
             for j, b in enumerate(batch):
                 if j < len(records):
                     record = records[j]
-                    record_id = record.get("id")
-                    if isinstance(record_id, str):
+                    record_id = record.get(pk_field_name)
+                    if record_id is not None:
                         id_map[b.temp_id] = record_id
 
             i += 1
@@ -210,10 +216,15 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
                     f'Ensure the referenced node has _alias defined in the scenario.'
                 )
 
+            deferred_model_info = next((m for m in schema.models if m.name == deferred.model), None)
+            deferred_pk_field = next((f for f in deferred_model_info.fields if f.is_id), None) if deferred_model_info else None
+            deferred_pk_field_name = deferred_pk_field.name if deferred_pk_field else "id"
+
             await update_entity(
                 tx, dialect, introspection.table_map, introspection.column_maps,
-                deferred.model, real_target_id, {deferred.field: real_ref_id},
+                deferred.model, str(real_target_id), {deferred.field: real_ref_id},
                 introspection.enum_type_maps,
+                deferred_pk_field_name,
             )
 
     await config.executor.transaction(do_up)
@@ -254,17 +265,20 @@ async def _handle_down(config: HandlerConfig, body: dict[str, Any]) -> HandlerRe
 
 
 def _find_first_user(refs: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
+    # Bug 8: Match both "user" and "users" (case-insensitive)
     for model, records in refs.items():
-        if model.lower() == "user" and records:
+        normalized = model.lower()
+        if (normalized == "user" or normalized == "users") and records:
             return records[0]
     return None
 
 
 def _detect_scope_value(refs: dict[str, list[dict[str, Any]]], scope_field: str) -> str | None:
-    scope_lower = scope_field.lower()
+    # Bug 5: Strip underscores from both sides before comparing
+    scope_normalized = scope_field.replace("_", "").lower()
     for records in refs.values():
         for record in records:
             for key, value in record.items():
-                if key.lower() == scope_lower and isinstance(value, str):
+                if key.replace("_", "").lower() == scope_normalized and isinstance(value, str):
                     return value
     return None

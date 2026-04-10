@@ -20,6 +20,7 @@ class Create
         array $columnMaps,
         array $spec,
         array $enumTypeMaps = [],
+        array $schemaModels = [],
     ): array {
         $results = [];
 
@@ -31,15 +32,35 @@ class Create
             $colMap = $columnMaps[$model] ?? [];
             $enumTypeMap = $enumTypeMaps[$model] ?? [];
 
+            // Bug 4: find actual PK field name from schema
+            $modelInfo = null;
+            foreach ($schemaModels as $m) {
+                if ($m->name === $model) {
+                    $modelInfo = $m;
+                    break;
+                }
+            }
+            $pkField = null;
+            if ($modelInfo !== null) {
+                foreach ($modelInfo->fields as $f) {
+                    if ($f->isId) {
+                        $pkField = $f;
+                        break;
+                    }
+                }
+            }
+            $pkFieldName = $pkField !== null ? $pkField->name : 'id';
+            $pkFieldType = $pkField !== null ? $pkField->type : 'String';
+
             $fieldsList = $entitySpec['fields'] ?? [];
             $isBatch = $entitySpec['batch'] ?? false;
 
             if ($isBatch && !empty($fieldsList)) {
-                $results[$model] = self::insertBatch($executor, $dialect, $dbTable, $colMap, $enumTypeMap, $fieldsList);
+                $results[$model] = self::insertBatch($executor, $dialect, $dbTable, $colMap, $enumTypeMap, $fieldsList, $pkFieldName, $pkFieldType);
             } else {
                 $created = [];
                 foreach ($fieldsList as $fields) {
-                    $rows = self::insertOne($executor, $dialect, $dbTable, $colMap, $enumTypeMap, $fields);
+                    $rows = self::insertOne($executor, $dialect, $dbTable, $colMap, $enumTypeMap, $fields, $pkFieldName, $pkFieldType);
                     if (!empty($rows)) {
                         $created[] = $rows[0];
                     }
@@ -63,6 +84,7 @@ class Create
         string $recordId,
         array $fields,
         array $enumTypeMaps = [],
+        string $pkFieldName = 'id',
     ): void {
         $dbTable = $tableMap[$model] ?? null;
         if ($dbTable === null) {
@@ -82,7 +104,7 @@ class Create
             $paramIdx++;
         }
 
-        $idCol = $colMap['id'] ?? 'id';
+        $idCol = $colMap[$pkFieldName] ?? $pkFieldName;
         $params[] = $recordId;
 
         $sql = sprintf(
@@ -104,11 +126,13 @@ class Create
         array $colMap,
         array $enumTypeMap,
         array $fields,
+        string $pkFieldName = 'id',
+        string $pkFieldType = 'String',
     ): array {
-        // Generate client-side UUID for 'id' column if not provided
-        $idFieldName = self::reverseGet($colMap, self::findIdCol($colMap));
-        if ($idFieldName !== null && !isset($fields[$idFieldName])) {
-            $fields[$idFieldName] = self::generateUuid();
+        // Generate a client-side UUID when none is provided and the PK type is String.
+        // Int/BigInt PKs use DB auto-increment, so we skip UUID generation for those.
+        if ($pkFieldName && !isset($fields[$pkFieldName]) && $pkFieldType === 'String') {
+            $fields[$pkFieldName] = self::generateUuid();
         }
 
         if (empty($fields)) {
@@ -150,8 +174,8 @@ class Create
             "INSERT INTO {$dialect->quoteId($dbTable)} ({$colList}) VALUES ({$valList})",
             $params,
         );
-        $idCol = self::findIdCol($colMap);
-        $recordId = $fields[$idFieldName ?? 'id'] ?? null;
+        $idCol = $colMap[$pkFieldName] ?? $pkFieldName;
+        $recordId = $fields[$pkFieldName] ?? null;
         return self::mapRowsBack(
             $executor->query(
                 "SELECT * FROM {$dialect->quoteId($dbTable)} WHERE {$dialect->quoteId($idCol)} = {$dialect->param(1)}",
@@ -168,17 +192,19 @@ class Create
         array $colMap,
         array $enumTypeMap,
         array $fieldsArr,
+        string $pkFieldName = 'id',
+        string $pkFieldType = 'String',
     ): array {
         if (empty($fieldsArr)) {
             return [];
         }
 
-        // Generate client-side IDs
-        $idFieldName = self::reverseGet($colMap, self::findIdCol($colMap));
-        if ($idFieldName !== null) {
-            $fieldsArr = array_map(function ($f) use ($idFieldName) {
-                if (!isset($f[$idFieldName])) {
-                    $f[$idFieldName] = self::generateUuid();
+        // Generate client-side IDs for batch records when the PK type is String.
+        // Int/BigInt PKs use DB auto-increment.
+        if ($pkFieldName && $pkFieldType === 'String') {
+            $fieldsArr = array_map(function ($f) use ($pkFieldName) {
+                if (!isset($f[$pkFieldName])) {
+                    $f[$pkFieldName] = self::generateUuid();
                 }
                 return $f;
             }, $fieldsArr);
@@ -220,8 +246,8 @@ class Create
                     "INSERT INTO {$dialect->quoteId($dbTable)} ({$colList}) VALUES {$valList}",
                     $params,
                 );
-                $idCol = self::findIdCol($colMap);
-                $ids = array_map(fn($f) => $f[$idFieldName ?? 'id'] ?? null, $chunk);
+                $idCol = $colMap[$pkFieldName] ?? $pkFieldName;
+                $ids = array_map(fn($f) => $f[$pkFieldName] ?? null, $chunk);
                 $ids = array_filter($ids, fn($id) => $id !== null);
                 if (!empty($ids)) {
                     $inPlaceholders = implode(', ', array_map(fn($i) => $dialect->param($i), range(1, count($ids))));
@@ -283,8 +309,12 @@ class Create
     {
         if ($value === null) return $value;
 
-        // JSON: stringify arrays/objects
+        // JSON: stringify associative arrays/objects for JSON/JSONB columns.
+        // Indexed arrays are returned as-is for Postgres ARRAY columns.
         if (is_array($value)) {
+            if (array_is_list($value)) {
+                return $value;
+            }
             return json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
 
