@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/Autonoma-AI/sdk/compare/v0.1.10...v0.1.11) (2026-04-10)
+
+
+### Bug Fixes
+
+* stop stripping PK field ([#30](https://github.com/Autonoma-AI/sdk/issues/30)) ([a75809a](https://github.com/Autonoma-AI/sdk/commit/a75809ac939cbb45495829f1bb5a2fbc6ba09f3c))
+
 ## [0.1.10](https://github.com/Autonoma-AI/sdk/compare/v0.1.9...v0.1.10) (2026-04-10)
 
 
