@@ -105,8 +105,23 @@ export interface HandlerConfig {
    * Must return auth credentials for the test runner.
    */
   auth: (user: Record<string, unknown> | null) => Promise<AuthResult> | AuthResult
+  /**
+   * Optional hook called before teardown in `down`.
+   * Use this to clean up data created outside the SDK (e.g., external service records).
+   */
+  beforeDown?: (context: HookContext) => Promise<void> | void
+  /**
+   * Optional hook called after entity creation and auth in `up`.
+   * Can modify the auth result before it is returned to the caller.
+   */
+  afterUp?: (context: HookContext, authResult: AuthResult) => Promise<AuthResult> | AuthResult
   /** SDK identity metadata. Server and ORM adapters populate this. */
   sdk?: Partial<SdkInfo>
+}
+
+export interface HookContext {
+  scenarioName: string
+  refs: Record<string, Record<string, unknown>[]>
 }
 
 export interface AuthCookie {

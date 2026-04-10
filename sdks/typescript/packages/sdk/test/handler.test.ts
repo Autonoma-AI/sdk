@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { handleRequest } from '../src/handler.js'
 import { signBody } from '../src/hmac.js'
 import { signRefs } from '../src/refs.js'
-import type { HandlerConfig, SQLExecutor } from '../src/types.js'
+import type { AuthResult, HandlerConfig, HookContext, SQLExecutor } from '../src/types.js'
 
 /**
  * Create a mock SQLExecutor that returns canned information_schema data
@@ -207,6 +207,67 @@ describe('handleRequest', () => {
       const res = await handleRequest(config, req)
       expect(res.status).toBe(403)
       expect(res.body.code).toBe('INVALID_REFS_TOKEN')
+    })
+  })
+
+  describe('hooks', () => {
+    it('afterUp hook is called and can modify auth result', async () => {
+      const afterUpSpy = vi.fn((ctx: HookContext, auth: AuthResult): AuthResult => ({
+        ...auth,
+        headers: { ...auth.headers, 'X-Custom': 'enriched' },
+      }))
+      const config = createConfig({ afterUp: afterUpSpy })
+      const req = signedRequest(
+        { action: 'up', create: { Organization: [{ name: 'Org' }] }, testRunId: 'run-123' },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      expect(afterUpSpy).toHaveBeenCalledOnce()
+      const [ctx] = afterUpSpy.mock.calls[0]!
+      expect(ctx.scenarioName).toBeDefined()
+      expect(ctx.refs).toBeDefined()
+      const body = res.body as any
+      expect(body.auth.headers['X-Custom']).toBe('enriched')
+    })
+
+    it('beforeDown hook is called before teardown', async () => {
+      const beforeDownSpy = vi.fn()
+      const config = createConfig({ beforeDown: beforeDownSpy })
+      const refsToken = signRefs(
+        { refs: { Organization: [{ id: 'org-1' }] }, testRunId: 'run-123', environment: '' },
+        config.signingSecret,
+      )
+      const req = signedRequest(
+        { action: 'down', refsToken },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      expect(beforeDownSpy).toHaveBeenCalledOnce()
+      const [ctx] = beforeDownSpy.mock.calls[0]!
+      expect(ctx.scenarioName).toBe('run-123')
+      expect(ctx.refs).toBeDefined()
+    })
+
+    it('async afterUp hook is supported', async () => {
+      const config = createConfig({
+        afterUp: async (ctx: HookContext, auth: AuthResult): Promise<AuthResult> => ({
+          ...auth,
+          credentials: { asyncKey: 'asyncValue' },
+        }),
+      })
+      const req = signedRequest(
+        { action: 'up', create: { Organization: [{ name: 'Org' }] }, testRunId: 'run-123' },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      const body = res.body as any
+      expect(body.auth.credentials.asyncKey).toBe('asyncValue')
     })
   })
 

@@ -31,6 +31,7 @@ export type {
   DownResponse,
   SchemaRelation,
   SdkInfo,
+  HookContext,
 } from './types'
 
 export type { Dialect } from './dialect'

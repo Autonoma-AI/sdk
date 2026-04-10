@@ -179,6 +179,12 @@ defmodule Autonoma.Handler do
     first_user = find_first_user(refs)
     auth = config.auth.(first_user)
 
+    auth =
+      case Map.get(config, :after_up) do
+        nil -> auth
+        hook -> hook.(%{scenario_name: scope_value, refs: refs}, auth)
+      end
+
     refs_token = Refs.sign(
       %{"refs" => refs, "testRunId" => scope_value, "environment" => ""},
       config.signing_secret
@@ -315,6 +321,11 @@ defmodule Autonoma.Handler do
 
     %{schema: schema, table_map: table_map, column_maps: column_maps} = get_introspection(config)
     dialect = get_dialect(config)
+
+    case Map.get(config, :before_down) do
+      nil -> :ok
+      hook -> hook.(%{scenario_name: payload["testRunId"], refs: payload["refs"] || %{}})
+    end
 
     TeardownSQL.teardown(config.executor, dialect, table_map, column_maps, schema, payload["testRunId"], payload["refs"])
 

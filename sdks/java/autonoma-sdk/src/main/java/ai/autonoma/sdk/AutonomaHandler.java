@@ -264,6 +264,12 @@ public final class AutonomaHandler {
 
         Map<String, Object> firstUser = findFirstUser(refs);
         AuthResult authResult = config.getAuth().apply(firstUser);
+
+        if (config.getAfterUp() != null) {
+            HookContext hookCtx = new HookContext(scopeValue, refs);
+            authResult = config.getAfterUp().apply(hookCtx, authResult);
+        }
+
         Map<String, Object> auth = serializeAuthResult(authResult);
 
         String refsToken = RefsUtil.signRefs(
@@ -297,6 +303,14 @@ public final class AutonomaHandler {
         Map<String, List<Map<String, Object>>> refs = null;
         if (payload.containsKey("refs")) {
             refs = (Map<String, List<Map<String, Object>>>) payload.get("refs");
+        }
+
+        if (config.getBeforeDown() != null) {
+            HookContext hookCtx = new HookContext(
+                (String) payload.get("testRunId"),
+                refs != null ? refs : Map.of()
+            );
+            config.getBeforeDown().accept(hookCtx);
         }
 
         TeardownExecutor.teardown(

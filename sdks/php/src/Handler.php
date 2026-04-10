@@ -310,6 +310,11 @@ class Handler
         $firstUser = self::findFirstUser($refs);
         $auth = ($config->auth)($firstUser);
 
+        if ($config->afterUp !== null) {
+            $hookCtx = ['scenarioName' => $scopeValue, 'refs' => $refs];
+            $auth = ($config->afterUp)($hookCtx, $auth);
+        }
+
         $refsToken = Refs::signRefs(
             ['refs' => $refs, 'testRunId' => $scopeValue, 'environment' => ''],
             $config->signingSecret,
@@ -336,6 +341,11 @@ class Handler
 
         $introspection = self::getIntrospection($config);
         $dialect = DialectFactory::get($config->dialect);
+
+        if ($config->beforeDown !== null) {
+            $hookCtx = ['scenarioName' => $payload['testRunId'], 'refs' => $payload['refs'] ?? []];
+            ($config->beforeDown)($hookCtx);
+        }
 
         Teardown::teardown(
             $config->executor,

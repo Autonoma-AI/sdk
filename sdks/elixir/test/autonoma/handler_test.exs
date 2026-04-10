@@ -136,4 +136,46 @@ defmodule Autonoma.HandlerTest do
     assert result.status == 400
     assert result.body["code"] == "INVALID_BODY"
   end
+
+  # --- Handler hook tests ---
+
+  test "after_up hook modifies auth result" do
+    config =
+      Map.put(make_config(), :after_up, fn _ctx, auth ->
+        Map.put(auth, "headers", Map.merge(auth["headers"] || %{}, %{"X-Custom" => "enriched"}))
+      end)
+
+    req =
+      signed_req(%{
+        "action" => "up",
+        "create" => %{"User" => [%{"email" => "test@test.com"}]},
+        "testRunId" => "run-1"
+      })
+
+    result = Handler.handle(config, req)
+    assert result.status == 200
+    assert result.body["auth"]["headers"]["X-Custom"] == "enriched"
+  end
+
+  test "before_down hook is called" do
+    self = self()
+
+    config =
+      Map.put(make_config(), :before_down, fn ctx ->
+        send(self, {:before_down_called, ctx})
+      end)
+
+    token =
+      Refs.sign(
+        %{"refs" => %{"User" => [%{"id" => "u1"}]}, "testRunId" => "run-1", "environment" => ""},
+        @signing_secret
+      )
+
+    req = signed_req(%{"action" => "down", "refsToken" => token})
+    result = Handler.handle(config, req)
+    assert result.status == 200
+    assert_receive {:before_down_called, ctx}
+    assert is_map(ctx)
+    assert is_map(ctx.refs)
+  end
 end

@@ -61,6 +61,11 @@ type AuthResult struct {
 	Extra map[string]any `json:"-"`
 }
 
+type HookContext struct {
+	ScenarioName string
+	Refs         map[string][]map[string]any
+}
+
 type HandlerConfig struct {
 	Executor        SQLExecutor
 	ScopeField      string
@@ -73,6 +78,8 @@ type HandlerConfig struct {
 	AllowProduction bool
 	Auth            func(user map[string]any) (*AuthResult, error)
 	SDK             *SdkInfo
+	BeforeDown      func(ctx HookContext) error
+	AfterUp         func(ctx HookContext, auth map[string]any) (map[string]any, error)
 }
 
 type HandlerRequest struct {
