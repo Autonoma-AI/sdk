@@ -18,7 +18,6 @@ use Autonoma\Sdk\Graph;
 use Autonoma\Sdk\Hmac;
 use Autonoma\Sdk\Refs;
 use Autonoma\Sdk\Fingerprint;
-use Autonoma\Sdk\Template;
 
 $data = json_decode(file_get_contents('php://stdin'), true);
 
@@ -35,7 +34,6 @@ try {
         'refs.signRefs' => Refs::signRefs($inp['payload'], $inp['secret']),
         'refs.verifyRefs' => Refs::verifyRefs($inp['token'], $inp['secret']),
         'fingerprint.fingerprint' => Fingerprint::fingerprint($inp['value']),
-        'template.resolveTemplate' => Template::resolveTemplate($inp['value'], $inp['ctx']),
         default => throw new \RuntimeException("Unknown dispatch: {$mod}.{$fn}"),
     };
 

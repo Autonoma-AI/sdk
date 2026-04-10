@@ -46,7 +46,7 @@ The result will be:
 ```
 Failed at phase: up
 [up] Unique constraint failed on the fields: (`slug`)
-  Fix: Unique constraint on (slug). Add {{testRunId}} or {{index}} to make values unique.
+  Fix: Unique constraint on (slug). Ensure field values are unique across instances.
 ```
 
 You fix the JSON file, re-run the test, and repeat until it passes.
@@ -70,11 +70,11 @@ You fix the JSON file, re-run the test, and repeat until it passes.
 
 | Error message | What's wrong | How to fix |
 |---------------|-------------|-----------|
-| `Unique constraint failed on the fields: (\`slug\`)` | Two records have the same value for a unique field | Add `{{testRunId}}` to the field: `"slug": "acme-{{testRunId}}"` |
+| `Unique constraint failed on the fields: (\`slug\`)` | Two records have the same value for a unique field | Add `unique-value` to the field: `"slug": "acme-unique-value"` |
 | `Unique constraint failed on the fields: (\`userId\`,\`organizationId\`)` | A user is a member of the same org twice | Each member must have its own user. Nest each user under its member. |
 | `Invalid value for argument \`architecture\`. Expected Architecture.` | Wrong enum value | Check your Prisma schema for valid enum values: `enum Architecture { WEB ANDROID IOS }` |
 | `Unknown argument \`applications\`.` | Wrong relation name | Check your Prisma schema for the exact relation field name. It might be `Application` (PascalCase) not `applications`. |
-| `Argument \`email\` must not be null.` | A required field is missing from the scenario | Add the field with a value: `"email": "user-{{testRunId}}@test.com"` |
+| `Argument \`email\` must not be null.` | A required field is missing from the scenario | Add the field with a value: `"email": "user-unique-value@test.com"` |
 | `Foreign key constraint failed` | A referenced record doesn't exist | Check that parent entities are nested correctly. The parent must exist before the child. |
 | `_ref "xyz" not found` | An `_alias` is referenced before it's created | Move the aliased node earlier in the tree (it must appear before any `_ref` to it in depth-first order) |
 
@@ -97,8 +97,8 @@ You fix the JSON file, re-run the test, and repeat until it passes.
 {
   "create": {
     "Organization": [
-      { "name": "Org 1", "slug": "test-org-1-{{testRunId}}" },
-      { "name": "Org 2", "slug": "test-org-2-{{testRunId}}" }
+      { "name": "Org 1", "slug": "test-org-1-unique-value" },
+      { "name": "Org 2", "slug": "test-org-2-unique-value" }
     ]
   }
 }
@@ -218,7 +218,7 @@ describe('scenario validation', () => {
 scenarios/
   empty.json       ← org + user only
   standard.json    ← realistic variety
-  large.json       ← high volume with _batch
+  large.json       ← high volume
 ```
 
 2. Run the test:

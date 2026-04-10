@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { topoSort, findDeferrableEdge } from '../../sdks/typescript/packages/sdk/src/graph'
-import { resolveTemplate } from '../../sdks/typescript/packages/sdk/src/template'
 import { signBody, verifySignature } from '../../sdks/typescript/packages/sdk/src/hmac'
 import { signRefs, verifyRefs } from '../../sdks/typescript/packages/sdk/src/refs'
 import { fingerprint } from '../../sdks/typescript/packages/sdk/src/fingerprint'
@@ -32,9 +31,6 @@ async function main() {
         break
       case 'fingerprint.fingerprint':
         result = fingerprint(input.input.value)
-        break
-      case 'template.resolveTemplate':
-        result = resolveTemplate(input.input.value, input.input.ctx)
         break
       default:
         throw new Error(`Unknown function: ${input.module}.${input.function}`)

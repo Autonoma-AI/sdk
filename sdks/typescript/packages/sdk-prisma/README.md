@@ -75,9 +75,9 @@ describe('environment factory', () => {
     const result = await checkScenario(adapter, {
       create: {
         Organization: [{
-          name: 'Test [{{testRunId}}]',
-          slug: 'test-{{testRunId}}',
-          users: [{ email: 'admin-{{testRunId}}@test.com', name: 'Admin' }],
+          name: 'Test Org',
+          slug: 'test-org',
+          users: [{ email: 'admin@test.com', name: 'Admin' }],
         }],
       },
     })

@@ -146,7 +146,7 @@ defmodule Autonoma.Handler do
       get_introspection(config)
 
     dialect = get_dialect(config)
-    tree = Tree.resolve_tree(create, schema, test_run_id)
+    tree = Tree.resolve_tree(create, schema)
 
     refs = %{}
     id_map = %{}

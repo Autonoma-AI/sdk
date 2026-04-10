@@ -29,9 +29,6 @@ result =
         {"fingerprint", "fingerprint"} ->
           Autonoma.Fingerprint.compute(inp["value"])
 
-        {"template", "resolveTemplate"} ->
-          Autonoma.Template.resolve(inp["value"], inp["ctx"])
-
         _ ->
           raise "Unknown function: #{mod}.#{func}"
       end

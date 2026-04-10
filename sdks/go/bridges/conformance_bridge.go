@@ -117,21 +117,6 @@ func dispatch(input bridgeInput) {
 		result := autonoma.Fingerprint(value)
 		writeResult(result)
 
-	case "template.resolveTemplate":
-		value := input.Input["value"]
-		ctxRaw, _ := input.Input["ctx"].(map[string]any)
-		testRunID, _ := ctxRaw["testRunId"].(string)
-		index := 0
-		if idx, ok := ctxRaw["index"].(float64); ok {
-			index = int(idx)
-		}
-		ctx := autonoma.TemplateContext{
-			TestRunID: testRunID,
-			Index:     index,
-		}
-		result := autonoma.ResolveTemplate(value, ctx)
-		writeResult(result)
-
 	default:
 		writeError(fmt.Sprintf("Unknown function: %s", key))
 	}

@@ -47,7 +47,6 @@ type FKEdge struct {
 type ResolvedEntitySpec struct {
 	Count  int
 	Fields []map[string]any
-	Batch  bool
 }
 
 type SdkInfo struct {

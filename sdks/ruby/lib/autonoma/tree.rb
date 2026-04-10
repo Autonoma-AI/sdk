@@ -2,7 +2,6 @@
 
 require "set"
 require_relative "types"
-require_relative "template"
 
 module Autonoma
   class ResolvedTree
@@ -16,10 +15,10 @@ module Autonoma
   end
 
   module Tree
-    RESERVED_KEYS = Set.new(%w[_alias _ref _count _batch]).freeze
+    RESERVED_KEYS = Set.new(%w[_alias _ref]).freeze
 
     # Convert nested scenario tree into flat, ordered CreateOp list.
-    def self.resolve_tree(create, schema, test_run_id)
+    def self.resolve_tree(create, schema)
       relation_by_parent_field = {}
       schema.relations.each do |rel|
         relation_by_parent_field["#{rel.parent_model}.#{rel.parent_field}"] = rel
@@ -47,7 +46,7 @@ module Autonoma
       end
 
       walk_node = nil
-      walk_node = lambda do |model_name, node, parent_temp_id, parent_relation, parent_fk_on_parent, index|
+      walk_node = lambda do |model_name, node, parent_temp_id, parent_relation, parent_fk_on_parent|
         fields = {}
         pre_children = []
         post_children = []
@@ -103,8 +102,7 @@ module Autonoma
             next
           end
 
-          ctx = { "testRunId" => test_run_id, "index" => index }
-          fields[key] = Template.resolve_template(value, ctx)
+          fields[key] = value
         end
 
         # Wire FK to parent
@@ -115,8 +113,8 @@ module Autonoma
         # Process pre-children
         pre_children.each do |relation, value, _is_on_parent|
           if value.is_a?(Array)
-            value.each_with_index do |child_node, i|
-              child_temp_id = walk_node.call(relation.child_model, child_node, temp_id, relation, true, i)
+            value.each_with_index do |child_node, _i|
+              child_temp_id = walk_node.call(relation.child_model, child_node, temp_id, relation, true)
               fields[relation.child_field] = child_temp_id
             end
           end
@@ -129,28 +127,8 @@ module Autonoma
         # Process post-children
         post_children.each do |relation, value, _|
           if value.is_a?(Array)
-            value.each_with_index do |child_node, i|
-              walk_node.call(relation.child_model, child_node, temp_id, relation, false, i)
-            end
-          elsif value.is_a?(Hash) && value.key?("_count")
-            count = value["_count"]
-            is_batch = value["_batch"] || false
-
-            count.times do |i|
-              bulk_fields = {}
-              value.each do |k, v|
-                next if k == "_count" || k == "_batch"
-
-                ctx = { "testRunId" => test_run_id, "index" => i }
-                bulk_fields[k] = Template.resolve_template(v, ctx)
-              end
-              bulk_fields[relation.child_field] = temp_id
-              result.ops << CreateOp.new(
-                model: relation.child_model,
-                fields: bulk_fields,
-                temp_id: make_temp_id.call(relation.child_model),
-                batch: is_batch
-              )
+            value.each do |child_node|
+              walk_node.call(relation.child_model, child_node, temp_id, relation, false)
             end
           end
         end
@@ -159,8 +137,8 @@ module Autonoma
       end
 
       create.each do |model_name, nodes|
-        nodes.each_with_index do |node, i|
-          walk_node.call(model_name, node, nil, nil, false, i)
+        nodes.each do |node|
+          walk_node.call(model_name, node, nil, nil, false)
         end
       end
 

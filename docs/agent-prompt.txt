@@ -232,11 +232,11 @@ Call `adapter.getSchema()` or look at the Prisma schema directly. Identify:
 {
   "create": {
     "Organization": [{
-      "name": "Empty Org [{{testRunId}}]",
-      "slug": "empty-{{testRunId}}",
+      "name": "Empty Org ",
+      "slug": "empty-unique-value",
       "members": [{
         "role": "owner",
-        "user": [{ "name": "Solo User", "email": "solo-{{testRunId}}@test.com" }]
+        "user": [{ "name": "Solo User", "email": "solo-unique-value@test.com" }]
       }]
     }]
   }
@@ -250,8 +250,8 @@ Call `adapter.getSchema()` or look at the Prisma schema directly. Identify:
 - Enough data to test filters, statuses, and categories
 - Every relation path exercised at least once
 
-**`scenarios/large.json`** — High volume. Use `_count` and `_batch` at leaf nodes:
-- 10k+ runs, 40+ folders, 200+ tags
+**`scenarios/large.json`** — High volume:
+- Many explicitly listed records for runs, folders, tags
 - Tests pagination, sort stability, filter performance
 
 ### 5.3 — Validate each scenario (iterate until all pass)
@@ -333,7 +333,7 @@ npx vitest run tests/validate-scenarios.test.ts
 
 | Error | Fix |
 |-------|-----|
-| `Unique constraint on (slug)` | Add `{{testRunId}}`: `"slug": "test-{{testRunId}}"` |
+| `Unique constraint on (slug)` | Ensure field values are unique across instances |
 | `Unknown argument 'applications'` | Check Prisma schema for the exact relation name (might be PascalCase) |
 | `Argument 'email' must not be null` | Add the required field to the scenario |
 | `Invalid value for 'architecture'` | Check enum values in your Prisma schema |
@@ -396,11 +396,11 @@ Generate `scenarios/run-statuses.json`:
   "_description": "Runs in various pipeline states — for testing status filters, progress bars, and dashboard aggregations",
   "create": {
     "Organization": [{
-      "name": "Status Test [{{testRunId}}]",
-      "slug": "status-{{testRunId}}",
+      "name": "Status Test ",
+      "slug": "status-unique-value",
       "members": [{
         "role": "owner",
-        "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
+        "user": [{ "name": "Admin", "email": "admin-unique-value@test.com" }]
       }],
       "applications": [{
         "_alias": "app",
@@ -449,7 +449,7 @@ Now the test that checks "dashboard shows 2 queued, 3 processing, 4 completed, 1
 - **DO** match existing codebase conventions — same import style, file naming, directory structure
 - **DO** test with testcontainers and `checkScenario` — mocks don't catch real DB errors
 - **DO** add both secrets to `.env` and `.env.example`
-- **DO** use `{{testRunId}}` on all unique fields in test scenarios
+- **DO** use unique values for all unique fields in test scenarios
 - **DO** check your Prisma schema for exact relation field names before writing scenarios
 - **DO** iterate on scenarios until `checkScenario` passes — never ship a scenario that hasn't been validated
 - **DO** generate new targeted scenarios when existing ones don't fit a test's needs

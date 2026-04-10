@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Autonoma SDK — a multi-language SDK that automates the Autonoma Environment Factory endpoint. Each language implementation lives under `sdks/<language>/` and must pass the shared conformance test suite. The SDK handles HMAC verification, JWT refs, template resolution, FK-ordered entity creation, and scoped teardown.
+Autonoma SDK — a multi-language SDK that automates the Autonoma Environment Factory endpoint. Each language implementation lives under `sdks/<language>/` and must pass the shared conformance test suite. The SDK handles HMAC verification, JWT refs, FK-ordered entity creation, and scoped teardown.
 
 ## Repository Structure
 
@@ -68,7 +68,7 @@ mvn package -DskipTests                    # build JARs (including conformance b
 ### Ruby
 ```bash
 cd sdks/ruby
-ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_template.rb test/test_graph.rb test/test_handler.rb test/test_create.rb
+ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_graph.rb test/test_handler.rb test/test_create.rb
 ```
 
 ### Rust
@@ -106,7 +106,6 @@ All language SDKs implement the same protocol with the same core modules:
 - **handler** — request routing (discover/up/down), HMAC verification, environment gating, error wrapping
 - **hmac** — HMAC-SHA256 signing/verification for request authentication
 - **refs** — JWT-like token (header.payload.signature) for signing/verifying created entity refs
-- **template** — resolves `{{testRunId}}`, `{{cycle(...)}}`, `{{random.int()}}`, etc.
 - **graph** — Kahn's topo sort + Tarjan's SCC for FK ordering and cycle detection
 - **fingerprint** — deterministic sha256-based hash of scenario definitions
 - **ORM adapter** — implements getSchema(), createEntities(), teardown() for a specific ORM
@@ -141,7 +140,7 @@ This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PH
 
 ### Adding features or fixing bugs
 
-- Any change to protocol behavior (handler, HMAC, refs, template, graph, fingerprint) **must be implemented in all eight languages**.
+- Any change to protocol behavior (handler, HMAC, refs, graph, fingerprint) **must be implemented in all eight languages**.
 - Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all eight pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
 
@@ -156,7 +155,7 @@ This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PH
   - Ruby: read at require time in `handler.rb` via `File.read`
   - Rust: compiled in via `include_str!` in `handler.rs`
   - Go: generated via `go generate` into `protocol_version_gen.go`
-- Non-breaking additions (new optional fields, new template expressions) do **not** require a version bump.
+- Non-breaking additions (new optional fields) do **not** require a version bump.
 
 ## Key Conventions
 

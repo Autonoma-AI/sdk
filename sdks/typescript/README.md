@@ -6,7 +6,7 @@ TypeScript implementation of the Autonoma Environment Factory SDK. Get a working
 
 | Package | Description |
 |---------|-------------|
-| `@autonoma-ai/sdk` | Core protocol (HMAC, refs, templates, graph, handler) |
+| `@autonoma-ai/sdk` | Core protocol (HMAC, refs, graph, handler) |
 | `@autonoma-ai/sdk-prisma` | Prisma ORM adapter |
 | `@autonoma-ai/sdk-drizzle` | Drizzle ORM adapter |
 | `@autonoma-ai/sdk-pg` | PostgreSQL driver adapter |

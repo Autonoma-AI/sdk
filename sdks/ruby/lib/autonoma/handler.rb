@@ -133,7 +133,7 @@ module Autonoma
       schema = introspection.schema
       dialect = Dialect.get_dialect(config.dialect)
 
-      tree = Tree.resolve_tree(create, schema, test_run_id)
+      tree = Tree.resolve_tree(create, schema)
       refs = {}
       id_map = {}
 

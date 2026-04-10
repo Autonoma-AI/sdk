@@ -61,7 +61,6 @@ describe('resolveTree', () => {
         }],
       },
       schema,
-      'run-1',
     )
 
     expect(result.ops).toHaveLength(3) // 1 org + 2 users
@@ -90,7 +89,6 @@ describe('resolveTree', () => {
         }],
       },
       schema,
-      'run-2',
     )
 
     expect(result.ops).toHaveLength(4) // org + app + 2 versions
@@ -111,7 +109,6 @@ describe('resolveTree', () => {
         }],
       },
       schema,
-      'run-3',
     )
 
     // org, web, v1.0, mobile, v2.0, v3.0
@@ -142,7 +139,6 @@ describe('resolveTree', () => {
         }],
       },
       schema,
-      'run-4',
     )
 
     // org, app, v1.0, member, user
@@ -167,7 +163,6 @@ describe('resolveTree', () => {
         }],
       },
       schema,
-      'run-5',
     )
 
     const memberOps = result.ops.filter((o) => o.model === 'Member')
@@ -191,42 +186,6 @@ describe('resolveTree', () => {
     }
   })
 
-  it('resolves bulk nodes with _count', () => {
-    const result = resolveTree(
-      {
-        Organization: [{
-          name: 'Acme',
-          applications: [{
-            name: 'App',
-            versions: { _count: 100, _batch: true, name: 'v{{index1}}' },
-          }],
-        }],
-      },
-      schema,
-      'run-6',
-    )
-
-    const versionOps = result.ops.filter((o) => o.model === 'AppVersion')
-    expect(versionOps).toHaveLength(100)
-    expect(versionOps[0]!.batch).toBe(true)
-    expect(versionOps[0]!.fields.name).toBe('v1')
-    expect(versionOps[99]!.fields.name).toBe('v100')
-
-    // All should point to the same parent app
-    const appTempId = result.ops.find((o) => o.model === 'Application')!.tempId
-    expect(versionOps[0]!.fields.applicationId).toBe(appTempId)
-    expect(versionOps[99]!.fields.applicationId).toBe(appTempId)
-  })
-
-  it('resolves {{testRunId}} in templates', () => {
-    const result = resolveTree(
-      { Organization: [{ name: 'Org [{{testRunId}}]' }] },
-      schema,
-      'xyz-123',
-    )
-    expect(result.ops[0]!.fields.name).toBe('Org [xyz-123]')
-  })
-
   it('defers unresolved _ref as a DeferredUpdate instead of throwing', () => {
     const result = resolveTree(
       {
@@ -239,7 +198,6 @@ describe('resolveTree', () => {
         }],
       },
       schema,
-      'run',
     )
     expect(result.deferredUpdates).toHaveLength(1)
     expect(result.deferredUpdates[0]!.refAlias).toBe('nope')

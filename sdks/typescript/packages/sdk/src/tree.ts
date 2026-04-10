@@ -1,7 +1,6 @@
 import type { SchemaInfo, SchemaRelation } from './types'
-import { resolveTemplate, type TemplateContext } from './template'
 
-const RESERVED_KEYS = new Set(['_alias', '_ref', '_count', '_batch'])
+const RESERVED_KEYS = new Set(['_alias', '_ref'])
 
 /** A create operation produced by the tree resolver */
 export interface CreateOp {
@@ -53,7 +52,6 @@ export interface RefNode {
 export function resolveTree(
   create: Record<string, Record<string, unknown>[]>,
   schema: SchemaInfo,
-  testRunId: string,
 ): ResolvedTree {
   const relationByParentField = new Map<string, SchemaRelation>()
   for (const rel of schema.relations) {
@@ -88,7 +86,6 @@ export function resolveTree(
     parentTempId: string | null,
     parentRelation: SchemaRelation | null,
     parentFkOnParent: boolean,
-    index: number,
   ): string {
     const fields: Record<string, unknown> = {}
     const preChildren: Array<{ relation: SchemaRelation; value: unknown; fkOnParent: boolean }> = []
@@ -143,8 +140,7 @@ export function resolveTree(
         continue
       }
 
-      const ctx: TemplateContext = { testRunId, index, }
-      fields[key] = resolveTemplate(value, ctx)
+      fields[key] = value
     }
 
     // Wire FK to parent (if this node is a child and FK is on the child)
@@ -154,10 +150,10 @@ export function resolveTree(
 
     // Process pre-children: these need to be created BEFORE this node
     // because this node's FK points to them
-    for (const { relation, value, fkOnParent: isOnParent } of preChildren) {
+    for (const { relation, value } of preChildren) {
       if (Array.isArray(value)) {
-        for (let i = 0; i < value.length; i++) {
-          const childTempId = walkNode(relation.childModel, value[i] as Record<string, unknown>, tempId, relation, true, i)
+        for (const item of value) {
+          const childTempId = walkNode(relation.childModel, item as Record<string, unknown>, tempId, relation, true)
           // Set this node's FK to point to the created child
           fields[relation.childField] = childTempId
         }
@@ -171,23 +167,8 @@ export function resolveTree(
     // Process post-children: normal case, FK is on the child
     for (const { relation, value } of postChildren) {
       if (Array.isArray(value)) {
-        for (let i = 0; i < value.length; i++) {
-          walkNode(relation.childModel, value[i] as Record<string, unknown>, tempId, relation, false, i)
-        }
-      } else if (value && typeof value === 'object' && '_count' in value) {
-        const bulk = value as Record<string, unknown>
-        const count = bulk._count as number
-        const isBatch = (bulk._batch as boolean) ?? false
-
-        for (let i = 0; i < count; i++) {
-          const bulkFields: Record<string, unknown> = {}
-          for (const [k, v] of Object.entries(bulk)) {
-            if (k === '_count' || k === '_batch') continue
-            const ctx: TemplateContext = { testRunId, index: i, }
-            bulkFields[k] = resolveTemplate(v, ctx)
-          }
-          bulkFields[relation.childField] = tempId
-          ops.push({ model: relation.childModel, fields: bulkFields, tempId: makeTempId(relation.childModel), batch: isBatch })
+        for (const item of value) {
+          walkNode(relation.childModel, item as Record<string, unknown>, tempId, relation, false)
         }
       }
     }
@@ -196,8 +177,8 @@ export function resolveTree(
   }
 
   for (const [modelName, nodes] of Object.entries(create)) {
-    for (let i = 0; i < nodes.length; i++) {
-      walkNode(modelName, nodes[i]!, null, null, false, i)
+    for (const node of nodes) {
+      walkNode(modelName, node, null, null, false)
     }
   }
 
