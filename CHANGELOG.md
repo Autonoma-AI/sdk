@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/Autonoma-AI/sdk/compare/v0.1.8...v0.1.9) (2026-04-10)
+
+
+### Bug Fixes
+
+* cross-SDK bugs (integer PKs, custom PK names, arrays, teardown, refs, user matching) ([#25](https://github.com/Autonoma-AI/sdk/issues/25)) ([55d8e65](https://github.com/Autonoma-AI/sdk/commit/55d8e651b607c74b3c79999949791dc61ce0a5b7))
+
 ## [0.1.8](https://github.com/Autonoma-AI/sdk/compare/v0.1.7...v0.1.8) (2026-04-10)
 
 
