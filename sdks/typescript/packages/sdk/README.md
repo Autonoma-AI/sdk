@@ -1,6 +1,6 @@
 # @autonoma-ai/sdk
 
-Core protocol layer for the Autonoma Environment Factory. Handles HMAC verification, JWT-signed teardown tokens, template resolution, FK graph ordering, and the `discover`/`up`/`down` request lifecycle.
+Core protocol layer for the Autonoma Environment Factory. Handles HMAC verification, JWT-signed teardown tokens, FK graph ordering, and the `discover`/`up`/`down` request lifecycle.
 
 This package is the shared dependency of all ORM and server adapters — you don't need to install it directly unless you're building a custom adapter.
 
@@ -33,9 +33,9 @@ import { checkScenario } from '@autonoma-ai/sdk'
 const result = await checkScenario(adapter, {
   create: {
     Organization: [{
-      name: 'Test [{{testRunId}}]',
-      slug: 'test-{{testRunId}}',
-      users: [{ email: 'admin-{{testRunId}}@test.com', name: 'Admin' }],
+      name: 'Test Org',
+      slug: 'test-org',
+      users: [{ email: 'admin@test.com', name: 'Admin' }],
     }],
   },
 })
@@ -67,21 +67,8 @@ import { topoSort, findDeferrableEdge } from '@autonoma-ai/sdk/graph'
 |--------|-----|
 | `signBody` / `verifySignature` | HMAC-SHA256 signing for request auth |
 | `signRefs` / `verifyRefs` | JWT-like token for signing teardown refs |
-| `resolveTemplate` | Resolve `{{testRunId}}`, `{{index}}`, `{{cycle(...)}}`, etc. |
 | `resolveTree` | Nested scenario tree → flat entity list with auto-wired FKs |
 | `fingerprint` | Deterministic hash of scenario definitions |
-
-## CLI
-
-The package ships an `autonoma` CLI:
-
-```bash
-# Validate a scenario against a schema
-npx autonoma validate <schema.json> <scenario.json>
-
-# Convert Prisma DMMF to autonoma-schema.json
-npx autonoma schema convert <dmmf.json> --scope-field <field>
-```
 
 ## Documentation
 

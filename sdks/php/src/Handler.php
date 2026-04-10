@@ -150,7 +150,7 @@ class Handler
         $schema = $introspection->schema;
         $dialect = DialectFactory::get($config->dialect);
 
-        $tree = Tree::resolveTree($create, $schema, $testRunId);
+        $tree = Tree::resolveTree($create, $schema);
         $refs = [];
         $idMap = [];
 

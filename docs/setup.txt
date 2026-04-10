@@ -296,7 +296,7 @@ auth: async (user) => ({
       "members": [{
         "role": "owner",
         "user": [{
-          "email": "admin-{{testRunId}}@test.com",
+          "email": "admin-test-run-id@test.com",
           "name": "Admin",
           "passwordHash": "$2b$10$..."
         }]
@@ -391,11 +391,11 @@ describe('environment factory', () => {
     const result = await checkScenario(adapter, {
       create: {
         Organization: [{
-          name: 'Test Org [{{testRunId}}]',
-          slug: 'test-{{testRunId}}',
+          name: 'Test Org [test-run-id]',
+          slug: 'test-test-run-id',
           members: [{
             role: 'owner',
-            user: [{ email: 'admin-{{testRunId}}@test.com', name: 'Admin' }],
+            user: [{ email: 'admin-test-run-id@test.com', name: 'Admin' }],
           }],
         }],
       },
@@ -410,11 +410,11 @@ describe('environment factory', () => {
     const result = await checkScenario(adapter, {
       create: {
         Organization: [{
-          name: 'Acme [{{testRunId}}]',
-          slug: 'acme-{{testRunId}}',
+          name: 'Acme [test-run-id]',
+          slug: 'acme-test-run-id',
           members: [
-            { role: 'owner', user: [{ name: 'Alice', email: 'alice-{{testRunId}}@test.com' }] },
-            { role: 'admin', user: [{ name: 'Bob', email: 'bob-{{testRunId}}@test.com' }] },
+            { role: 'owner', user: [{ name: 'Alice', email: 'alice-test-run-id@test.com' }] },
+            { role: 'admin', user: [{ name: 'Bob', email: 'bob-test-run-id@test.com' }] },
           ],
           applications: [{
             _alias: 'webApp',
@@ -456,9 +456,9 @@ describe('environment factory', () => {
     const result = await checkScenario(adapter, {
       create: {
         Organization: [{
-          name: 'Heavy [{{testRunId}}]',
-          slug: 'heavy-{{testRunId}}',
-          members: [{ role: 'owner', user: [{ name: 'User', email: 'heavy-{{testRunId}}@test.com' }] }],
+          name: 'Heavy [test-run-id]',
+          slug: 'heavy-test-run-id',
+          members: [{ role: 'owner', user: [{ name: 'User', email: 'heavy-test-run-id@test.com' }] }],
           applications: [{
             _alias: 'app',
             name: 'App',
@@ -475,7 +475,7 @@ describe('environment factory', () => {
             tests: [{
               name: 'Test',
               testGenerationId: { _ref: 'gen1' },
-              runs: [{ _count: 10000, _batch: true }],
+              runs: [{ status: 'completed' }],
             }],
           }],
         }],

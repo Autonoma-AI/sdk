@@ -178,7 +178,7 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 		return nil, err
 	}
 
-	tree := ResolveTree(create, schema, testRunID)
+	tree := ResolveTree(create, schema)
 	refs := make(map[string][]map[string]any)
 	idMap := make(map[string]any)
 
@@ -188,9 +188,9 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 			op := tree.Ops[i]
 			model := op.Model
 
-			// Collect consecutive ops for the same model with same batch flag
+			// Collect consecutive ops for the same model
 			batch := []CreateOp{op}
-			for i+1 < len(tree.Ops) && tree.Ops[i+1].Model == model && tree.Ops[i+1].Batch == op.Batch {
+			for i+1 < len(tree.Ops) && tree.Ops[i+1].Model == model {
 				i++
 				batch = append(batch, tree.Ops[i])
 			}
@@ -267,7 +267,7 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 			}
 
 			spec := map[string]ResolvedEntitySpec{
-				model: {Count: len(resolvedFields), Fields: resolvedFields, Batch: op.Batch},
+				model: {Count: len(resolvedFields), Fields: resolvedFields},
 			}
 
 			created, err := CreateEntities(ctx, tx, dialect, introspection.TableMap, introspection.ColumnMaps, spec, introspection.EnumTypeMaps, schema.Models)

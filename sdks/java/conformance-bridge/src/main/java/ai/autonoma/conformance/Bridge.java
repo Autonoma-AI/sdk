@@ -92,12 +92,6 @@ public class Bridge {
                 case "fingerprint.fingerprint" -> {
                     result = FingerprintUtil.fingerprint(inputData.get("value"));
                 }
-                case "template.resolveTemplate" -> {
-                    Map<String, Object> ctx = (Map<String, Object>) inputData.get("ctx");
-                    String testRunId = (String) ctx.get("testRunId");
-                    int index = ((Number) ctx.get("index")).intValue();
-                    result = TemplateResolver.resolveTemplate(inputData.get("value"), testRunId, index);
-                }
                 default -> throw new RuntimeException("Unknown function: " + key);
             }
 

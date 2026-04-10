@@ -28,8 +28,6 @@ begin
              Autonoma::Refs.verify_refs(inp["token"], inp["secret"])
            when ["fingerprint", "fingerprint"]
              Autonoma::Fingerprint.fingerprint(inp["value"])
-           when ["template", "resolveTemplate"]
-             Autonoma::Template.resolve_template(inp["value"], inp["ctx"])
            else
              raise "Unknown module/function: #{mod}.#{fn}"
            end

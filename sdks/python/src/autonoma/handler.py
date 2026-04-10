@@ -130,7 +130,7 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
     schema = introspection.schema
     dialect = get_dialect(config.dialect)
 
-    tree = resolve_tree(create, schema, test_run_id)
+    tree = resolve_tree(create, schema)
     refs: dict[str, list[dict[str, Any]]] = {}
     id_map: dict[str, Any] = {}
 

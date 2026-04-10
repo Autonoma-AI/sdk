@@ -44,7 +44,7 @@ The current design assumes `scopeField` is a FK that child models have pointing 
 - [ ] **Detect `@updatedAt` fields at the schema level** — the autonoma-schema.json should mark fields as auto-managed so the validator doesn't require them. Currently fixed in the Prisma introspector but the schema JSON format doesn't expose `isUpdatedAt`.
 - [ ] **Enum validation** — the DMMF has enum values. The validator should check that enum fields use valid values from the Prisma schema.
 - [ ] **Json field shape hints** — allow the schema to declare expected Json shapes so the validator can check them.
-- [ ] **Unique constraint awareness** — warn when a field with a unique constraint doesn't use `{{testRunId}}` or `{{index}}`.
+- [ ] **Unique constraint awareness** — warn when a field with a unique constraint doesn't have unique values across instances.
 
 ## Skill / Documentation
 

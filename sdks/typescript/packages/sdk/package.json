@@ -1,6 +1,6 @@
 {
   "name": "@autonoma-ai/sdk",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Autonoma Environment Factory SDK — protocol layer",
   "type": "module",
   "exports": {
@@ -14,9 +14,6 @@
       "import": "./dist/graph.js",
       "default": "./dist/graph.js"
     }
-  },
-  "bin": {
-    "autonoma": "./dist/cli.js"
   },
   "files": [
     "dist"

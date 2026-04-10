@@ -11,7 +11,6 @@ use autonoma_sdk::fingerprint::fingerprint;
 use autonoma_sdk::graph::{find_deferrable_edge, topo_sort};
 use autonoma_sdk::hmac::{sign_body, verify_signature};
 use autonoma_sdk::refs::{sign_refs, verify_refs};
-use autonoma_sdk::template::resolve_template;
 
 fn main() {
     let mut input = String::new();
@@ -61,11 +60,6 @@ fn dispatch(module: &str, function: &str, inp: &Value) -> Result<Value, String> 
         ("fingerprint", "fingerprint") => {
             let value = &inp["value"];
             Ok(Value::String(fingerprint(value)))
-        }
-        ("template", "resolveTemplate") => {
-            let value = &inp["value"];
-            let ctx = &inp["ctx"];
-            Ok(resolve_template(value, ctx))
         }
         ("graph", "topoSort") => {
             let nodes: Vec<String> = inp["nodes"]
