@@ -33,6 +33,7 @@ tests/integration/**/generated/
 # Elixir
 _build/
 deps/
+*.tar
 
 # Python
 __pycache__/
