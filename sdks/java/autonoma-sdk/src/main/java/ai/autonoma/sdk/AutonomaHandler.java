@@ -164,7 +164,6 @@ public final class AutonomaHandler {
                 List<Map<String, Object>> resolvedFields = new ArrayList<>();
                 for (CreateOp b : batch) {
                     Map<String, Object> fields = new LinkedHashMap<>(b.fields());
-                    fields.remove(pkFieldName);
 
                     // Replace temp IDs with real IDs
                     for (var fe : new ArrayList<>(fields.entrySet())) {

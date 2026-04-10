@@ -156,7 +156,7 @@ module Autonoma
           pk_field_name = pk_field&.name || "id"
 
           resolved_fields = batch.map do |b|
-            fields = b.fields.reject { |k, _| k == pk_field_name }
+            fields = b.fields.dup
 
             # Replace temp IDs with real IDs
             fields.each do |key, value|

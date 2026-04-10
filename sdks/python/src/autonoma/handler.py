@@ -156,7 +156,7 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
 
             resolved_fields: list[dict[str, Any]] = []
             for b in batch:
-                fields = {k: v for k, v in b.fields.items() if k != pk_field_name}
+                fields = dict(b.fields)
 
                 # Replace temp IDs with real IDs
                 for key, value in list(fields.items()):

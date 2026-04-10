@@ -209,7 +209,7 @@ defmodule Autonoma.Handler do
 
     resolved_fields =
       Enum.map(batch, fn b ->
-        fields = Map.delete(b.fields, pk_field_name)
+        fields = b.fields
 
         # Replace temp IDs with real IDs
         fields =

@@ -136,7 +136,6 @@ async function handleUp(
       const pkFieldName = pkField?.name ?? 'id'
       const resolvedFields = batch.map((b) => {
         const fields = { ...b.fields }
-        delete fields[pkFieldName]
         for (const [key, value] of Object.entries(fields)) {
           if (typeof value === 'string' && value.startsWith('__temp_')) {
             const realId = idMap.get(value)

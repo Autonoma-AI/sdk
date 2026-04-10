@@ -195,7 +195,6 @@ class Handler
                 $resolvedFields = [];
                 foreach ($batch as $b) {
                     $fields = $b->fields;
-                    unset($fields[$pkFieldName]);
 
                     // Replace temp IDs with real IDs
                     foreach ($fields as $key => &$value) {

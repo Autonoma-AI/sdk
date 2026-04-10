@@ -211,12 +211,7 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
 
         let mut resolved_fields: Vec<HashMap<String, Value>> = Vec::new();
         for b in &batch_ops {
-            let mut fields: HashMap<String, Value> = b
-                .fields
-                .iter()
-                .filter(|(k, _)| k.as_str() != pk_field_name)
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
+            let mut fields: HashMap<String, Value> = b.fields.clone();
 
             // Replace temp IDs with real IDs (Bug 3: use Value, not just String)
             for (key, value) in fields.clone() {

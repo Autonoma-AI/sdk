@@ -220,11 +220,8 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 
 			resolvedFields := make([]map[string]any, len(batch))
 			for j, b := range batch {
-				fields := make(map[string]any)
+				fields := make(map[string]any, len(b.Fields))
 				for k, v := range b.Fields {
-					if k == pkFieldName {
-						continue
-					}
 					fields[k] = v
 				}
 
