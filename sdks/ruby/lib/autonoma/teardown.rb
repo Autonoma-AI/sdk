@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "set"
 require_relative "types"
 require_relative "graph"
 
@@ -62,17 +63,51 @@ module Autonoma
           )
         end
 
-        # Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
-        sorted_models.reverse_each do |model|
-          next if model == scope_root_model
+        # Build condensation graph: each SCC is a super-node, each sorted node
+        # is its own node. Topo-sort the condensation DAG and delete in reverse
+        # order so that dependents of cycles are deleted before the cycle itself.
+        components = []
+        node_to_comp = {}
 
-          delete_model(tx, dialect, table_map, column_maps, model,
-                       scope_value, scope_field_by_model, refs, schema)
+        cycles.each do |cycle|
+          idx = components.length
+          components << cycle
+          cycle.each { |node| node_to_comp[node] = idx }
+        end
+        sorted_models.each do |node|
+          node_to_comp[node] = components.length
+          components << [node]
         end
 
-        # Delete cycle nodes after their non-cycle dependents are gone
-        cycles.each do |cycle|
-          cycle.each do |model|
+        # Build condensation DAG edges (dependency → dependent)
+        cond_adj = Array.new(components.length) { Set.new }
+        cond_in_deg = Array.new(components.length, 0)
+        edge_dicts.each do |edge|
+          next if edge["from"] == edge["to"]
+          fc = node_to_comp[edge["from"]]
+          tc = node_to_comp[edge["to"]]
+          next if fc.nil? || tc.nil? || fc == tc || cond_adj[tc].include?(fc)
+          cond_adj[tc].add(fc)
+          cond_in_deg[fc] += 1
+        end
+
+        # Kahn's algorithm on the condensation DAG
+        cond_queue = cond_in_deg.each_with_index.select { |d, _| d == 0 }.map { |_, i| i }.sort
+        cond_order = []
+        until cond_queue.empty?
+          cond_queue.sort!
+          idx = cond_queue.shift
+          cond_order << idx
+          cond_adj[idx].each do |neighbor|
+            cond_in_deg[neighbor] -= 1
+            cond_queue << neighbor if cond_in_deg[neighbor] == 0
+          end
+        end
+
+        # Delete in reverse condensation order (dependents first)
+        cond_order.reverse_each do |comp_idx|
+          components[comp_idx].each do |model|
+            next if model == scope_root_model
             delete_model(tx, dialect, table_map, column_maps, model,
                          scope_value, scope_field_by_model, refs, schema)
           end
@@ -84,7 +119,9 @@ module Autonoma
           col_map = column_maps[scope_root_model] || {}
           if db_table
             root_model_info = schema.models.find { |m| m.name == scope_root_model }
-            root_pk_field_name = root_model_info&.fields&.find { |f| f.is_id }&.name || "id"
+            # Composite PK: prefer field named "id"
+            root_id_fields = root_model_info&.fields&.select { |f| f.is_id } || []
+            root_pk_field_name = (root_id_fields.find { |f| f.name.downcase == "id" } || root_id_fields.first)&.name || "id"
             id_col = col_map[root_pk_field_name] || root_pk_field_name
             tx.query(
               "DELETE FROM #{dialect.quote_id(db_table)} WHERE #{dialect.quote_id(id_col)} = #{dialect.param(1)}",
@@ -103,7 +140,9 @@ module Autonoma
 
       # Find actual PK field name from schema
       model_info = schema.models.find { |m| m.name == model }
-      pk_field_name = model_info&.fields&.find { |f| f.is_id }&.name || "id"
+      # When multiple is_id fields exist (composite PK), prefer the one named "id"
+      id_fields = model_info&.fields&.select { |f| f.is_id } || []
+      pk_field_name = (id_fields.find { |f| f.name.downcase == "id" } || id_fields.first)&.name || "id"
 
       scope_fk = scope_field_by_model[model]
       if scope_fk

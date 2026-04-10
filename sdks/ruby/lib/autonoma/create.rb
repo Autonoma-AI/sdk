@@ -21,8 +21,10 @@ module Autonoma
         enum_type_map = enum_type_maps[model] || {}
 
         # Bug 4: find actual PK field name from schema
+        # When multiple is_id fields exist (composite PK), prefer the one named "id"
         model_info = schema_models.find { |m| m.name == model }
-        pk_field = model_info&.fields&.find { |f| f.is_id }
+        id_fields = model_info&.fields&.select { |f| f.is_id } || []
+        pk_field = id_fields.find { |f| f.name.downcase == "id" } || id_fields.first
         pk_field_name = pk_field&.name || "id"
         pk_field_type = pk_field&.type || "String"
 

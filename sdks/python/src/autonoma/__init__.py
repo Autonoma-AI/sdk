@@ -2,7 +2,7 @@
 
 from autonoma.handler import handle_request, PROTOCOL_VERSION
 from autonoma.types import (
-    HandlerConfig, HandlerRequest, HandlerResponse, SQLExecutor,
+    AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, SQLExecutor,
     SchemaInfo, ModelInfo, FieldInfo, FKEdge, SchemaRelation,
     IntrospectionResult, CreateOp, DeferredUpdate,
 )
@@ -11,7 +11,7 @@ from autonoma.dialect import get_dialect, PostgresDialect, MySQLDialect
 
 __all__ = [
     "handle_request", "PROTOCOL_VERSION",
-    "HandlerConfig", "HandlerRequest", "HandlerResponse", "SQLExecutor",
+    "AuthContext", "HandlerConfig", "HandlerRequest", "HandlerResponse", "SQLExecutor",
     "SchemaInfo", "ModelInfo", "FieldInfo", "FKEdge", "SchemaRelation",
     "IntrospectionResult", "CreateOp", "DeferredUpdate",
     "check_scenario", "CheckResult", "CheckError",

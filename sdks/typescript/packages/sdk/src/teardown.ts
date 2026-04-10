@@ -64,16 +64,60 @@ export async function teardown(
       }
     }
 
-    // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
-    const reversed = [...sorted].reverse()
-    for (const model of reversed) {
-      if (model === scopeRootModel) continue // deleted last
-      await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
+    // Build condensation graph: each SCC is a super-node, each sorted node
+    // is its own node. Topo-sort the condensation DAG and delete in reverse
+    // order so that dependents of cycles are deleted before the cycle itself.
+    const components: string[][] = []
+    const nodeToComp = new Map<string, number>()
+
+    for (const cycle of cycles) {
+      const idx = components.length
+      components.push(cycle)
+      for (const node of cycle) nodeToComp.set(node, idx)
+    }
+    for (const node of sorted) {
+      nodeToComp.set(node, components.length)
+      components.push([node])
     }
 
-    // Delete cycle nodes after their non-cycle dependents are gone
-    for (const cycle of cycles) {
-      for (const model of cycle) {
+    // Build condensation DAG edges (dependency → dependent)
+    const condAdj = new Map<number, Set<number>>()
+    const condInDeg = new Map<number, number>()
+    for (let i = 0; i < components.length; i++) {
+      condAdj.set(i, new Set())
+      condInDeg.set(i, 0)
+    }
+    for (const edge of schema.edges) {
+      if (edge.from === edge.to) continue
+      const fc = nodeToComp.get(edge.from)
+      const tc = nodeToComp.get(edge.to)
+      if (fc !== undefined && tc !== undefined && fc !== tc && !condAdj.get(tc)!.has(fc)) {
+        condAdj.get(tc)!.add(fc)
+        condInDeg.set(fc, (condInDeg.get(fc) ?? 0) + 1)
+      }
+    }
+
+    // Kahn's algorithm on the condensation DAG
+    const condQueue: number[] = []
+    for (const [idx, deg] of condInDeg) {
+      if (deg === 0) condQueue.push(idx)
+    }
+    const condOrder: number[] = []
+    while (condQueue.length > 0) {
+      condQueue.sort()
+      const idx = condQueue.shift()!
+      condOrder.push(idx)
+      for (const neighbor of condAdj.get(idx)!) {
+        const nd = (condInDeg.get(neighbor) ?? 1) - 1
+        condInDeg.set(neighbor, nd)
+        if (nd === 0) condQueue.push(neighbor)
+      }
+    }
+
+    // Delete in reverse condensation order (dependents first)
+    for (const compIdx of [...condOrder].reverse()) {
+      for (const model of components[compIdx]) {
+        if (model === scopeRootModel) continue
         await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
       }
     }
@@ -84,7 +128,8 @@ export async function teardown(
       const colMap = columnMaps.get(scopeRootModel) ?? new Map<string, string>()
       if (dbTable) {
         const rootModelInfo = schema.models.find((m) => m.name === scopeRootModel)
-        const rootPkFieldName = rootModelInfo?.fields.find((f) => f.isId)?.name ?? 'id'
+        const rootIdFields = rootModelInfo?.fields.filter((f) => f.isId) ?? []
+        const rootPkFieldName = (rootIdFields.find((f) => f.name.toLowerCase() === 'id') ?? rootIdFields[0])?.name ?? 'id'
         const idCol = colMap.get(rootPkFieldName) ?? rootPkFieldName
         await tx.query(
           `DELETE FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} = ${dialect.param(1)}`,
@@ -112,7 +157,8 @@ async function deleteModel(
 
   // Find actual PK field name from schema
   const modelInfo = schema.models.find((m) => m.name === model)
-  const pkFieldName = modelInfo?.fields.find((f) => f.isId)?.name ?? 'id'
+  const idFields = modelInfo?.fields.filter((f) => f.isId) ?? []
+  const pkFieldName = (idFields.find((f) => f.name.toLowerCase() === 'id') ?? idFields[0])?.name ?? 'id'
 
   const scopeFK = scopeFieldByModel.get(model)
   if (scopeFK) {

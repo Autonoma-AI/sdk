@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from typing import Any
 from .hmac_util import verify_signature
 from .refs import sign_refs, verify_refs
 from .errors import AutonomaError, invalid_signature, invalid_body, unknown_action, production_blocked, invalid_refs_token, same_secrets
-from .types import HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult
+from .types import AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult
 from .dialect import get_dialect
 from .introspect import introspect_database
 from .tree import resolve_tree
@@ -155,7 +156,9 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
             model_info = next((m for m in schema.models if m.name == model), None)
 
             # Bug 4: find actual PK field name from schema
-            pk_field = next((f for f in model_info.fields if f.is_id), None) if model_info else None
+            # When multiple isId fields exist (composite PK), prefer the one named "id"
+            id_fields = [f for f in model_info.fields if f.is_id] if model_info else []
+            pk_field = next((f for f in id_fields if f.name.lower() == "id"), id_fields[0] if id_fields else None)
             pk_field_name = pk_field.name if pk_field else "id"
 
             resolved_fields: list[dict[str, Any]] = []
@@ -221,7 +224,8 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
                 )
 
             deferred_model_info = next((m for m in schema.models if m.name == deferred.model), None)
-            deferred_pk_field = next((f for f in deferred_model_info.fields if f.is_id), None) if deferred_model_info else None
+            deferred_id_fields = [f for f in deferred_model_info.fields if f.is_id] if deferred_model_info else []
+            deferred_pk_field = next((f for f in deferred_id_fields if f.name.lower() == "id"), deferred_id_fields[0] if deferred_id_fields else None)
             deferred_pk_field_name = deferred_pk_field.name if deferred_pk_field else "id"
 
             await update_entity(
@@ -236,7 +240,10 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
     scope_value = _detect_scope_value(refs, schema.scope_field) or test_run_id
 
     first_user = _find_first_user(refs)
-    auth = config.auth(first_user)
+    auth_context = AuthContext(scope_value=scope_value, refs=refs)
+    auth = config.auth(first_user, auth_context)
+    if inspect.isawaitable(auth):
+        auth = await auth
 
     if config.after_up is not None:
         hook_ctx = HookContext(scenario_name=scope_value, refs=refs)

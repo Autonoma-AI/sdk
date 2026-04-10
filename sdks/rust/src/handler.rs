@@ -13,7 +13,7 @@ use crate::introspect::introspect_database;
 use crate::refs::{sign_refs, verify_refs};
 use crate::teardown::teardown;
 use crate::tree::resolve_tree;
-use crate::types::{HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult};
+use crate::types::{AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult};
 
 pub const PROTOCOL_VERSION: &str = include_str!("../../../protocol/version.txt").trim_ascii();
 
@@ -205,8 +205,14 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
         let batch_ops: Vec<&crate::types::CreateOp> = tree.ops[i..=batch_end].iter().collect();
 
         // Bug 4: Find model info for PK field name
+        // When multiple is_id fields exist (composite PK), prefer the one named "id"
         let model_info = schema.models.iter().find(|m| m.name == *model);
-        let pk_field = model_info.and_then(|mi| mi.fields.iter().find(|f| f.is_id));
+        let id_fields: Vec<&crate::types::FieldInfo> = model_info
+            .map(|mi| mi.fields.iter().filter(|f| f.is_id).collect())
+            .unwrap_or_default();
+        let pk_field = id_fields.iter().find(|f| f.name.eq_ignore_ascii_case("id"))
+            .or(id_fields.first())
+            .copied();
         let pk_field_name = pk_field.map(|f| f.name.as_str()).unwrap_or("id");
 
         let mut resolved_fields: Vec<HashMap<String, Value>> = Vec::new();
@@ -322,9 +328,14 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
                 let fields: HashMap<String, Value> =
                     [(deferred.field.clone(), ref_id.clone())].into();
                 // Bug 4: find dynamic PK for deferred model
+                // When multiple is_id fields exist (composite PK), prefer the one named "id"
                 let deferred_model_info = schema.models.iter().find(|m| m.name == deferred.model);
-                let deferred_pk_field_name = deferred_model_info
-                    .and_then(|mi| mi.fields.iter().find(|f| f.is_id))
+                let deferred_id_fields: Vec<&crate::types::FieldInfo> = deferred_model_info
+                    .map(|mi| mi.fields.iter().filter(|f| f.is_id).collect())
+                    .unwrap_or_default();
+                let deferred_pk_field_name = deferred_id_fields.iter()
+                    .find(|f| f.name.eq_ignore_ascii_case("id"))
+                    .or(deferred_id_fields.first())
                     .map(|f| f.name.as_str())
                     .unwrap_or("id");
                 let target_id_str = match target_id {
@@ -367,7 +378,8 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
         .unwrap_or_else(|| test_run_id.clone());
 
     let first_user = find_first_user(&refs);
-    let mut auth = (config.auth)(first_user.as_ref());
+    let auth_context = AuthContext { scope_value: &scope_value, refs: &refs };
+    let mut auth = (config.auth)(first_user.as_ref(), &auth_context);
 
     if let Some(ref after_up) = config.after_up {
         let hook_ctx = HookContext {

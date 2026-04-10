@@ -187,14 +187,24 @@ class Handler
                 }
 
                 // Bug 4: find actual PK field name from schema
-                $pkField = null;
+                // When multiple isId fields exist (composite PK), prefer the one named "id"
+                $idFields = [];
                 if ($modelInfo !== null) {
                     foreach ($modelInfo->fields as $f) {
                         if ($f->isId) {
-                            $pkField = $f;
-                            break;
+                            $idFields[] = $f;
                         }
                     }
+                }
+                $pkField = null;
+                foreach ($idFields as $f) {
+                    if (strtolower($f->name) === 'id') {
+                        $pkField = $f;
+                        break;
+                    }
+                }
+                if ($pkField === null) {
+                    $pkField = $idFields[0] ?? null;
                 }
                 $pkFieldName = $pkField !== null ? $pkField->name : 'id';
 
@@ -287,15 +297,26 @@ class Handler
                         break;
                     }
                 }
-                $deferredPkFieldName = 'id';
+                // When multiple isId fields exist (composite PK), prefer the one named "id"
+                $deferredIdFields = [];
                 if ($deferredModelInfo !== null) {
                     foreach ($deferredModelInfo->fields as $f) {
                         if ($f->isId) {
-                            $deferredPkFieldName = $f->name;
-                            break;
+                            $deferredIdFields[] = $f;
                         }
                     }
                 }
+                $deferredPkField = null;
+                foreach ($deferredIdFields as $f) {
+                    if (strtolower($f->name) === 'id') {
+                        $deferredPkField = $f;
+                        break;
+                    }
+                }
+                if ($deferredPkField === null) {
+                    $deferredPkField = $deferredIdFields[0] ?? null;
+                }
+                $deferredPkFieldName = $deferredPkField !== null ? $deferredPkField->name : 'id';
 
                 Create::updateEntity(
                     $tx, $dialect, $introspection->tableMap, $introspection->columnMaps,
@@ -308,7 +329,8 @@ class Handler
         $scopeValue = self::detectScopeValue($refs, $schema->scopeField) ?? $testRunId;
 
         $firstUser = self::findFirstUser($refs);
-        $auth = ($config->auth)($firstUser);
+        $authContext = ['scope_value' => $scopeValue, 'refs' => $refs];
+        $auth = ($config->auth)($firstUser, $authContext);
 
         if ($config->afterUp !== null) {
             $hookCtx = ['scenarioName' => $scopeValue, 'refs' => $refs];

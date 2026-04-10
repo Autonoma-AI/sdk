@@ -33,7 +33,7 @@ fn make_config() -> HandlerConfig {
         scope_field: "organizationId".to_string(),
         shared_secret: "shared-secret".to_string(),
         signing_secret: "signing-secret".to_string(),
-        auth: Box::new(|_user| {
+        auth: Box::new(|_user, _ctx| {
             let mut map = HashMap::new();
             map.insert("token".to_string(), Value::String("test-token".to_string()));
             map

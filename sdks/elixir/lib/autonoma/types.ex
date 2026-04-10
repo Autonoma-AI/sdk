@@ -69,7 +69,7 @@ defmodule Autonoma.Types do
           required(:shared_secret) => String.t(),
           required(:signing_secret) => String.t(),
           optional(:allow_production) => boolean(),
-          required(:auth) => (map() | nil -> map()),
+          required(:auth) => (map() | nil, map() -> map()),
           optional(:before_down) => (hook_context() -> any()),
           optional(:after_up) => (hook_context(), map() -> map())
         }

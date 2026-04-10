@@ -156,7 +156,9 @@ module Autonoma
 
           # Find model info for auto-populating fields and dynamic PK
           model_info = schema.models.find { |m| m.name == model }
-          pk_field = model_info&.fields&.find { |f| f.is_id }
+          # When multiple is_id fields exist (composite PK), prefer the one named "id"
+          id_fields = model_info&.fields&.select { |f| f.is_id } || []
+          pk_field = id_fields.find { |f| f.name.downcase == "id" } || id_fields.first
           pk_field_name = pk_field&.name || "id"
 
           resolved_fields = batch.map do |b|
@@ -220,7 +222,9 @@ module Autonoma
           end
 
           deferred_model_info = schema.models.find { |m| m.name == deferred.model }
-          deferred_pk_field_name = deferred_model_info&.fields&.find { |f| f.is_id }&.name || "id"
+          # When multiple is_id fields exist (composite PK), prefer the one named "id"
+          deferred_id_fields = deferred_model_info&.fields&.select { |f| f.is_id } || []
+          deferred_pk_field_name = (deferred_id_fields.find { |f| f.name.downcase == "id" } || deferred_id_fields.first)&.name || "id"
           Create.update_entity(
             tx, dialect, introspection.table_map, introspection.column_maps,
             deferred.model, real_target_id, { deferred.field => real_ref_id },
@@ -232,7 +236,8 @@ module Autonoma
       scope_value = detect_scope_value(refs, schema.scope_field) || test_run_id
 
       first_user = find_first_user(refs)
-      auth = config.auth.call(first_user)
+      auth_context = AuthContext.new(scope_value: scope_value, refs: refs)
+      auth = config.auth.call(first_user, auth_context)
 
       if config.after_up
         hook_ctx = HookContext.new(scenario_name: scope_value, refs: refs)

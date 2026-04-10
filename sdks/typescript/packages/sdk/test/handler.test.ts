@@ -79,7 +79,7 @@ function createConfig(overrides?: Partial<HandlerConfig>): HandlerConfig {
     scopeField: 'organizationId',
     sharedSecret: 'test-secret',
     signingSecret: 'test-signing-secret',
-    auth: async (user) => ({ headers: { Authorization: `Bearer jwt-token-${user?.id ?? 'anon'}` } }),
+    auth: async (user, _ctx) => ({ headers: { Authorization: `Bearer jwt-token-${user?.id ?? 'anon'}` } }),
     ...overrides,
   }
 }
@@ -268,6 +268,95 @@ describe('handleRequest', () => {
       expect(res.status).toBe(200)
       const body = res.body as any
       expect(body.auth.credentials.asyncKey).toBe('asyncValue')
+    })
+  })
+
+  describe('composite PK', () => {
+    it('prefers field named "id" over first isId field in composite PKs', async () => {
+      const queries: string[] = []
+      let insertCounter = 0
+      const executor: SQLExecutor & { queries: string[] } = {
+        queries,
+        async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
+          queries.push(sql)
+          const trimmed = sql.trim().toLowerCase()
+
+          if (trimmed.includes('information_schema.tables') && !trimmed.includes('table_constraints'))
+            return [{ table_name: 'organization' }, { table_name: 'member' }] as T[]
+          if (trimmed.includes('information_schema.columns') && !trimmed.includes('table_constraints'))
+            return [
+              { table_name: 'organization', column_name: 'id', data_type: 'uuid', udt_name: 'uuid', is_nullable: 'NO', column_default: 'gen_random_uuid()' },
+              { table_name: 'organization', column_name: 'name', data_type: 'text', udt_name: 'text', is_nullable: 'NO', column_default: null },
+              { table_name: 'member', column_name: 'organization_id', data_type: 'uuid', udt_name: 'uuid', is_nullable: 'NO', column_default: null },
+              { table_name: 'member', column_name: 'id', data_type: 'uuid', udt_name: 'uuid', is_nullable: 'NO', column_default: 'gen_random_uuid()' },
+              { table_name: 'member', column_name: 'role', data_type: 'text', udt_name: 'text', is_nullable: 'NO', column_default: null },
+            ] as T[]
+          if (trimmed.includes('foreign key'))
+            return [
+              { from_table: 'member', from_column: 'organization_id', to_table: 'organization', to_column: 'id', is_nullable: 'NO' },
+            ] as T[]
+          if (trimmed.includes('primary key'))
+            return [
+              { table_name: 'organization', column_name: 'id' },
+              { table_name: 'member', column_name: 'organization_id' },
+              { table_name: 'member', column_name: 'id' },
+            ] as T[]
+          if (trimmed.includes('pg_type')) return [] as T[]
+
+          if (trimmed.startsWith('insert')) {
+            const record: Record<string, unknown> = {}
+            const colMatch = sql.match(/\(([^)]+)\)\s*VALUES/i)
+            if (colMatch && params) {
+              const cols = colMatch[1]!.split(',').map((c) => c.trim().replace(/"/g, ''))
+              for (let i = 0; i < cols.length; i++) {
+                record[cols[i]!] = params[i]
+              }
+            }
+            if (!record.id) record.id = `mock-id-${insertCounter++}`
+            return [record] as T[]
+          }
+
+          return [] as T[]
+        },
+        async transaction<T>(fn: (tx: SQLExecutor) => Promise<T>): Promise<T> {
+          return fn(executor)
+        },
+      }
+
+      const config: HandlerConfig = {
+        executor,
+        scopeField: 'organizationId',
+        sharedSecret: 'test-secret',
+        signingSecret: 'test-signing-secret',
+        auth: async (user, _ctx) => ({ headers: { Authorization: 'Bearer token' } }),
+      }
+
+      const req = signedRequest(
+        {
+          action: 'up',
+          create: {
+            Organization: [{ name: 'Org' }],
+            Member: [{ role: 'admin' }],
+          },
+          testRunId: 'run-composite',
+        },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      const body = res.body as any
+      expect(body.refs).toBeDefined()
+      expect(body.refs.Member).toBeDefined()
+      expect(body.refs.Member[0]).toBeDefined()
+
+      const member = body.refs.Member[0]
+      expect(member.id).toBeDefined()
+      expect(typeof member.id).toBe('string')
+
+      const memberInsert = queries.find((q) => q.toLowerCase().includes('insert') && q.toLowerCase().includes('member'))
+      expect(memberInsert).toBeDefined()
+      expect(memberInsert).toMatch(/"id"/)
     })
   })
 

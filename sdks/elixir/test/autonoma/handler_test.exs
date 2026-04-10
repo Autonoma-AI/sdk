@@ -68,7 +68,7 @@ defmodule Autonoma.HandlerTest do
       scope_field: "organizationId",
       shared_secret: @shared_secret,
       signing_secret: @signing_secret,
-      auth: fn user ->
+      auth: fn user, _ctx ->
         user_id = if user, do: user["id"], else: "anon"
         %{"headers" => %{"Authorization" => "Bearer test-token-#{user_id}"}}
       end

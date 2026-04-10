@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, Union, runtime_checkable
 
 
 @dataclass
@@ -64,13 +64,23 @@ class HookContext:
 
 
 @dataclass
+class AuthContext:
+    """Context passed to the auth callback alongside the user record."""
+    scope_value: str
+    refs: dict[str, list[dict[str, Any]]]
+
+
+@dataclass
 class HandlerConfig:
     """Configuration for the Autonoma request handler."""
     executor: SQLExecutor
     scope_field: str
     shared_secret: str
     signing_secret: str
-    auth: Callable[[dict[str, Any] | None], dict[str, Any]]
+    auth: Union[
+        Callable[[dict[str, Any] | None, AuthContext], dict[str, Any]],
+        Callable[[dict[str, Any] | None, AuthContext], Any],  # async callables
+    ]
     dialect: str = "postgres"
     db_schema: str | None = None
     table_name_map: dict[str, str] | None = None

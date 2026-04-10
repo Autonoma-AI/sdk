@@ -51,9 +51,12 @@ public final class EntityCreator {
             ModelInfo modelInfo = schemaModels != null
                 ? schemaModels.stream().filter(m -> m.name().equals(model)).findFirst().orElse(null)
                 : null;
-            FieldInfo pkField = modelInfo != null
-                ? modelInfo.fields().stream().filter(FieldInfo::isId).findFirst().orElse(null)
-                : null;
+            // When multiple isId fields exist (composite PK), prefer the one named "id"
+            List<FieldInfo> idFields = modelInfo != null
+                ? modelInfo.fields().stream().filter(FieldInfo::isId).toList()
+                : List.of();
+            FieldInfo pkField = idFields.stream().filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
+                .orElse(idFields.isEmpty() ? null : idFields.get(0));
             String pkFieldName = pkField != null ? pkField.name() : "id";
             String pkFieldType = pkField != null ? pkField.type() : "String";
 

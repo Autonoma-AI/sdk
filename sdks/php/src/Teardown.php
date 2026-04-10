@@ -88,18 +88,64 @@ class Teardown
                 }
             }
 
-            // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
-            foreach (array_reverse($sortedModels) as $model) {
-                if ($model === $scopeRootModel) continue;
-                self::deleteModel(
-                    $tx, $dialect, $tableMap, $columnMaps, $model,
-                    $scopeValue, $scopeFieldByModel, $refs, $schema,
-                );
+            // Build condensation graph: each SCC is a super-node, each sorted node
+            // is its own node. Topo-sort the condensation DAG and delete in reverse
+            // order so that dependents of cycles are deleted before the cycle itself.
+            $components = [];
+            $nodeToComp = [];
+
+            foreach ($cycles as $cycle) {
+                $idx = count($components);
+                $components[] = $cycle;
+                foreach ($cycle as $node) {
+                    $nodeToComp[$node] = $idx;
+                }
+            }
+            foreach ($sortedModels as $node) {
+                $nodeToComp[$node] = count($components);
+                $components[] = [$node];
             }
 
-            // Delete cycle nodes after their non-cycle dependents are gone
-            foreach ($cycles as $cycle) {
-                foreach ($cycle as $model) {
+            // Build condensation DAG edges (dependency → dependent)
+            $condAdj = [];
+            $condInDeg = [];
+            for ($i = 0; $i < count($components); $i++) {
+                $condAdj[$i] = [];
+                $condInDeg[$i] = 0;
+            }
+            foreach ($schema->edges as $edge) {
+                if ($edge->fromModel === $edge->toModel) continue;
+                $fc = $nodeToComp[$edge->fromModel] ?? null;
+                $tc = $nodeToComp[$edge->toModel] ?? null;
+                if ($fc !== null && $tc !== null && $fc !== $tc && !isset($condAdj[$tc][$fc])) {
+                    $condAdj[$tc][$fc] = true;
+                    $condInDeg[$fc]++;
+                }
+            }
+
+            // Kahn's algorithm on the condensation DAG
+            $condQueue = [];
+            foreach ($condInDeg as $idx => $deg) {
+                if ($deg === 0) $condQueue[] = $idx;
+            }
+            sort($condQueue);
+            $condOrder = [];
+            while (!empty($condQueue)) {
+                sort($condQueue);
+                $idx = array_shift($condQueue);
+                $condOrder[] = $idx;
+                foreach (array_keys($condAdj[$idx]) as $neighbor) {
+                    $condInDeg[$neighbor]--;
+                    if ($condInDeg[$neighbor] === 0) {
+                        $condQueue[] = $neighbor;
+                    }
+                }
+            }
+
+            // Delete in reverse condensation order (dependents first)
+            foreach (array_reverse($condOrder) as $compIdx) {
+                foreach ($components[$compIdx] as $model) {
+                    if ($model === $scopeRootModel) continue;
                     self::deleteModel(
                         $tx, $dialect, $tableMap, $columnMaps, $model,
                         $scopeValue, $scopeFieldByModel, $refs, $schema,
@@ -120,15 +166,26 @@ class Teardown
                             break;
                         }
                     }
-                    $rootPkFieldName = 'id';
+                    // Composite PK: prefer field named "id"
+                    $rootIdFields = [];
                     if ($rootModelInfo !== null) {
                         foreach ($rootModelInfo->fields as $f) {
                             if ($f->isId) {
-                                $rootPkFieldName = $f->name;
-                                break;
+                                $rootIdFields[] = $f;
                             }
                         }
                     }
+                    $rootPkField = null;
+                    foreach ($rootIdFields as $f) {
+                        if (strtolower($f->name) === 'id') {
+                            $rootPkField = $f;
+                            break;
+                        }
+                    }
+                    if ($rootPkField === null) {
+                        $rootPkField = $rootIdFields[0] ?? null;
+                    }
+                    $rootPkFieldName = $rootPkField !== null ? $rootPkField->name : 'id';
                     $idCol = $colMap[$rootPkFieldName] ?? $rootPkFieldName;
                     $tx->query(
                         sprintf(
@@ -167,15 +224,23 @@ class Teardown
                 break;
             }
         }
-        $pkFieldName = 'id';
+        // When multiple isId fields exist (composite PK), prefer the one named "id"
+        $idFields = [];
         if ($modelInfo !== null) {
             foreach ($modelInfo->fields as $f) {
                 if ($f->isId) {
-                    $pkFieldName = $f->name;
-                    break;
+                    $idFields[] = $f;
                 }
             }
         }
+        $pkField = null;
+        foreach ($idFields as $f) {
+            if (strtolower($f->name) === 'id') {
+                $pkField = $f;
+                break;
+            }
+        }
+        $pkFieldName = $pkField !== null ? $pkField->name : ($idFields[0]->name ?? 'id');
 
         $scopeFk = $scopeFieldByModel[$model] ?? null;
         if ($scopeFk !== null) {

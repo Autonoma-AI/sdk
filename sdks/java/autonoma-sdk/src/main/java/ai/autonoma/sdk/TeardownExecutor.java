@@ -71,17 +71,62 @@ public final class TeardownExecutor {
                 }
             }
 
-            // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
-            List<String> reversed = new ArrayList<>(sortResult.sorted());
-            Collections.reverse(reversed);
-            for (String model : reversed) {
-                if (model.equals(finalScopeRoot)) continue;
-                deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
+            // Build condensation graph: each SCC is a super-node, each sorted node
+            // is its own node. Topo-sort the condensation DAG and delete in reverse
+            // order so that dependents of cycles are deleted before the cycle itself.
+            List<List<String>> components = new ArrayList<>();
+            Map<String, Integer> nodeToComp = new HashMap<>();
+
+            for (List<String> cycle : sortResult.cycles()) {
+                int idx = components.size();
+                components.add(cycle);
+                for (String node : cycle) nodeToComp.put(node, idx);
+            }
+            for (String node : sortResult.sorted()) {
+                nodeToComp.put(node, components.size());
+                components.add(List.of(node));
             }
 
-            // Delete cycle nodes after their non-cycle dependents are gone
-            for (List<String> cycle : sortResult.cycles()) {
-                for (String model : cycle) {
+            // Build condensation DAG edges (dependency → dependent)
+            Map<Integer, Set<Integer>> condAdj = new HashMap<>();
+            Map<Integer, Integer> condInDeg = new HashMap<>();
+            for (int i = 0; i < components.size(); i++) {
+                condAdj.put(i, new HashSet<>());
+                condInDeg.put(i, 0);
+            }
+            for (FKEdge edge : schema.edges()) {
+                if (edge.from().equals(edge.to())) continue;
+                Integer fc = nodeToComp.get(edge.from());
+                Integer tc = nodeToComp.get(edge.to());
+                if (fc != null && tc != null && !fc.equals(tc) && !condAdj.get(tc).contains(fc)) {
+                    condAdj.get(tc).add(fc);
+                    condInDeg.merge(fc, 1, Integer::sum);
+                }
+            }
+
+            // Kahn's algorithm on the condensation DAG
+            List<Integer> condQueue = new ArrayList<>();
+            for (var entry : condInDeg.entrySet()) {
+                if (entry.getValue() == 0) condQueue.add(entry.getKey());
+            }
+            Collections.sort(condQueue);
+            List<Integer> condOrder = new ArrayList<>();
+            while (!condQueue.isEmpty()) {
+                Collections.sort(condQueue);
+                int idx = condQueue.remove(0);
+                condOrder.add(idx);
+                for (int neighbor : condAdj.get(idx)) {
+                    int nd = condInDeg.merge(neighbor, -1, Integer::sum);
+                    if (nd == 0) condQueue.add(neighbor);
+                }
+            }
+
+            // Delete in reverse condensation order (dependents first)
+            List<Integer> revCondOrder = new ArrayList<>(condOrder);
+            Collections.reverse(revCondOrder);
+            for (int compIdx : revCondOrder) {
+                for (String model : components.get(compIdx)) {
+                    if (model.equals(finalScopeRoot)) continue;
                     deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
                 }
             }
@@ -94,9 +139,14 @@ public final class TeardownExecutor {
                     ModelInfo rootModelInfo = schema.models().stream()
                         .filter(m -> m.name().equals(finalScopeRoot))
                         .findFirst().orElse(null);
-                    String rootPkFieldName = rootModelInfo != null
-                        ? rootModelInfo.fields().stream().filter(FieldInfo::isId).findFirst().map(FieldInfo::name).orElse("id")
-                        : "id";
+                    // Composite PK: prefer field named "id"
+                    List<FieldInfo> rootIdFields = rootModelInfo != null
+                        ? rootModelInfo.fields().stream().filter(FieldInfo::isId).toList()
+                        : List.of();
+                    FieldInfo rootPkField = rootIdFields.stream()
+                        .filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
+                        .orElse(rootIdFields.isEmpty() ? null : rootIdFields.get(0));
+                    String rootPkFieldName = rootPkField != null ? rootPkField.name() : "id";
                     String idCol = colMap.getOrDefault(rootPkFieldName, rootPkFieldName);
                     tx.query("DELETE FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(idCol)
                         + " = " + dialect.param(1), scopeValue);
@@ -126,9 +176,13 @@ public final class TeardownExecutor {
         ModelInfo modelInfo = schema.models().stream()
             .filter(m -> m.name().equals(model))
             .findFirst().orElse(null);
-        String pkFieldName = modelInfo != null
-            ? modelInfo.fields().stream().filter(FieldInfo::isId).findFirst().map(FieldInfo::name).orElse("id")
-            : "id";
+        // When multiple isId fields exist (composite PK), prefer the one named "id"
+        List<FieldInfo> idFields = modelInfo != null
+            ? modelInfo.fields().stream().filter(FieldInfo::isId).toList()
+            : List.of();
+        FieldInfo pkField = idFields.stream().filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
+            .orElse(idFields.isEmpty() ? null : idFields.get(0));
+        String pkFieldName = pkField != null ? pkField.name() : "id";
 
         String scopeFK = scopeFieldByModel.get(model);
         if (scopeFK != null) {

@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 public class HandlerConfig {
 
@@ -12,7 +11,7 @@ public class HandlerConfig {
     private final String scopeField;
     private final String sharedSecret;
     private final String signingSecret;
-    private final Function<Map<String, Object>, AuthResult> auth;
+    private final BiFunction<Map<String, Object>, AuthContext, AuthResult> auth;
     private String dialect = "postgres";
     private String dbSchema;
     private Map<String, String> tableNameMap;
@@ -23,7 +22,7 @@ public class HandlerConfig {
     private BiFunction<HookContext, AuthResult, AuthResult> afterUp;
 
     public HandlerConfig(SQLExecutor executor, String scopeField, String sharedSecret, String signingSecret,
-                         Function<Map<String, Object>, AuthResult> auth) {
+                         BiFunction<Map<String, Object>, AuthContext, AuthResult> auth) {
         this.executor = executor;
         this.scopeField = scopeField;
         this.sharedSecret = sharedSecret;
@@ -40,7 +39,7 @@ public class HandlerConfig {
     public Map<String, String> getTableNameMap() { return tableNameMap; }
     public List<String> getExcludeTables() { return excludeTables; }
     public boolean isAllowProduction() { return allowProduction; }
-    public Function<Map<String, Object>, AuthResult> getAuth() { return auth; }
+    public BiFunction<Map<String, Object>, AuthContext, AuthResult> getAuth() { return auth; }
     public SdkInfo getSdk() { return sdk; }
 
     public HandlerConfig setDialect(String dialect) { this.dialect = dialect; return this; }

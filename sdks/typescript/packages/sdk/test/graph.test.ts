@@ -57,6 +57,44 @@ describe('topoSort', () => {
     expect(sorted).toEqual(['category'])
     expect(cycles).toEqual([])
   })
+
+  it('sorts non-cycle node that depends on a cycle', () => {
+    const nodes = ['Root', 'A', 'B', 'C']
+    const edges: FKEdge[] = [
+      { from: 'A', to: 'B', localField: 'bId', foreignField: 'id', nullable: false },
+      { from: 'B', to: 'A', localField: 'aId', foreignField: 'id', nullable: true },
+      { from: 'C', to: 'A', localField: 'aId', foreignField: 'id', nullable: false },
+      { from: 'C', to: 'Root', localField: 'rootId', foreignField: 'id', nullable: false },
+    ]
+    const { sorted, cycles } = topoSort(nodes, edges)
+    expect(sorted).toContain('Root')
+    expect(sorted).toContain('C')
+    expect(sorted.indexOf('Root')).toBeLessThan(sorted.indexOf('C'))
+    expect(cycles.flat()).toContain('A')
+    expect(cycles.flat()).toContain('B')
+  })
+
+  it('handles two separate cycles with linking node', () => {
+    const nodes = ['Root', 'A', 'B', 'C', 'D', 'Link']
+    const edges: FKEdge[] = [
+      { from: 'A', to: 'B', localField: 'bId', foreignField: 'id', nullable: false },
+      { from: 'B', to: 'A', localField: 'aId', foreignField: 'id', nullable: true },
+      { from: 'C', to: 'D', localField: 'dId', foreignField: 'id', nullable: false },
+      { from: 'D', to: 'C', localField: 'cId', foreignField: 'id', nullable: true },
+      { from: 'Link', to: 'A', localField: 'aId', foreignField: 'id', nullable: false },
+      { from: 'Link', to: 'C', localField: 'cId', foreignField: 'id', nullable: false },
+      { from: 'A', to: 'Root', localField: 'rootId', foreignField: 'id', nullable: false },
+    ]
+    const { sorted, cycles } = topoSort(nodes, edges)
+    expect(sorted).toContain('Root')
+    expect(sorted).toContain('Link')
+    expect(sorted.indexOf('Root')).toBeLessThan(sorted.indexOf('Link'))
+    expect(cycles).toHaveLength(2)
+    expect(cycles.flat()).toContain('A')
+    expect(cycles.flat()).toContain('B')
+    expect(cycles.flat()).toContain('C')
+    expect(cycles.flat()).toContain('D')
+  })
 })
 
 describe('findDeferrableEdge', () => {

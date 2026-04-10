@@ -52,13 +52,69 @@ defmodule Autonoma.TeardownSQL do
         end
       end
 
-      # Bug 6: Delete non-cycle nodes in reverse topo order FIRST (dependents before cycle nodes)
-      for model <- Enum.reverse(sorted), model != scope_root do
-        delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
-      end
+      # Build condensation graph: each SCC is a super-node, each sorted node
+      # is its own node. Topo-sort the condensation DAG and delete in reverse
+      # order so that dependents of cycles are deleted before the cycle itself.
+      {components, node_to_comp} =
+        Enum.reduce(cycles, {[], %{}}, fn cycle, {comps, mapping} ->
+          idx = length(comps)
+          new_mapping = Enum.reduce(cycle, mapping, fn node, acc -> Map.put(acc, node, idx) end)
+          {comps ++ [cycle], new_mapping}
+        end)
 
-      # Delete cycle nodes AFTER their non-cycle dependents are gone
-      for cycle <- cycles, model <- cycle do
+      {components, node_to_comp} =
+        Enum.reduce(sorted, {components, node_to_comp}, fn node, {comps, mapping} ->
+          {comps ++ [[node]], Map.put(mapping, node, length(comps))}
+        end)
+
+      comp_count = length(components)
+      indices = if comp_count > 0, do: 0..(comp_count - 1), else: []
+
+      # Build condensation DAG edges (dependency → dependent)
+      init_adj = Map.new(indices, fn i -> {i, MapSet.new()} end)
+      init_deg = Map.new(indices, fn i -> {i, 0} end)
+
+      {cond_adj, cond_in_deg} =
+        Enum.reduce(edges, {init_adj, init_deg}, fn edge, {adj, deg} ->
+          if edge["from"] == edge["to"] do
+            {adj, deg}
+          else
+            fc = Map.get(node_to_comp, edge["from"])
+            tc = Map.get(node_to_comp, edge["to"])
+            if fc != nil && tc != nil && fc != tc && !MapSet.member?(Map.get(adj, tc, MapSet.new()), fc) do
+              {Map.update!(adj, tc, &MapSet.put(&1, fc)),
+               Map.update!(deg, fc, &(&1 + 1))}
+            else
+              {adj, deg}
+            end
+          end
+        end)
+
+      # Kahn's algorithm on the condensation DAG
+      init_queue = cond_in_deg |> Enum.filter(fn {_i, d} -> d == 0 end) |> Enum.map(fn {i, _} -> i end) |> Enum.sort()
+
+      {cond_order, _} =
+        Enum.reduce_while(Stream.cycle([nil]), {[], {init_queue, cond_adj, cond_in_deg}}, fn _, {order, {queue, adj, deg}} ->
+          case queue do
+            [] -> {:halt, {order, {queue, adj, deg}}}
+            _ ->
+              sorted_q = Enum.sort(queue)
+              [idx | rest] = sorted_q
+              neighbors = Map.get(adj, idx, MapSet.new())
+              {new_queue, new_deg} = Enum.reduce(neighbors, {rest, deg}, fn n, {q, d} ->
+                nd = Map.get(d, n, 1) - 1
+                d = Map.put(d, n, nd)
+                q = if nd == 0, do: [n | q], else: q
+                {q, d}
+              end)
+              {:cont, {order ++ [idx], {new_queue, adj, new_deg}}}
+          end
+        end)
+
+      # Delete in reverse condensation order (dependents first)
+      for comp_idx <- Enum.reverse(cond_order),
+          model <- Enum.at(components, comp_idx),
+          model != scope_root do
         delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
       end
 
@@ -68,11 +124,12 @@ defmodule Autonoma.TeardownSQL do
         col_map = Map.get(column_maps, scope_root, %{})
 
         if db_table do
-          # Bug 4: Use schema to find actual PK field name
+          # Bug 4: Use schema to find actual PK field name (composite PK: prefer "id")
           root_model_info = Enum.find(schema["models"] || [], fn m -> m["name"] == scope_root end)
           root_pk_field_name =
             if root_model_info do
-              pk = Enum.find(root_model_info["fields"] || [], fn f -> f["isId"] end)
+              id_fields = Enum.filter(root_model_info["fields"] || [], fn f -> f["isId"] end)
+              pk = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
               if pk, do: pk["name"], else: "id"
             else
               "id"
@@ -94,10 +151,12 @@ defmodule Autonoma.TeardownSQL do
       scope_fk = Map.get(scope_field_by_model, model)
 
       # Bug 4: Find actual PK field name from schema
+      # When multiple isId fields exist (composite PK), prefer the one named "id"
       model_info = Enum.find(schema["models"] || [], fn m -> m["name"] == model end)
       pk_field_name =
         if model_info do
-          pk = Enum.find(model_info["fields"] || [], fn f -> f["isId"] end)
+          id_fields = Enum.filter(model_info["fields"] || [], fn f -> f["isId"] end)
+          pk = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
           if pk, do: pk["name"], else: "id"
         else
           "id"

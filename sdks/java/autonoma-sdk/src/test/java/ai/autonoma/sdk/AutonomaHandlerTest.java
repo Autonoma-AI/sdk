@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -149,8 +150,8 @@ class AutonomaHandlerTest {
         assertTrue(hookCalled.get(), "beforeDown hook should have been called");
     }
 
-    private Function<Map<String, Object>, AuthResult> dummyAuth() {
-        return user -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer test-token"));
+    private BiFunction<Map<String, Object>, AuthContext, AuthResult> dummyAuth() {
+        return (user, ctx) -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer test-token"));
     }
 
     private SQLExecutor dummyExecutor() {

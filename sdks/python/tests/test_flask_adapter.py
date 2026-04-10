@@ -31,7 +31,7 @@ def _make_app():
         scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,
-        auth=lambda user: {"headers": {"Authorization": "Bearer test-token"}},
+        auth=lambda user, ctx: {"headers": {"Authorization": "Bearer test-token"}},
     )
     bp = create_flask_handler(config)
     app.register_blueprint(bp, url_prefix="/api/autonoma")

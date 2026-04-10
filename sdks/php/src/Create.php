@@ -40,14 +40,24 @@ class Create
                     break;
                 }
             }
-            $pkField = null;
+            // When multiple isId fields exist (composite PK), prefer the one named "id"
+            $idFields = [];
             if ($modelInfo !== null) {
                 foreach ($modelInfo->fields as $f) {
                     if ($f->isId) {
-                        $pkField = $f;
-                        break;
+                        $idFields[] = $f;
                     }
                 }
+            }
+            $pkField = null;
+            foreach ($idFields as $f) {
+                if (strtolower($f->name) === 'id') {
+                    $pkField = $f;
+                    break;
+                }
+            }
+            if ($pkField === null) {
+                $pkField = $idFields[0] ?? null;
             }
             $pkFieldName = $pkField !== null ? $pkField->name : 'id';
             $pkFieldType = $pkField !== null ? $pkField->type : 'String';
