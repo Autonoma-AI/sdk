@@ -71,62 +71,61 @@ public final class TeardownExecutor {
                 }
             }
 
-            // Partition sorted nodes: those that depend on cycle nodes must be deleted
-            // BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
-            Set<String> cycleNodeSet = new HashSet<>();
+            // Build condensation graph: each SCC is a super-node, each sorted node
+            // is its own node. Topo-sort the condensation DAG and delete in reverse
+            // order so that dependents of cycles are deleted before the cycle itself.
+            List<List<String>> components = new ArrayList<>();
+            Map<String, Integer> nodeToComp = new HashMap<>();
+
             for (List<String> cycle : sortResult.cycles()) {
-                cycleNodeSet.addAll(cycle);
+                int idx = components.size();
+                components.add(cycle);
+                for (String node : cycle) nodeToComp.put(node, idx);
+            }
+            for (String node : sortResult.sorted()) {
+                nodeToComp.put(node, components.size());
+                components.add(List.of(node));
             }
 
-            if (!cycleNodeSet.isEmpty()) {
-                // Build dependency map: node → set of nodes it depends on
-                Map<String, Set<String>> dependsOn = new HashMap<>();
-                for (FKEdge edge : schema.edges()) {
-                    if (!edge.from().equals(edge.to())) {
-                        dependsOn.computeIfAbsent(edge.from(), k -> new HashSet<>()).add(edge.to());
-                    }
+            // Build condensation DAG edges (dependency → dependent)
+            Map<Integer, Set<Integer>> condAdj = new HashMap<>();
+            Map<Integer, Integer> condInDeg = new HashMap<>();
+            for (int i = 0; i < components.size(); i++) {
+                condAdj.put(i, new HashSet<>());
+                condInDeg.put(i, 0);
+            }
+            for (FKEdge edge : schema.edges()) {
+                if (edge.from().equals(edge.to())) continue;
+                Integer fc = nodeToComp.get(edge.from());
+                Integer tc = nodeToComp.get(edge.to());
+                if (fc != null && tc != null && !fc.equals(tc) && !condAdj.get(tc).contains(fc)) {
+                    condAdj.get(tc).add(fc);
+                    condInDeg.merge(fc, 1, Integer::sum);
                 }
+            }
 
-                // Mark nodes that transitively depend on cycle nodes
-                Set<String> dependsOnCycle = new HashSet<>();
-                for (String node : sortResult.sorted()) {
-                    Set<String> deps = dependsOn.getOrDefault(node, Set.of());
-                    for (String dep : deps) {
-                        if (cycleNodeSet.contains(dep) || dependsOnCycle.contains(dep)) {
-                            dependsOnCycle.add(node);
-                            break;
-                        }
-                    }
+            // Kahn's algorithm on the condensation DAG
+            List<Integer> condQueue = new ArrayList<>();
+            for (var entry : condInDeg.entrySet()) {
+                if (entry.getValue() == 0) condQueue.add(entry.getKey());
+            }
+            Collections.sort(condQueue);
+            List<Integer> condOrder = new ArrayList<>();
+            while (!condQueue.isEmpty()) {
+                Collections.sort(condQueue);
+                int idx = condQueue.remove(0);
+                condOrder.add(idx);
+                for (int neighbor : condAdj.get(idx)) {
+                    int nd = condInDeg.merge(neighbor, -1, Integer::sum);
+                    if (nd == 0) condQueue.add(neighbor);
                 }
+            }
 
-                List<String> cycleDependents = sortResult.sorted().stream()
-                    .filter(dependsOnCycle::contains).toList();
-                List<String> cycleDeps = sortResult.sorted().stream()
-                    .filter(n -> !dependsOnCycle.contains(n)).toList();
-
-                List<String> revDependents = new ArrayList<>(cycleDependents);
-                Collections.reverse(revDependents);
-                for (String model : revDependents) {
-                    if (model.equals(finalScopeRoot)) continue;
-                    deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
-                }
-
-                for (List<String> cycle : sortResult.cycles()) {
-                    for (String model : cycle) {
-                        deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
-                    }
-                }
-
-                List<String> revDeps = new ArrayList<>(cycleDeps);
-                Collections.reverse(revDeps);
-                for (String model : revDeps) {
-                    if (model.equals(finalScopeRoot)) continue;
-                    deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
-                }
-            } else {
-                List<String> reversed = new ArrayList<>(sortResult.sorted());
-                Collections.reverse(reversed);
-                for (String model : reversed) {
+            // Delete in reverse condensation order (dependents first)
+            List<Integer> revCondOrder = new ArrayList<>(condOrder);
+            Collections.reverse(revCondOrder);
+            for (int compIdx : revCondOrder) {
+                for (String model : components.get(compIdx)) {
                     if (model.equals(finalScopeRoot)) continue;
                     deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
                 }

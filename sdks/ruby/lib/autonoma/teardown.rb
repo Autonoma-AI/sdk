@@ -63,50 +63,50 @@ module Autonoma
           )
         end
 
-        # Partition sorted nodes: those that depend on cycle nodes must be deleted
-        # BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
-        cycle_node_set = cycles.flatten.to_set
+        # Build condensation graph: each SCC is a super-node, each sorted node
+        # is its own node. Topo-sort the condensation DAG and delete in reverse
+        # order so that dependents of cycles are deleted before the cycle itself.
+        components = []
+        node_to_comp = {}
 
-        if cycle_node_set.any?
-          # Build dependency map: node → set of nodes it depends on
-          depends_on = {}
-          edge_dicts.each do |edge|
-            next if edge["from"] == edge["to"]
-            (depends_on[edge["from"]] ||= Set.new).add(edge["to"])
+        cycles.each do |cycle|
+          idx = components.length
+          components << cycle
+          cycle.each { |node| node_to_comp[node] = idx }
+        end
+        sorted_models.each do |node|
+          node_to_comp[node] = components.length
+          components << [node]
+        end
+
+        # Build condensation DAG edges (dependency → dependent)
+        cond_adj = Array.new(components.length) { Set.new }
+        cond_in_deg = Array.new(components.length, 0)
+        edge_dicts.each do |edge|
+          next if edge["from"] == edge["to"]
+          fc = node_to_comp[edge["from"]]
+          tc = node_to_comp[edge["to"]]
+          next if fc.nil? || tc.nil? || fc == tc || cond_adj[tc].include?(fc)
+          cond_adj[tc].add(fc)
+          cond_in_deg[fc] += 1
+        end
+
+        # Kahn's algorithm on the condensation DAG
+        cond_queue = cond_in_deg.each_with_index.select { |d, _| d == 0 }.map { |_, i| i }.sort
+        cond_order = []
+        until cond_queue.empty?
+          cond_queue.sort!
+          idx = cond_queue.shift
+          cond_order << idx
+          cond_adj[idx].each do |neighbor|
+            cond_in_deg[neighbor] -= 1
+            cond_queue << neighbor if cond_in_deg[neighbor] == 0
           end
+        end
 
-          # Mark nodes that transitively depend on cycle nodes
-          depends_on_cycle = Set.new
-          sorted_models.each do |node|
-            deps = depends_on[node] || Set.new
-            if deps.any? { |d| cycle_node_set.include?(d) || depends_on_cycle.include?(d) }
-              depends_on_cycle.add(node)
-            end
-          end
-
-          cycle_dependents = sorted_models.select { |n| depends_on_cycle.include?(n) }
-          cycle_deps = sorted_models.reject { |n| depends_on_cycle.include?(n) }
-
-          cycle_dependents.reverse_each do |model|
-            next if model == scope_root_model
-            delete_model(tx, dialect, table_map, column_maps, model,
-                         scope_value, scope_field_by_model, refs, schema)
-          end
-
-          cycles.each do |cycle|
-            cycle.each do |model|
-              delete_model(tx, dialect, table_map, column_maps, model,
-                           scope_value, scope_field_by_model, refs, schema)
-            end
-          end
-
-          cycle_deps.reverse_each do |model|
-            next if model == scope_root_model
-            delete_model(tx, dialect, table_map, column_maps, model,
-                         scope_value, scope_field_by_model, refs, schema)
-          end
-        else
-          sorted_models.reverse_each do |model|
+        # Delete in reverse condensation order (dependents first)
+        cond_order.reverse_each do |comp_idx|
+          components[comp_idx].each do |model|
             next if model == scope_root_model
             delete_model(tx, dialect, table_map, column_maps, model,
                          scope_value, scope_field_by_model, refs, schema)

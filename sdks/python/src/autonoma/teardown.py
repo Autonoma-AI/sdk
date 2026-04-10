@@ -62,47 +62,48 @@ async def teardown(
                             [scope_value],
                         )
 
-        # Partition sorted nodes: those that depend on cycle nodes must be deleted
-        # BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
-        cycle_node_set = set()
+        # Build condensation graph: each SCC is a super-node, each sorted node
+        # is its own node. Topo-sort the condensation DAG and delete in reverse
+        # order so that dependents of cycles are deleted before the cycle itself.
+        components: list[list[str]] = []
+        node_to_comp: dict[str, int] = {}
+
         for cycle in cycles:
-            cycle_node_set.update(cycle)
+            idx = len(components)
+            components.append(cycle)
+            for node in cycle:
+                node_to_comp[node] = idx
+        for node in sorted_models:
+            node_to_comp[node] = len(components)
+            components.append([node])
 
-        if cycle_node_set:
-            # Build dependency map: node → set of nodes it depends on
-            depends_on: dict[str, set[str]] = {}
-            for edge in edge_dicts:
-                if edge["from"] != edge["to"]:
-                    depends_on.setdefault(edge["from"], set()).add(edge["to"])
+        # Build condensation DAG edges (dependency → dependent)
+        cond_adj: dict[int, set[int]] = {i: set() for i in range(len(components))}
+        cond_in_deg: dict[int, int] = {i: 0 for i in range(len(components))}
+        for edge in edge_dicts:
+            if edge["from"] == edge["to"]:
+                continue
+            fc = node_to_comp.get(edge["from"])
+            tc = node_to_comp.get(edge["to"])
+            if fc is not None and tc is not None and fc != tc and fc not in cond_adj[tc]:
+                cond_adj[tc].add(fc)
+                cond_in_deg[fc] = cond_in_deg.get(fc, 0) + 1
 
-            # Mark nodes that transitively depend on cycle nodes
-            depends_on_cycle: set[str] = set()
-            for node in sorted_models:
-                deps = depends_on.get(node, set())
-                if any(d in cycle_node_set or d in depends_on_cycle for d in deps):
-                    depends_on_cycle.add(node)
+        # Kahn's algorithm on the condensation DAG
+        cond_queue = sorted(i for i, d in cond_in_deg.items() if d == 0)
+        cond_order: list[int] = []
+        while cond_queue:
+            cond_queue.sort()
+            idx = cond_queue.pop(0)
+            cond_order.append(idx)
+            for neighbor in cond_adj[idx]:
+                cond_in_deg[neighbor] -= 1
+                if cond_in_deg[neighbor] == 0:
+                    cond_queue.append(neighbor)
 
-            cycle_dependents = [n for n in sorted_models if n in depends_on_cycle]
-            cycle_deps = [n for n in sorted_models if n not in depends_on_cycle]
-
-            for model in reversed(cycle_dependents):
-                if model == scope_root_model:
-                    continue
-                await _delete_model(tx, dialect, table_map, column_maps, model,
-                                    scope_value, scope_field_by_model, refs, schema)
-
-            for cycle in cycles:
-                for model in cycle:
-                    await _delete_model(tx, dialect, table_map, column_maps, model,
-                                        scope_value, scope_field_by_model, refs, schema)
-
-            for model in reversed(cycle_deps):
-                if model == scope_root_model:
-                    continue
-                await _delete_model(tx, dialect, table_map, column_maps, model,
-                                    scope_value, scope_field_by_model, refs, schema)
-        else:
-            for model in reversed(sorted_models):
+        # Delete in reverse condensation order (dependents first)
+        for comp_idx in reversed(cond_order):
+            for model in components[comp_idx]:
                 if model == scope_root_model:
                     continue
                 await _delete_model(tx, dialect, table_map, column_maps, model,

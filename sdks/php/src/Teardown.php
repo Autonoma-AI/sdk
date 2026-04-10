@@ -88,65 +88,63 @@ class Teardown
                 }
             }
 
-            // Partition sorted nodes: those that depend on cycle nodes must be deleted
-            // BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
-            $cycleNodeSet = [];
+            // Build condensation graph: each SCC is a super-node, each sorted node
+            // is its own node. Topo-sort the condensation DAG and delete in reverse
+            // order so that dependents of cycles are deleted before the cycle itself.
+            $components = [];
+            $nodeToComp = [];
+
             foreach ($cycles as $cycle) {
-                foreach ($cycle as $n) {
-                    $cycleNodeSet[$n] = true;
+                $idx = count($components);
+                $components[] = $cycle;
+                foreach ($cycle as $node) {
+                    $nodeToComp[$node] = $idx;
+                }
+            }
+            foreach ($sortedModels as $node) {
+                $nodeToComp[$node] = count($components);
+                $components[] = [$node];
+            }
+
+            // Build condensation DAG edges (dependency → dependent)
+            $condAdj = [];
+            $condInDeg = [];
+            for ($i = 0; $i < count($components); $i++) {
+                $condAdj[$i] = [];
+                $condInDeg[$i] = 0;
+            }
+            foreach ($schema->edges as $edge) {
+                if ($edge->fromModel === $edge->toModel) continue;
+                $fc = $nodeToComp[$edge->fromModel] ?? null;
+                $tc = $nodeToComp[$edge->toModel] ?? null;
+                if ($fc !== null && $tc !== null && $fc !== $tc && !isset($condAdj[$tc][$fc])) {
+                    $condAdj[$tc][$fc] = true;
+                    $condInDeg[$fc]++;
                 }
             }
 
-            if (!empty($cycleNodeSet)) {
-                // Build dependency map: node → set of nodes it depends on
-                $dependsOn = [];
-                foreach ($schema->edges as $edge) {
-                    if ($edge->from !== $edge->to) {
-                        $dependsOn[$edge->from][$edge->to] = true;
+            // Kahn's algorithm on the condensation DAG
+            $condQueue = [];
+            foreach ($condInDeg as $idx => $deg) {
+                if ($deg === 0) $condQueue[] = $idx;
+            }
+            sort($condQueue);
+            $condOrder = [];
+            while (!empty($condQueue)) {
+                sort($condQueue);
+                $idx = array_shift($condQueue);
+                $condOrder[] = $idx;
+                foreach (array_keys($condAdj[$idx]) as $neighbor) {
+                    $condInDeg[$neighbor]--;
+                    if ($condInDeg[$neighbor] === 0) {
+                        $condQueue[] = $neighbor;
                     }
                 }
+            }
 
-                // Mark nodes that transitively depend on cycle nodes
-                $dependsOnCycle = [];
-                foreach ($sortedModels as $node) {
-                    $deps = $dependsOn[$node] ?? [];
-                    foreach ($deps as $dep => $_) {
-                        if (isset($cycleNodeSet[$dep]) || isset($dependsOnCycle[$dep])) {
-                            $dependsOnCycle[$node] = true;
-                            break;
-                        }
-                    }
-                }
-
-                $cycleDependents = array_filter($sortedModels, fn($n) => isset($dependsOnCycle[$n]));
-                $cycleDeps = array_filter($sortedModels, fn($n) => !isset($dependsOnCycle[$n]));
-
-                foreach (array_reverse(array_values($cycleDependents)) as $model) {
-                    if ($model === $scopeRootModel) continue;
-                    self::deleteModel(
-                        $tx, $dialect, $tableMap, $columnMaps, $model,
-                        $scopeValue, $scopeFieldByModel, $refs, $schema,
-                    );
-                }
-
-                foreach ($cycles as $cycle) {
-                    foreach ($cycle as $model) {
-                        self::deleteModel(
-                            $tx, $dialect, $tableMap, $columnMaps, $model,
-                            $scopeValue, $scopeFieldByModel, $refs, $schema,
-                        );
-                    }
-                }
-
-                foreach (array_reverse(array_values($cycleDeps)) as $model) {
-                    if ($model === $scopeRootModel) continue;
-                    self::deleteModel(
-                        $tx, $dialect, $tableMap, $columnMaps, $model,
-                        $scopeValue, $scopeFieldByModel, $refs, $schema,
-                    );
-                }
-            } else {
-                foreach (array_reverse($sortedModels) as $model) {
+            // Delete in reverse condensation order (dependents first)
+            foreach (array_reverse($condOrder) as $compIdx) {
+                foreach ($components[$compIdx] as $model) {
                     if ($model === $scopeRootModel) continue;
                     self::deleteModel(
                         $tx, $dialect, $tableMap, $columnMaps, $model,

@@ -121,63 +121,60 @@ pub async fn teardown(
         }
     }
 
-    // Partition sorted nodes: those that depend on cycle nodes must be deleted
-    // BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
-    let cycle_node_set: HashSet<&str> = cycles.iter().flatten().map(|s| s.as_str()).collect();
+    // Build condensation graph: each SCC is a super-node, each sorted node
+    // is its own node. Topo-sort the condensation DAG and delete in reverse
+    // order so that dependents of cycles are deleted before the cycle itself.
+    let mut components: Vec<Vec<String>> = Vec::new();
+    let mut node_to_comp: HashMap<String, usize> = HashMap::new();
 
-    if !cycle_node_set.is_empty() {
-        // Build dependency map: node → set of nodes it depends on
-        let mut depends_on: HashMap<&str, HashSet<&str>> = HashMap::new();
-        for edge in &schema.edges {
-            if edge.from_model != edge.to_model {
-                depends_on.entry(edge.from_model.as_str()).or_default().insert(edge.to_model.as_str());
+    for cycle in &cycles {
+        let idx = components.len();
+        components.push(cycle.clone());
+        for node in cycle {
+            node_to_comp.insert(node.clone(), idx);
+        }
+    }
+    for node in &sorted_models {
+        node_to_comp.insert(node.clone(), components.len());
+        components.push(vec![node.clone()]);
+    }
+
+    // Build condensation DAG edges (dependency → dependent)
+    let comp_count = components.len();
+    let mut cond_adj: Vec<HashSet<usize>> = vec![HashSet::new(); comp_count];
+    let mut cond_in_deg: Vec<usize> = vec![0; comp_count];
+    for edge in &schema.edges {
+        if edge.from_model == edge.to_model {
+            continue;
+        }
+        if let (Some(&fc), Some(&tc)) = (node_to_comp.get(&edge.from_model), node_to_comp.get(&edge.to_model)) {
+            if fc != tc && !cond_adj[tc].contains(&fc) {
+                cond_adj[tc].insert(fc);
+                cond_in_deg[fc] += 1;
             }
         }
+    }
 
-        // Mark nodes that transitively depend on cycle nodes
-        let mut depends_on_cycle: HashSet<&str> = HashSet::new();
-        for node in &sorted_models {
-            if let Some(deps) = depends_on.get(node.as_str()) {
-                for dep in deps {
-                    if cycle_node_set.contains(dep) || depends_on_cycle.contains(dep) {
-                        depends_on_cycle.insert(node.as_str());
-                        break;
-                    }
-                }
+    // Kahn's algorithm on the condensation DAG
+    let mut cond_queue: Vec<usize> = (0..comp_count).filter(|&i| cond_in_deg[i] == 0).collect();
+    cond_queue.sort();
+    let mut cond_order: Vec<usize> = Vec::new();
+    while !cond_queue.is_empty() {
+        cond_queue.sort();
+        let idx = cond_queue.remove(0);
+        cond_order.push(idx);
+        let neighbors: Vec<usize> = cond_adj[idx].iter().cloned().collect();
+        for neighbor in neighbors {
+            cond_in_deg[neighbor] -= 1;
+            if cond_in_deg[neighbor] == 0 {
+                cond_queue.push(neighbor);
             }
         }
+    }
 
-        let cycle_dependents: Vec<&str> = sorted_models.iter()
-            .filter(|n| depends_on_cycle.contains(n.as_str()))
-            .map(|s| s.as_str()).collect();
-        let cycle_deps: Vec<&str> = sorted_models.iter()
-            .filter(|n| !depends_on_cycle.contains(n.as_str()))
-            .map(|s| s.as_str()).collect();
-
-        for model in cycle_dependents.iter().rev() {
-            if scope_root_model.as_deref() == Some(*model) {
-                continue;
-            }
-            delete_model(executor, dialect, table_map, column_maps, model,
-                scope_value, &scope_field_by_model, refs, schema).await?;
-        }
-
-        for cycle in &cycles {
-            for model in cycle {
-                delete_model(executor, dialect, table_map, column_maps, model,
-                    scope_value, &scope_field_by_model, refs, schema).await?;
-            }
-        }
-
-        for model in cycle_deps.iter().rev() {
-            if scope_root_model.as_deref() == Some(*model) {
-                continue;
-            }
-            delete_model(executor, dialect, table_map, column_maps, model,
-                scope_value, &scope_field_by_model, refs, schema).await?;
-        }
-    } else {
-        for model in sorted_models.iter().rev() {
+    // Delete in reverse condensation order (dependents first)
+    for &comp_idx in cond_order.iter().rev() {
+        for model in &components[comp_idx] {
             if scope_root_model.as_deref() == Some(model.as_str()) {
                 continue;
             }

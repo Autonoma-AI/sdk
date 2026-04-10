@@ -52,48 +52,70 @@ defmodule Autonoma.TeardownSQL do
         end
       end
 
-      # Partition sorted nodes: those that depend on cycle nodes must be deleted
-      # BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
-      cycle_node_set = cycles |> List.flatten() |> MapSet.new()
+      # Build condensation graph: each SCC is a super-node, each sorted node
+      # is its own node. Topo-sort the condensation DAG and delete in reverse
+      # order so that dependents of cycles are deleted before the cycle itself.
+      {components, node_to_comp} =
+        Enum.reduce(cycles, {[], %{}}, fn cycle, {comps, mapping} ->
+          idx = length(comps)
+          new_mapping = Enum.reduce(cycle, mapping, fn node, acc -> Map.put(acc, node, idx) end)
+          {comps ++ [cycle], new_mapping}
+        end)
 
-      if MapSet.size(cycle_node_set) > 0 do
-        # Build dependency map: node → set of nodes it depends on
-        depends_on = Enum.reduce(edges, %{}, fn edge, acc ->
-          if edge["from"] != edge["to"] do
-            Map.update(acc, edge["from"], MapSet.new([edge["to"]]), &MapSet.put(&1, edge["to"]))
+      {components, node_to_comp} =
+        Enum.reduce(sorted, {components, node_to_comp}, fn node, {comps, mapping} ->
+          {comps ++ [[node]], Map.put(mapping, node, length(comps))}
+        end)
+
+      comp_count = length(components)
+      indices = if comp_count > 0, do: 0..(comp_count - 1), else: []
+
+      # Build condensation DAG edges (dependency → dependent)
+      init_adj = Map.new(indices, fn i -> {i, MapSet.new()} end)
+      init_deg = Map.new(indices, fn i -> {i, 0} end)
+
+      {cond_adj, cond_in_deg} =
+        Enum.reduce(edges, {init_adj, init_deg}, fn edge, {adj, deg} ->
+          if edge["from"] == edge["to"] do
+            {adj, deg}
           else
-            acc
+            fc = Map.get(node_to_comp, edge["from"])
+            tc = Map.get(node_to_comp, edge["to"])
+            if fc != nil && tc != nil && fc != tc && !MapSet.member?(Map.get(adj, tc, MapSet.new()), fc) do
+              {Map.update!(adj, tc, &MapSet.put(&1, fc)),
+               Map.update!(deg, fc, &(&1 + 1))}
+            else
+              {adj, deg}
+            end
           end
         end)
 
-        # Mark nodes that transitively depend on cycle nodes
-        depends_on_cycle = Enum.reduce(sorted, MapSet.new(), fn node, acc ->
-          deps = Map.get(depends_on, node, MapSet.new())
-          if Enum.any?(deps, fn d -> MapSet.member?(cycle_node_set, d) || MapSet.member?(acc, d) end) do
-            MapSet.put(acc, node)
-          else
-            acc
+      # Kahn's algorithm on the condensation DAG
+      init_queue = cond_in_deg |> Enum.filter(fn {_i, d} -> d == 0 end) |> Enum.map(fn {i, _} -> i end) |> Enum.sort()
+
+      {cond_order, _} =
+        Enum.reduce_while(Stream.cycle([nil]), {[], {init_queue, cond_adj, cond_in_deg}}, fn _, {order, {queue, adj, deg}} ->
+          case queue do
+            [] -> {:halt, {order, {queue, adj, deg}}}
+            _ ->
+              sorted_q = Enum.sort(queue)
+              [idx | rest] = sorted_q
+              neighbors = Map.get(adj, idx, MapSet.new())
+              {new_queue, new_deg} = Enum.reduce(neighbors, {rest, deg}, fn n, {q, d} ->
+                nd = Map.get(d, n, 1) - 1
+                d = Map.put(d, n, nd)
+                q = if nd == 0, do: [n | q], else: q
+                {q, d}
+              end)
+              {:cont, {order ++ [idx], {new_queue, adj, new_deg}}}
           end
         end)
 
-        cycle_dependents = Enum.filter(sorted, fn n -> MapSet.member?(depends_on_cycle, n) end)
-        cycle_deps = Enum.filter(sorted, fn n -> !MapSet.member?(depends_on_cycle, n) end)
-
-        for model <- Enum.reverse(cycle_dependents), model != scope_root do
-          delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
-        end
-
-        for cycle <- cycles, model <- cycle do
-          delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
-        end
-
-        for model <- Enum.reverse(cycle_deps), model != scope_root do
-          delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
-        end
-      else
-        for model <- Enum.reverse(sorted), model != scope_root do
-          delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
-        end
+      # Delete in reverse condensation order (dependents first)
+      for comp_idx <- Enum.reverse(cond_order),
+          model <- Enum.at(components, comp_idx),
+          model != scope_root do
+        delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
       end
 
       # Delete scope root last

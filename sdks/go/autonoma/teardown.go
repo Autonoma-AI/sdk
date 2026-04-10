@@ -3,6 +3,7 @@ package autonoma
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -77,78 +78,68 @@ func Teardown(
 			}
 		}
 
-		// Partition sorted nodes: those that depend on cycle nodes must be deleted
-		// BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
-		cycleNodeSet := make(map[string]bool)
+		// Build condensation graph: each SCC is a super-node, each sorted node
+		// is its own node. Topo-sort the condensation DAG and delete in reverse
+		// order so that dependents of cycles are deleted before the cycle itself.
+		var components [][]string
+		nodeToComp := make(map[string]int)
+
 		for _, cycle := range result.Cycles {
-			for _, n := range cycle {
-				cycleNodeSet[n] = true
+			idx := len(components)
+			components = append(components, cycle)
+			for _, node := range cycle {
+				nodeToComp[node] = idx
+			}
+		}
+		for _, node := range result.Sorted {
+			nodeToComp[node] = len(components)
+			components = append(components, []string{node})
+		}
+
+		// Build condensation DAG edges (dependency → dependent)
+		compCount := len(components)
+		condAdj := make([]map[int]bool, compCount)
+		condInDeg := make([]int, compCount)
+		for i := 0; i < compCount; i++ {
+			condAdj[i] = make(map[int]bool)
+		}
+		for _, edge := range schema.Edges {
+			if edge.From == edge.To {
+				continue
+			}
+			fc, fcOk := nodeToComp[edge.From]
+			tc, tcOk := nodeToComp[edge.To]
+			if fcOk && tcOk && fc != tc && !condAdj[tc][fc] {
+				condAdj[tc][fc] = true
+				condInDeg[fc]++
 			}
 		}
 
-		if len(cycleNodeSet) > 0 {
-			// Build dependency map: node → set of nodes it depends on
-			dependsOn := make(map[string]map[string]bool)
-			for _, edge := range schema.Edges {
-				if edge.From != edge.To {
-					if dependsOn[edge.From] == nil {
-						dependsOn[edge.From] = make(map[string]bool)
-					}
-					dependsOn[edge.From][edge.To] = true
+		// Kahn's algorithm on the condensation DAG
+		var condQueue []int
+		for i := 0; i < compCount; i++ {
+			if condInDeg[i] == 0 {
+				condQueue = append(condQueue, i)
+			}
+		}
+		sort.Ints(condQueue)
+		var condOrder []int
+		for len(condQueue) > 0 {
+			sort.Ints(condQueue)
+			idx := condQueue[0]
+			condQueue = condQueue[1:]
+			condOrder = append(condOrder, idx)
+			for neighbor := range condAdj[idx] {
+				condInDeg[neighbor]--
+				if condInDeg[neighbor] == 0 {
+					condQueue = append(condQueue, neighbor)
 				}
 			}
+		}
 
-			// Mark nodes that transitively depend on cycle nodes
-			dependsOnCycle := make(map[string]bool)
-			for _, node := range result.Sorted {
-				deps := dependsOn[node]
-				for dep := range deps {
-					if cycleNodeSet[dep] || dependsOnCycle[dep] {
-						dependsOnCycle[node] = true
-						break
-					}
-				}
-			}
-
-			var cycleDependents, cycleDeps []string
-			for _, n := range result.Sorted {
-				if dependsOnCycle[n] {
-					cycleDependents = append(cycleDependents, n)
-				} else {
-					cycleDeps = append(cycleDeps, n)
-				}
-			}
-
-			for i := len(cycleDependents) - 1; i >= 0; i-- {
-				model := cycleDependents[i]
-				if model == scopeRootModel {
-					continue
-				}
-				if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
-					return err
-				}
-			}
-
-			for _, cycle := range result.Cycles {
-				for _, model := range cycle {
-					if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
-						return err
-					}
-				}
-			}
-
-			for i := len(cycleDeps) - 1; i >= 0; i-- {
-				model := cycleDeps[i]
-				if model == scopeRootModel {
-					continue
-				}
-				if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
-					return err
-				}
-			}
-		} else {
-			for i := len(result.Sorted) - 1; i >= 0; i-- {
-				model := result.Sorted[i]
+		// Delete in reverse condensation order (dependents first)
+		for i := len(condOrder) - 1; i >= 0; i-- {
+			for _, model := range components[condOrder[i]] {
 				if model == scopeRootModel {
 					continue
 				}
