@@ -17,15 +17,14 @@ import java.util.*;
  */
 public final class TreeResolver {
 
-    private static final Set<String> RESERVED_KEYS = Set.of("_alias", "_ref", "_count", "_batch");
+    private static final Set<String> RESERVED_KEYS = Set.of("_alias", "_ref");
 
     private TreeResolver() {}
 
     @SuppressWarnings("unchecked")
     public static ResolvedTree resolveTree(
             Map<String, List<Map<String, Object>>> create,
-            SchemaInfo schema,
-            String testRunId) {
+            SchemaInfo schema) {
 
         Map<String, SchemaRelation> relationByParentField = new HashMap<>();
         for (SchemaRelation rel : schema.relations()) {
@@ -55,8 +54,8 @@ public final class TreeResolver {
             String modelName = entry.getKey();
             List<Map<String, Object>> nodes = entry.getValue();
             for (int i = 0; i < nodes.size(); i++) {
-                walkNode(modelName, nodes.get(i), null, null, false, i,
-                    schema, relationByParentField, fkOnParent, aliases, ops, deferredUpdates, tempCounter, testRunId);
+                walkNode(modelName, nodes.get(i), null, null, false,
+                    schema, relationByParentField, fkOnParent, aliases, ops, deferredUpdates, tempCounter);
             }
         }
 
@@ -70,15 +69,13 @@ public final class TreeResolver {
             String parentTempId,
             SchemaRelation parentRelation,
             boolean parentFkOnParent,
-            int index,
             SchemaInfo schema,
             Map<String, SchemaRelation> relationByParentField,
             Set<String> fkOnParent,
             Map<String, String> aliases,
             List<CreateOp> ops,
             List<DeferredUpdate> deferredUpdates,
-            int[] tempCounter,
-            String testRunId) {
+            int[] tempCounter) {
 
         Map<String, Object> fields = new LinkedHashMap<>();
         record ChildEntry(SchemaRelation relation, Object value, boolean fkOnParent) {}
@@ -137,7 +134,7 @@ public final class TreeResolver {
                 continue;
             }
 
-            fields.put(key, TemplateResolver.resolveTemplate(value, testRunId, index));
+            fields.put(key, value);
         }
 
         // Wire FK to parent (if this node is a child and FK is on the child)
@@ -151,8 +148,8 @@ public final class TreeResolver {
                 for (int i = 0; i < list.size(); i++) {
                     String childTempId = walkNode(
                         child.relation.childModel(), (Map<String, Object>) list.get(i),
-                        tempId, child.relation, true, i,
-                        schema, relationByParentField, fkOnParent, aliases, ops, deferredUpdates, tempCounter, testRunId);
+                        tempId, child.relation, true,
+                        schema, relationByParentField, fkOnParent, aliases, ops, deferredUpdates, tempCounter);
                     fields.put(child.relation.childField(), childTempId);
                 }
             }
@@ -167,23 +164,8 @@ public final class TreeResolver {
             if (child.value instanceof List<?> list) {
                 for (int i = 0; i < list.size(); i++) {
                     walkNode(child.relation.childModel(), (Map<String, Object>) list.get(i),
-                        tempId, child.relation, false, i,
-                        schema, relationByParentField, fkOnParent, aliases, ops, deferredUpdates, tempCounter, testRunId);
-                }
-            } else if (child.value instanceof Map<?, ?> bulkMap && bulkMap.containsKey("_count")) {
-                int count = ((Number) bulkMap.get("_count")).intValue();
-                boolean isBatch = bulkMap.containsKey("_batch") && Boolean.TRUE.equals(bulkMap.get("_batch"));
-
-                for (int i = 0; i < count; i++) {
-                    Map<String, Object> bulkFields = new LinkedHashMap<>();
-                    for (var bulkEntry : ((Map<String, Object>) child.value).entrySet()) {
-                        String k = bulkEntry.getKey();
-                        if ("_count".equals(k) || "_batch".equals(k)) continue;
-                        bulkFields.put(k, TemplateResolver.resolveTemplate(bulkEntry.getValue(), testRunId, i));
-                    }
-                    bulkFields.put(child.relation.childField(), tempId);
-                    ops.add(new CreateOp(child.relation.childModel(), bulkFields,
-                        "__temp_" + child.relation.childModel() + "_" + (tempCounter[0]++), isBatch));
+                        tempId, child.relation, false,
+                        schema, relationByParentField, fkOnParent, aliases, ops, deferredUpdates, tempCounter);
                 }
             }
         }

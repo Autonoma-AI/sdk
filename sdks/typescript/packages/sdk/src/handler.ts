@@ -113,7 +113,7 @@ async function handleUp(
   const { schema, tableMap, columnMaps, enumTypeMaps } = await getIntrospection(config)
   const dialect = getDialect(config.dialect)
 
-  const tree = resolveTree(create, schema, testRunId)
+  const tree = resolveTree(create, schema)
   const refs: Record<string, Record<string, unknown>[]> = {}
   const idMap = new Map<string, string>()
 

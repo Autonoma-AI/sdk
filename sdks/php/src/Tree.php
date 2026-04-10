@@ -10,14 +10,14 @@ use Autonoma\Sdk\Types\ResolvedTree;
 
 class Tree
 {
-    private const RESERVED_KEYS = ['_alias', '_ref', '_count', '_batch'];
+    private const RESERVED_KEYS = ['_alias', '_ref'];
 
     /**
      * Convert nested scenario tree into flat, ordered CreateOp list.
      *
      * @param array<string, array<int, array<string, mixed>>> $create
      */
-    public static function resolveTree(array $create, SchemaInfo $schema, string $testRunId): ResolvedTree
+    public static function resolveTree(array $create, SchemaInfo $schema): ResolvedTree
     {
         /** @var array<string, SchemaRelation> */
         $relationByParentField = [];
@@ -53,8 +53,7 @@ class Tree
             ?string $parentTempId,
             ?SchemaRelation $parentRelation,
             bool $parentFkOnParent,
-            int $index,
-        ) use (&$walkNode, &$result, &$relationByParentField, &$fkOnParent, &$makeTempId, $testRunId, $schema): string {
+        ) use (&$walkNode, &$result, &$relationByParentField, &$fkOnParent, &$makeTempId, $schema): string {
             $fields = [];
             $preChildren = [];
             $postChildren = [];
@@ -113,8 +112,7 @@ class Tree
                     continue;
                 }
 
-                $ctx = ['testRunId' => $testRunId, 'index' => $index];
-                $fields[$key] = Template::resolveTemplate($value, $ctx);
+                $fields[$key] = $value;
             }
 
             // Wire FK to parent
@@ -125,8 +123,8 @@ class Tree
             // Process pre-children (FK on parent side)
             foreach ($preChildren as [$relation, $value, $isOnParent]) {
                 if (is_array($value) && !self::isAssoc($value)) {
-                    foreach ($value as $i => $childNode) {
-                        $childTempId = $walkNode($relation->childModel, $childNode, $tempId, $relation, true, $i);
+                    foreach ($value as $childNode) {
+                        $childTempId = $walkNode($relation->childModel, $childNode, $tempId, $relation, true);
                         $fields[$relation->childField] = $childTempId;
                     }
                 }
@@ -141,27 +139,8 @@ class Tree
             // Process post-children (FK on child side)
             foreach ($postChildren as [$relation, $value, $_]) {
                 if (is_array($value) && !self::isAssoc($value)) {
-                    foreach ($value as $i => $childNode) {
-                        $walkNode($relation->childModel, $childNode, $tempId, $relation, false, $i);
-                    }
-                } elseif (is_array($value) && isset($value['_count'])) {
-                    $count = $value['_count'];
-                    $isBatch = $value['_batch'] ?? false;
-
-                    for ($i = 0; $i < $count; $i++) {
-                        $bulkFields = [];
-                        foreach ($value as $k => $v) {
-                            if ($k === '_count' || $k === '_batch') continue;
-                            $ctx = ['testRunId' => $testRunId, 'index' => $i];
-                            $bulkFields[$k] = Template::resolveTemplate($v, $ctx);
-                        }
-                        $bulkFields[$relation->childField] = $tempId;
-                        $result->ops[] = new CreateOp(
-                            model: $relation->childModel,
-                            fields: $bulkFields,
-                            tempId: $makeTempId($relation->childModel),
-                            batch: $isBatch,
-                        );
+                    foreach ($value as $childNode) {
+                        $walkNode($relation->childModel, $childNode, $tempId, $relation, false);
                     }
                 }
             }
@@ -170,8 +149,8 @@ class Tree
         };
 
         foreach ($create as $modelName => $nodes) {
-            foreach ($nodes as $i => $node) {
-                $walkNode($modelName, $node, null, null, false, $i);
+            foreach ($nodes as $node) {
+                $walkNode($modelName, $node, null, null, false);
             }
         }
 

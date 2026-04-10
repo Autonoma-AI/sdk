@@ -122,7 +122,7 @@ export async function checkAllScenarios(
 function suggestFix(errorMsg: string): string {
   if (errorMsg.includes('Unique constraint failed') || errorMsg.includes('unique constraint')) {
     const match = errorMsg.match(/fields: \(`(.+?)`\)/) ?? errorMsg.match(/constraint "(.+?)"/)
-    if (match) return `Unique constraint on (${match[1]}). Add {{testRunId}} or {{index}} to make values unique.`
+    if (match) return `Unique constraint on (${match[1]}). Ensure field values are unique across instances.`
     return 'Unique constraint violation. Make field values unique across instances.'
   }
   if (errorMsg.includes('Foreign key constraint') || errorMsg.includes('foreign key')) {

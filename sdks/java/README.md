@@ -6,7 +6,7 @@ Java implementation of the Autonoma Environment Factory SDK. Uses Maven multi-mo
 
 | Module | Artifact | Description |
 |--------|----------|-------------|
-| `autonoma-sdk` | `ai.autonoma:autonoma-sdk` | Core protocol (HMAC, refs, templates, graph, handler) |
+| `autonoma-sdk` | `ai.autonoma:autonoma-sdk` | Core protocol (HMAC, refs, graph, handler) |
 | `autonoma-spring` | `ai.autonoma:autonoma-spring` | Spring Boot server adapter with JDBC executor |
 | `conformance-bridge` | `ai.autonoma:autonoma-conformance-bridge` | Conformance test bridge (internal) |
 

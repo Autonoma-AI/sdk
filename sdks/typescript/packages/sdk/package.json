@@ -15,9 +15,6 @@
       "default": "./dist/graph.js"
     }
   },
-  "bin": {
-    "autonoma": "./dist/cli.js"
-  },
   "files": [
     "dist"
   ],

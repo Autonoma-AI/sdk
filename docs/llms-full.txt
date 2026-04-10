@@ -20,8 +20,6 @@ The Autonoma SDK is a set of packages that you install in your backend. Together
 The SDK handles everything:
 - Reading your database schema (models, fields, relationships)
 - Creating records in the correct FK order automatically
-- Resolving template expressions in field values (unique emails, distributed enums)
-- Bulk-inserting large datasets efficiently
 - Tearing down all created data without leaving orphans
 - Verifying incoming request signatures (HMAC-SHA256)
 - Signing teardown tokens so nobody can tamper with them
@@ -37,7 +35,7 @@ The endpoint handles three actions via POST:
 
 discover -- The platform asks "what does your database look like?" The SDK reads your ORM schema and returns the models, fields, and relationships. The platform uses this to generate valid scenario data.
 
-up -- The platform sends scenario data (a nested tree describing what records to create). The SDK creates them in the correct FK order, resolves templates, and returns auth credentials so the test runner can log in. It also returns a signed token for teardown.
+up -- The platform sends scenario data (a nested tree describing what records to create). The SDK creates them in the correct FK order and returns auth credentials so the test runner can log in. It also returns a signed token for teardown.
 
 down -- The platform sends the signed token back. The SDK verifies it and deletes everything that was created -- in the correct order, without FK constraint violations.
 
@@ -318,16 +316,18 @@ Data is a nested JSON tree. The top-level keys are model names from your databas
 
 Think of it like Protocol Buffers: the schema is shared once (via discover), and after that the data contains only values -- no field types, no FK directions, no column names. Both sides already know the structure. The platform calls discover to learn your schema, then sends scenario data that references models and relation names. Your SDK already has the same schema from your ORM, so it knows exactly how to interpret the nesting and wire the foreign keys.
 
+All field values must be complete and literal -- the SDK does not perform any template resolution or variable substitution. The platform is responsible for generating fully resolved data before sending it.
+
 ### Minimal example (org + user)
 
   {
     "create": {
       "Organization": [{
-        "name": "Test Org [{{testRunId}}]",
-        "slug": "test-{{testRunId}}",
+        "name": "Test Org",
+        "slug": "test-org",
         "members": [{
           "role": "owner",
-          "user": [{ "name": "Admin", "email": "admin-{{testRunId}}@test.com" }]
+          "user": [{ "name": "Admin", "email": "admin@test.com" }]
         }]
       }]
     }
@@ -362,12 +362,12 @@ The FK column name comes directly from your schema definition -- whether you cal
   {
     "create": {
       "Organization": [{
-        "name": "Acme [{{testRunId}}]",
-        "slug": "acme-{{testRunId}}",
+        "name": "Acme Corp",
+        "slug": "acme-corp",
 
         "members": [
-          { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
-          { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] }
+          { "role": "owner", "user": [{ "name": "Alice", "email": "alice@test.com" }] },
+          { "role": "admin", "user": [{ "name": "Bob", "email": "bob@test.com" }] }
         ],
 
         "applications": [
@@ -421,9 +421,9 @@ This is how you solve the "member-user distribution" problem -- each member gets
 
 Required: every field marked as required in your schema that does NOT have a default value, is not auto-generated, and is not an auto-updated timestamp.
 
-Unique fields: must include {{testRunId}} or {{index}} to avoid collisions when tests run in parallel.
+Unique fields: must have unique values to avoid collisions when tests run in parallel.
 
-  { "name": "Acme [{{testRunId}}]", "slug": "acme-{{testRunId}}", "email": "admin-{{testRunId}}@test.com" }
+  { "name": "Acme Corp", "slug": "acme-corp", "email": "admin@test.com" }
 
 ## What to omit
 
@@ -438,51 +438,6 @@ Example: given a model with fields id (auto-generated), name (required), archite
   { "name": "My App", "architecture": "WEB" }
 
 The SDK handles id, organizationId, createdAt, and updatedAt.
-
-## Template expressions
-
-Templates make values unique across parallel test runs and generate dynamic data.
-
-  Expression                Type     Use for
-  {{testRunId}}             string   Unique values per run (emails, slugs)
-  {{index}}                 number   0-based instance index
-  {{index1}}                number   1-based ("Product 1", "Product 2")
-  {{cycle(['a','b','c'])}}  string   Distributing enum values evenly
-  {{pick(['a','b','c'])}}   string   Random item from array
-  {{random.int(min,max)}}   number   Random integers
-  {{random.float(a,b)}}     number   Random floats
-  {{now()}}                 string   Current ISO timestamp
-  {{daysAgo(n)}}            string   Historical ISO timestamp
-
-### Type preservation
-
-When a template is the entire value, the SDK preserves the return type:
-- "{{random.int(1,100)}}" resolves to a number, not a string
-- "{{index}}" resolves to a number
-- "{{now()}}" resolves to a string (ISO date)
-
-When a template is part of a string, it's interpolated as a string:
-- "Product {{index1}}" resolves to "Product 1" (string)
-- "user-{{testRunId}}@test.com" resolves to "user-abc123@test.com" (string)
-
-### Examples
-
-Unique emails:
-  { "email": "user-{{testRunId}}@test.com" }
-
-Numbered items:
-  { "name": "Product {{index1}}" }
-  -> "Product 1", "Product 2", "Product 3"...
-
-Distributed enum values:
-  { "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }
-  -> "WEB", "ANDROID", "IOS", "WEB", "ANDROID", "IOS"...
-
-Random data:
-  { "score": "{{random.int(0,100)}}", "weight": "{{random.float(0.1,1.0)}}" }
-
-Dates:
-  { "createdAt": "{{daysAgo(30)}}", "expiresAt": "{{now()}}" }
 
 ## Cross-branch references (_alias / _ref)
 
@@ -542,12 +497,12 @@ Rules:
         "user": [{
           "_alias": "inviter",
           "name": "Alice",
-          "email": "alice-{{testRunId}}@test.com"
+          "email": "alice@test.com"
         }]
       }],
       "invitations": [
-        { "email": "bob@test.com", "inviterId": { "_ref": "inviter" }, "role": "admin", "expiresAt": "{{now()}}" },
-        { "email": "carol@test.com", "inviterId": { "_ref": "inviter" }, "role": "member", "expiresAt": "{{now()}}" }
+        { "email": "bob@test.com", "inviterId": { "_ref": "inviter" }, "role": "admin", "expiresAt": "2025-01-01T00:00:00Z" },
+        { "email": "carol@test.com", "inviterId": { "_ref": "inviter" }, "role": "member", "expiresAt": "2025-01-01T00:00:00Z" }
       ]
     }]
   }
@@ -570,54 +525,6 @@ Rules:
     }]
   }
 
-## Bulk data (_count and _batch)
-
-For creating many records of the same type, use _count instead of writing each one manually. Add _batch: true for bulk insert performance.
-
-### Basic _count (array shorthand)
-
-Instead of writing 100 objects:
-
-  "applications": [{ "_count": 100, "name": "App {{index1}}", "architecture": "{{cycle(['WEB','ANDROID','IOS'])}}" }]
-
-This creates 100 Application records:
-- App 1 (WEB), App 2 (ANDROID), App 3 (IOS), App 4 (WEB), ...
-
-Each record gets its own {{index}} value (0-99) and {{index1}} value (1-100).
-
-### _batch for performance
-
-Add _batch: true to use bulk insert (single SQL INSERT statement). This is much faster for large counts:
-
-  "runs": [{ "_count": 10000, "_batch": true }]
-
-Without _batch: 10,000 individual INSERT statements (~30 seconds)
-With _batch: 1 INSERT with 10,000 rows (~2 seconds)
-
-### _count + _batch with field templates
-
-  "tags": [{ "_count": 200, "_batch": true, "name": "Tag {{index1}}", "color": "{{cycle(['#F00','#0F0','#00F'])}}" }]
-
-Creates 200 tags with names "Tag 1" through "Tag 200", cycling through 3 colors.
-
-### _count + _batch as an object (not array)
-
-You can also use the object form -- both work:
-
-  "folders": { "_count": 20, "_batch": true, "name": "Folder {{index1}}" }
-
-### _batch limitations
-
-- Batched records cannot be referenced by _ref. Batch insert uses bulk create which doesn't return individual IDs. If another record needs to reference one of these, don't use _batch.
-- Use _batch only at leaf nodes -- records that nothing else references.
-
-### Examples of when to use _batch
-
-  Good (_batch OK)                                       Bad (_batch breaks things)
-  runs: { _count: 10000, _batch: true }                  applications: { _count: 5, _batch: true } if tests reference an app
-  tags: { _count: 200, _batch: true, ... }               users: { _count: 10, _batch: true } if members reference users
-  folders: { _count: 50, _batch: true, ... }              testGenerations: { _count: 3, _batch: true } if tests reference them
-
 ## The three standard scenarios
 
 When writing scenarios for a project, create three:
@@ -628,9 +535,9 @@ Tests empty states, onboarding flows, "no data yet" screens.
   {
     "create": {
       "Organization": [{
-        "name": "Empty Org [{{testRunId}}]",
-        "slug": "empty-{{testRunId}}",
-        "members": [{ "role": "owner", "user": [{ "name": "Solo User", "email": "solo-{{testRunId}}@test.com" }] }]
+        "name": "Empty Org",
+        "slug": "empty-org",
+        "members": [{ "role": "owner", "user": [{ "name": "Solo User", "email": "solo@test.com" }] }]
       }]
     }
   }
@@ -641,12 +548,12 @@ Enough data to test every filter, status, and category. Use descriptive names ("
   {
     "create": {
       "Organization": [{
-        "name": "Acme [{{testRunId}}]",
-        "slug": "acme-{{testRunId}}",
+        "name": "Acme Corp",
+        "slug": "acme-corp",
         "members": [
-          { "role": "owner", "user": [{ "name": "Alice", "email": "alice-{{testRunId}}@test.com" }] },
-          { "role": "admin", "user": [{ "name": "Bob", "email": "bob-{{testRunId}}@test.com" }] },
-          { "role": "viewer", "user": [{ "name": "Carol", "email": "carol-{{testRunId}}@test.com" }] }
+          { "role": "owner", "user": [{ "name": "Alice", "email": "alice@test.com" }] },
+          { "role": "admin", "user": [{ "name": "Bob", "email": "bob@test.com" }] },
+          { "role": "viewer", "user": [{ "name": "Carol", "email": "carol@test.com" }] }
         ],
         "applications": [
           {
@@ -667,20 +574,23 @@ Enough data to test every filter, status, and category. Use descriptive names ("
   }
 
 ### large -- High volume
-Exceeds pagination thresholds. Uses _batch at leaf nodes. Tests pagination, sort stability, filter performance.
+Exceeds pagination thresholds. Tests pagination, sort stability, filter performance. Each record is explicitly listed in the array.
 
   {
     "create": {
       "Organization": [{
-        "name": "Load Test [{{testRunId}}]",
-        "slug": "load-{{testRunId}}",
-        "members": [{ "role": "owner", "user": [{ "name": "User", "email": "load-{{testRunId}}@test.com" }] }],
+        "name": "Load Test Org",
+        "slug": "load-test",
+        "members": [{ "role": "owner", "user": [{ "name": "User", "email": "load@test.com" }] }],
         "applications": [{
           "_alias": "app",
           "name": "App",
           "architecture": "WEB",
-          "tags": { "_count": 50, "_batch": true, "name": "Tag {{index1}}", "color": "#333" },
-          "folders": { "_count": 40, "_batch": true, "name": "Folder {{index1}}" },
+          "tags": [
+            { "name": "Tag 1", "color": "#333" },
+            { "name": "Tag 2", "color": "#333" },
+            { "name": "Tag 3", "color": "#333" }
+          ],
           "testPlans": [{
             "name": "Plan",
             "plan": "x",
@@ -692,8 +602,7 @@ Exceeds pagination thresholds. Uses _batch at leaf nodes. Tests pagination, sort
           }],
           "tests": [{
             "name": "Test",
-            "testGenerationId": { "_ref": "gen1" },
-            "runs": [{ "_count": 10000, "_batch": true }]
+            "testGenerationId": { "_ref": "gen1" }
           }]
         }]
       }]

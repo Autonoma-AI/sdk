@@ -6,7 +6,7 @@ Python implementation of the Autonoma Environment Factory SDK.
 
 | Package | Description |
 |---------|-------------|
-| `autonoma-sdk` | Core protocol (HMAC, refs, templates, graph, handler) |
+| `autonoma-sdk` | Core protocol (HMAC, refs, graph, handler) |
 | `autonoma-sdk[sqlalchemy]` | SQLAlchemy ORM adapter |
 | `autonoma-sdk[django]` | Django ORM adapter and server handler |
 | `autonoma-sdk[flask]` | Flask server adapter |

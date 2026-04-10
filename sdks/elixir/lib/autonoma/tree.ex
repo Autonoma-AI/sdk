@@ -1,16 +1,14 @@
 defmodule Autonoma.Tree do
   @moduledoc "Resolve a nested scenario tree into an ordered list of create operations."
 
-  alias Autonoma.Template
-
-  @reserved_keys MapSet.new(["_alias", "_ref", "_count", "_batch"])
+  @reserved_keys MapSet.new(["_alias", "_ref"])
 
   defmodule Result do
     @moduledoc false
     defstruct ops: [], deferred_updates: [], aliases: %{}
   end
 
-  def resolve_tree(create, schema, test_run_id) do
+  def resolve_tree(create, schema) do
     relations = schema["relations"] || []
     edges = schema["edges"] || []
 
@@ -36,16 +34,13 @@ defmodule Autonoma.Tree do
       result: %Result{},
       rel_by_pf: rel_by_pf,
       fk_on_parent: fk_on_parent,
-      test_run_id: test_run_id,
       counter: 0
     }
 
     state =
       Enum.reduce(create, state, fn {model_name, nodes}, st ->
-        nodes
-        |> Enum.with_index()
-        |> Enum.reduce(st, fn {node, i}, s ->
-          {_temp_id, s} = walk_node(s, model_name, node, nil, nil, false, i)
+        Enum.reduce(nodes, st, fn node, s ->
+          {_temp_id, s} = walk_node(s, model_name, node, nil, nil, false)
           s
         end)
       end)
@@ -53,7 +48,7 @@ defmodule Autonoma.Tree do
     state.result
   end
 
-  defp walk_node(state, model_name, node, parent_temp_id, parent_relation, parent_fk_on_parent, index) do
+  defp walk_node(state, model_name, node, parent_temp_id, parent_relation, parent_fk_on_parent) do
     {temp_id, state} = make_temp_id(state, model_name)
     alias_name = Map.get(node, "_alias")
 
@@ -102,8 +97,7 @@ defmodule Autonoma.Tree do
                 {f, pre, post, %{st | result: result}}
               end
             else
-              ctx = %{"testRunId" => st.test_run_id, "index" => index}
-              {Map.put(f, key, Template.resolve(value, ctx)), pre, post, st}
+              {Map.put(f, key, value), pre, post, st}
             end
           end
         end
@@ -121,9 +115,8 @@ defmodule Autonoma.Tree do
     {fields, state} =
       Enum.reduce(pre_children, {fields, state}, fn {relation, value, _}, {f, st} ->
         if is_list(value) do
-          Enum.with_index(value)
-          |> Enum.reduce({f, st}, fn {child, i}, {ff, ss} ->
-            {child_temp_id, ss} = walk_node(ss, relation["childModel"], child, temp_id, relation, true, i)
+          Enum.reduce(value, {f, st}, fn child, {ff, ss} ->
+            {child_temp_id, ss} = walk_node(ss, relation["childModel"], child, temp_id, relation, true)
             {Map.put(ff, relation["childField"], child_temp_id), ss}
           end)
         else
@@ -140,35 +133,13 @@ defmodule Autonoma.Tree do
     # Process post-children
     state =
       Enum.reduce(post_children, state, fn {relation, value, _}, st ->
-        cond do
-          is_list(value) ->
-            value
-            |> Enum.with_index()
-            |> Enum.reduce(st, fn {child, i}, s ->
-              {_id, s} = walk_node(s, relation["childModel"], child, temp_id, relation, false, i)
-              s
-            end)
-
-          is_map(value) && Map.has_key?(value, "_count") ->
-            count = value["_count"]
-            is_batch = Map.get(value, "_batch", false)
-
-            Enum.reduce(0..(count - 1), st, fn i, s ->
-              bulk_fields =
-                value
-                |> Enum.reject(fn {k, _} -> k in ["_count", "_batch"] end)
-                |> Map.new(fn {k, v} ->
-                  ctx = %{"testRunId" => s.test_run_id, "index" => i}
-                  {k, Template.resolve(v, ctx)}
-                end)
-                |> Map.put(relation["childField"], temp_id)
-
-              {child_temp_id, s} = make_temp_id(s, relation["childModel"])
-              op = %{model: relation["childModel"], fields: bulk_fields, temp_id: child_temp_id, batch: is_batch}
-              %{s | result: %{s.result | ops: s.result.ops ++ [op]}}
-            end)
-
-          true -> st
+        if is_list(value) do
+          Enum.reduce(value, st, fn child, s ->
+            {_id, s} = walk_node(s, relation["childModel"], child, temp_id, relation, false)
+            s
+          end)
+        else
+          st
         end
       end)
 

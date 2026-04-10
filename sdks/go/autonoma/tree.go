@@ -8,8 +8,6 @@ import (
 var reservedKeys = map[string]bool{
 	"_alias": true,
 	"_ref":   true,
-	"_count": true,
-	"_batch": true,
 }
 
 // CreateOp represents a create operation produced by the tree resolver.
@@ -17,7 +15,6 @@ type CreateOp struct {
 	Model  string
 	Fields map[string]any
 	TempID string
-	Batch  bool
 }
 
 // DeferredUpdate represents a deferred FK update for circular dependencies.
@@ -36,7 +33,7 @@ type ResolvedTree struct {
 }
 
 // ResolveTree resolves a nested scenario tree into an ordered list of create operations.
-func ResolveTree(create map[string][]map[string]any, schema SchemaInfo, testRunID string) *ResolvedTree {
+func ResolveTree(create map[string][]map[string]any, schema SchemaInfo) *ResolvedTree {
 	relationByParentField := make(map[string]SchemaRelation)
 	for _, rel := range schema.Relations {
 		key := rel.ParentModel + "." + rel.ParentField
@@ -73,9 +70,9 @@ func ResolveTree(create map[string][]map[string]any, schema SchemaInfo, testRunI
 		fkOnParent bool
 	}
 
-	var walkNode func(modelName string, node map[string]any, parentTempID string, parentRelation *SchemaRelation, parentFKOnParent bool, index int) string
+	var walkNode func(modelName string, node map[string]any, parentTempID string, parentRelation *SchemaRelation, parentFKOnParent bool) string
 
-	walkNode = func(modelName string, node map[string]any, parentTempID string, parentRelation *SchemaRelation, parentFKOnParent bool, index int) string {
+	walkNode = func(modelName string, node map[string]any, parentTempID string, parentRelation *SchemaRelation, parentFKOnParent bool) string {
 		fields := make(map[string]any)
 		var preChildren []childEntry
 		var postChildren []childEntry
@@ -138,8 +135,7 @@ func ResolveTree(create map[string][]map[string]any, schema SchemaInfo, testRunI
 				}
 			}
 
-			ctx := TemplateContext{TestRunID: testRunID, Index: index}
-			fields[key] = ResolveTemplate(value, ctx)
+			fields[key] = value
 		}
 
 		// Wire FK to parent
@@ -150,9 +146,9 @@ func ResolveTree(create map[string][]map[string]any, schema SchemaInfo, testRunI
 		// Process pre-children
 		for _, child := range preChildren {
 			if arr, ok := child.value.([]any); ok {
-				for i, item := range arr {
+				for _, item := range arr {
 					if m, ok := item.(map[string]any); ok {
-						childTempID := walkNode(child.relation.ChildModel, m, tempID, &child.relation, true, i)
+						childTempID := walkNode(child.relation.ChildModel, m, tempID, &child.relation, true)
 						fields[child.relation.ChildField] = childTempID
 					}
 				}
@@ -160,7 +156,7 @@ func ResolveTree(create map[string][]map[string]any, schema SchemaInfo, testRunI
 		}
 
 		// Create this node
-		ops = append(ops, CreateOp{Model: modelName, Fields: fields, TempID: tempID, Batch: false})
+		ops = append(ops, CreateOp{Model: modelName, Fields: fields, TempID: tempID})
 		if alias != "" {
 			aliases[alias] = tempID
 		}
@@ -168,32 +164,9 @@ func ResolveTree(create map[string][]map[string]any, schema SchemaInfo, testRunI
 		// Process post-children
 		for _, child := range postChildren {
 			if arr, ok := child.value.([]any); ok {
-				for i, item := range arr {
+				for _, item := range arr {
 					if m, ok := item.(map[string]any); ok {
-						walkNode(child.relation.ChildModel, m, tempID, &child.relation, false, i)
-					}
-				}
-			} else if m, ok := child.value.(map[string]any); ok {
-				if _, hasCount := m["_count"]; hasCount {
-					count := toInt(m["_count"])
-					isBatch := toBool(m["_batch"])
-
-					for i := 0; i < count; i++ {
-						bulkFields := make(map[string]any)
-						for k, v := range m {
-							if k == "_count" || k == "_batch" {
-								continue
-							}
-							ctx := TemplateContext{TestRunID: testRunID, Index: i}
-							bulkFields[k] = ResolveTemplate(v, ctx)
-						}
-						bulkFields[child.relation.ChildField] = tempID
-						ops = append(ops, CreateOp{
-							Model:  child.relation.ChildModel,
-							Fields: bulkFields,
-							TempID: makeTempID(child.relation.ChildModel),
-							Batch:  isBatch,
-						})
+						walkNode(child.relation.ChildModel, m, tempID, &child.relation, false)
 					}
 				}
 			}
@@ -203,8 +176,8 @@ func ResolveTree(create map[string][]map[string]any, schema SchemaInfo, testRunI
 	}
 
 	for modelName, nodes := range create {
-		for i, node := range nodes {
-			walkNode(modelName, node, "", nil, false, i)
+		for _, node := range nodes {
+			walkNode(modelName, node, "", nil, false)
 		}
 	}
 
@@ -215,22 +188,3 @@ func ResolveTree(create map[string][]map[string]any, schema SchemaInfo, testRunI
 	}
 }
 
-func toInt(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case float64:
-		return int(n)
-	case int64:
-		return int(n)
-	default:
-		return 0
-	}
-}
-
-func toBool(v any) bool {
-	if b, ok := v.(bool); ok {
-		return b
-	}
-	return false
-}

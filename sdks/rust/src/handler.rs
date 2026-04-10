@@ -182,7 +182,7 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
     let schema = &introspection.schema;
     let dialect = get_dialect(&config.dialect);
 
-    let tree = resolve_tree(create, schema, &test_run_id);
+    let tree = resolve_tree(create, schema);
     let mut refs: HashMap<String, Vec<HashMap<String, Value>>> = HashMap::new();
     let mut id_map: HashMap<String, String> = HashMap::new();
 

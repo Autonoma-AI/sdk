@@ -28,7 +28,7 @@ Important details:
 
 ### createEntities
 
-Create records in the database from a resolved specification. The SDK calls this once per model group, after all templates have been resolved and all FK values have been set.
+Create records in the database from a resolved specification. The SDK calls this once per model group, after all FK values have been set.
 
 The specification for each model includes:
 - A count of how many records to create

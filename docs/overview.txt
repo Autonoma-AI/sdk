@@ -20,8 +20,6 @@ The Autonoma SDK is a set of packages that you install in your backend. Together
 The SDK handles everything:
 - Reading your database schema (models, fields, relationships)
 - Creating records in the correct FK order automatically
-- Resolving template expressions in field values (unique emails, distributed enums)
-- Bulk-inserting large datasets efficiently
 - Tearing down all created data without leaving orphans
 - Verifying incoming request signatures (HMAC-SHA256)
 - Signing teardown tokens so nobody can tamper with them
@@ -37,7 +35,7 @@ The endpoint handles three actions via POST:
 
 discover -- The platform asks "what does your database look like?" The SDK reads your ORM schema and returns the models, fields, and relationships. The platform uses this to generate valid scenario data.
 
-up -- The platform sends scenario data (a nested tree describing what records to create). The SDK creates them in the correct FK order, resolves templates, and returns auth credentials so the test runner can log in. It also returns a signed token for teardown.
+up -- The platform sends scenario data (a nested tree describing what records to create). The SDK creates them in the correct FK order and returns auth credentials so the test runner can log in. It also returns a signed token for teardown.
 
 down -- The platform sends the signed token back. The SDK verifies it and deletes everything that was created -- in the correct order, without FK constraint violations.
 

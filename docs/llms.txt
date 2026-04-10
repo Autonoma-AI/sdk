@@ -11,7 +11,7 @@ Start here. Explains what the Environment Factory is, the three actions (discove
 The protocol specification. Request/response formats, HMAC authentication, the three actions in detail, the refs token, the safety model, and error codes. Language-agnostic.
 
 ### 3. scenarios.txt
-How to describe test data as a nested JSON tree. Nesting rules, template expressions, cross-branch references (_alias/_ref), bulk insert (_count/_batch), and the three standard scenarios (empty, standard, large).
+How to describe test data as a nested JSON tree. Nesting rules, cross-branch references (_alias/_ref), and the three standard scenarios (empty, standard, large).
 
 ### 4. adapters.txt
 What ORM adapters and server adapters must do. Read this if you are building a new adapter or want to understand the adapter interface. Covers getSchema, createEntities, teardown, and the server adapter pattern.

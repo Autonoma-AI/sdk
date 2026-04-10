@@ -132,7 +132,7 @@ public final class AutonomaHandler {
         SchemaInfo schema = introspection.schema();
         Dialect dialect = Dialect.get(config.getDialect());
 
-        ResolvedTree tree = TreeResolver.resolveTree(create, schema, testRunId);
+        ResolvedTree tree = TreeResolver.resolveTree(create, schema);
         Map<String, List<Map<String, Object>>> refs = new LinkedHashMap<>();
         Map<String, String> idMap = new LinkedHashMap<>();
 

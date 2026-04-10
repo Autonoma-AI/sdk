@@ -37,25 +37,17 @@ func CreateEntities(
 			enumTypeMap = make(map[string]string)
 		}
 
-		if entitySpec.Batch && len(entitySpec.Fields) > 0 {
-			records, err := insertBatch(ctx, executor, dialect, dbTable, colMap, enumTypeMap, entitySpec.Fields)
+		var created []map[string]any
+		for _, fields := range entitySpec.Fields {
+			records, err := insertOne(ctx, executor, dialect, dbTable, colMap, enumTypeMap, fields)
 			if err != nil {
 				return nil, err
 			}
-			results[model] = records
-		} else {
-			var created []map[string]any
-			for _, fields := range entitySpec.Fields {
-				records, err := insertOne(ctx, executor, dialect, dbTable, colMap, enumTypeMap, fields)
-				if err != nil {
-					return nil, err
-				}
-				if len(records) > 0 {
-					created = append(created, records[0])
-				}
+			if len(records) > 0 {
+				created = append(created, records[0])
 			}
-			results[model] = created
 		}
+		results[model] = created
 	}
 
 	return results, nil
@@ -206,110 +198,6 @@ func insertOne(
 		return nil, err
 	}
 	return mapRowsBack(rows, colMap), nil
-}
-
-func insertBatch(
-	ctx context.Context,
-	executor SQLExecutor,
-	dialect *Dialect,
-	dbTable string,
-	colMap map[string]string,
-	enumTypeMap map[string]string,
-	fieldsArr []map[string]any,
-) ([]map[string]any, error) {
-	if len(fieldsArr) == 0 {
-		return nil, nil
-	}
-
-	// Generate client-side IDs
-	idFieldName := reverseGetMap(colMap, findIDCol(colMap))
-	if idFieldName != "" {
-		newFieldsArr := make([]map[string]any, len(fieldsArr))
-		for i, fields := range fieldsArr {
-			if _, exists := fields[idFieldName]; !exists {
-				fieldsCopy := make(map[string]any, len(fields)+1)
-				for k, v := range fields {
-					fieldsCopy[k] = v
-				}
-				fieldsCopy[idFieldName] = uuid.New().String()
-				newFieldsArr[i] = fieldsCopy
-			} else {
-				newFieldsArr[i] = fields
-			}
-		}
-		fieldsArr = newFieldsArr
-	}
-
-	// Collect field names from first row
-	var fieldNames []string
-	for k := range fieldsArr[0] {
-		fieldNames = append(fieldNames, k)
-	}
-
-	var dbCols []string
-	for _, f := range fieldNames {
-		dbCol := colMap[f]
-		if dbCol == "" {
-			dbCol = f
-		}
-		dbCols = append(dbCols, dialect.QuoteID(dbCol))
-	}
-	colList := strings.Join(dbCols, ", ")
-
-	// Chunk large batches
-	const maxParams = 32000
-	chunkSize := len(fieldsArr)
-	if len(fieldNames) > 0 {
-		chunkSize = maxParams / len(fieldNames)
-		if chunkSize < 1 {
-			chunkSize = 1
-		}
-	}
-
-	var allResults []map[string]any
-
-	for offset := 0; offset < len(fieldsArr); offset += chunkSize {
-		end := offset + chunkSize
-		if end > len(fieldsArr) {
-			end = len(fieldsArr)
-		}
-		chunk := fieldsArr[offset:end]
-
-		var params []any
-		var valueTuples []string
-		paramIdx := 1
-
-		for _, fields := range chunk {
-			var phs []string
-			for _, fieldName := range fieldNames {
-				phs = append(phs, castParam(dialect, paramIdx, enumTypeMap, fieldName))
-				params = append(params, serializeValue(fields[fieldName], dialect))
-				paramIdx++
-			}
-			valueTuples = append(valueTuples, "("+strings.Join(phs, ", ")+")")
-		}
-
-		valList := strings.Join(valueTuples, ", ")
-
-		if dialect.SupportsReturning {
-			sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s RETURNING *",
-				dialect.QuoteID(dbTable), colList, valList)
-			rows, err := executor.Query(ctx, sql, params...)
-			if err != nil {
-				return nil, err
-			}
-			allResults = append(allResults, mapRowsBack(rows, colMap)...)
-		} else {
-			sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
-				dialect.QuoteID(dbTable), colList, valList)
-			_, err := executor.Query(ctx, sql, params...)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	return allResults, nil
 }
 
 func mapRowsBack(rows []map[string]any, colMap map[string]string) []map[string]any {

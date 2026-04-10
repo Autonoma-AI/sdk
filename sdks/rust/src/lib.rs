@@ -1,7 +1,7 @@
 //! Autonoma SDK for Rust.
 //!
 //! Automates the Autonoma Environment Factory endpoint. Handles HMAC verification,
-//! JWT refs, template resolution, FK-ordered entity creation, and scoped teardown.
+//! JWT refs, FK-ordered entity creation, and scoped teardown.
 //!
 //! # Features
 //!
@@ -24,6 +24,5 @@ pub mod introspect;
 pub mod refs;
 pub mod sqlx_adapter;
 pub mod teardown;
-pub mod template;
 pub mod tree;
 pub mod types;

@@ -5,9 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from .types import SchemaInfo, SchemaRelation, CreateOp, DeferredUpdate
-from .template import resolve_template
 
-RESERVED_KEYS = {"_alias", "_ref", "_count", "_batch"}
+RESERVED_KEYS = {"_alias", "_ref"}
 
 
 class ResolvedTree:
@@ -22,7 +21,6 @@ class ResolvedTree:
 def resolve_tree(
     create: dict[str, list[dict[str, Any]]],
     schema: SchemaInfo,
-    test_run_id: str,
 ) -> ResolvedTree:
     """Convert nested scenario tree into flat, ordered CreateOp list."""
     relation_by_parent_field: dict[str, SchemaRelation] = {}
@@ -52,7 +50,6 @@ def resolve_tree(
         parent_temp_id: str | None,
         parent_relation: SchemaRelation | None,
         parent_fk_on_parent: bool,
-        index: int,
     ) -> str:
         fields: dict[str, Any] = {}
         pre_children: list[tuple[SchemaRelation, Any, bool]] = []
@@ -103,8 +100,7 @@ def resolve_tree(
                 fields[key] = ref_temp_id
                 continue
 
-            ctx = {"testRunId": test_run_id, "index": index}
-            fields[key] = resolve_template(value, ctx)
+            fields[key] = value
 
         # Wire FK to parent
         if parent_relation and parent_temp_id and not parent_fk_on_parent:
@@ -114,7 +110,7 @@ def resolve_tree(
         for relation, value, is_on_parent in pre_children:
             if isinstance(value, list):
                 for i, child_node in enumerate(value):
-                    child_temp_id = walk_node(relation.child_model, child_node, temp_id, relation, True, i)
+                    child_temp_id = walk_node(relation.child_model, child_node, temp_id, relation, True)
                     fields[relation.child_field] = child_temp_id
 
         # Create this node
@@ -126,30 +122,12 @@ def resolve_tree(
         for relation, value, _ in post_children:
             if isinstance(value, list):
                 for i, child_node in enumerate(value):
-                    walk_node(relation.child_model, child_node, temp_id, relation, False, i)
-            elif isinstance(value, dict) and "_count" in value:
-                count = value["_count"]
-                is_batch = value.get("_batch", False)
-
-                for i in range(count):
-                    bulk_fields: dict[str, Any] = {}
-                    for k, v in value.items():
-                        if k in ("_count", "_batch"):
-                            continue
-                        ctx = {"testRunId": test_run_id, "index": i}
-                        bulk_fields[k] = resolve_template(v, ctx)
-                    bulk_fields[relation.child_field] = temp_id
-                    result.ops.append(CreateOp(
-                        model=relation.child_model,
-                        fields=bulk_fields,
-                        temp_id=make_temp_id(relation.child_model),
-                        batch=is_batch,
-                    ))
+                    walk_node(relation.child_model, child_node, temp_id, relation, False)
 
         return temp_id
 
     for model_name, nodes in create.items():
-        for i, node in enumerate(nodes):
-            walk_node(model_name, node, None, None, False, i)
+        for node in nodes:
+            walk_node(model_name, node, None, None, False)
 
     return result

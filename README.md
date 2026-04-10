@@ -19,7 +19,6 @@ All SDKs implement the same protocol with identical core modules:
 - **handler** -- request routing (discover/up/down), HMAC verification, environment gating, error wrapping
 - **hmac** -- HMAC-SHA256 signing/verification for request authentication
 - **refs** -- JWT-like token (header.payload.signature) for signing/verifying created entity refs
-- **template** -- resolves `{{testRunId}}`, `{{cycle(...)}}`, `{{random.int()}}`, etc.
 - **graph** -- topological sort + cycle detection for FK ordering
 - **fingerprint** -- deterministic SHA-256 hash of scenario definitions
 
@@ -34,7 +33,7 @@ Every response includes protocol version and SDK metadata:
 
 ## Shared Test Infrastructure
 
-- **`conformance/`** -- Language-agnostic JSON fixtures that verify core algorithm behavior (graph sorting, template resolution, HMAC, refs, fingerprinting) across all five implementations
+- **`conformance/`** -- Language-agnostic JSON fixtures that verify core algorithm behavior (graph sorting, HMAC, refs, fingerprinting) across all implementations
 - **`protocol/`** -- HTTP-level test suites that validate the full request/response cycle against any running SDK server
 - **`examples/`** -- Runnable example projects for TypeScript, Python, and Elixir ([see examples README](examples/README.md))
 

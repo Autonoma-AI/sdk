@@ -3,10 +3,9 @@
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-use crate::template::resolve_template;
 use crate::types::{CreateOp, DeferredUpdate, SchemaInfo, SchemaRelation};
 
-const RESERVED_KEYS: &[&str] = &["_alias", "_ref", "_count", "_batch"];
+const RESERVED_KEYS: &[&str] = &["_alias", "_ref"];
 
 pub struct ResolvedTree {
     pub ops: Vec<CreateOp>,
@@ -27,7 +26,6 @@ impl ResolvedTree {
 pub fn resolve_tree(
     create: &Value,
     schema: &SchemaInfo,
-    test_run_id: &str,
 ) -> ResolvedTree {
     let create_obj = match create.as_object() {
         Some(obj) => obj,
@@ -61,15 +59,13 @@ pub fn resolve_tree(
 
     for (model_name, nodes_val) in create_obj {
         if let Some(nodes) = nodes_val.as_array() {
-            for (i, node) in nodes.iter().enumerate() {
+            for node in nodes.iter() {
                 walk_node(
                     model_name,
                     node,
                     None,
                     None,
                     false,
-                    i,
-                    test_run_id,
                     &relation_by_parent_field,
                     &fk_on_parent,
                     &schema,
@@ -90,8 +86,6 @@ fn walk_node(
     parent_temp_id: Option<&str>,
     parent_relation: Option<&SchemaRelation>,
     parent_fk_on_parent: bool,
-    index: usize,
-    test_run_id: &str,
     relation_by_parent_field: &HashMap<String, &SchemaRelation>,
     fk_on_parent: &HashSet<String>,
     schema: &SchemaInfo,
@@ -187,8 +181,7 @@ fn walk_node(
             }
         }
 
-        let ctx = serde_json::json!({"testRunId": test_run_id, "index": index});
-        fields.insert(key.clone(), resolve_template(value, &ctx));
+        fields.insert(key.clone(), value.clone());
     }
 
     // Wire FK to parent
@@ -206,15 +199,13 @@ fn walk_node(
     // Process pre-children
     for (relation, value, _is_on_parent) in &pre_children {
         if let Some(arr) = value.as_array() {
-            for (i, child_node) in arr.iter().enumerate() {
+            for child_node in arr.iter() {
                 let child_temp_id = walk_node(
                     &relation.child_model,
                     child_node,
                     Some(&temp_id),
                     Some(relation),
                     true,
-                    i,
-                    test_run_id,
                     relation_by_parent_field,
                     fk_on_parent,
                     schema,
@@ -243,51 +234,19 @@ fn walk_node(
     // Process post-children
     for (relation, value, _) in &post_children {
         if let Some(arr) = value.as_array() {
-            for (i, child_node) in arr.iter().enumerate() {
+            for child_node in arr.iter() {
                 walk_node(
                     &relation.child_model,
                     child_node,
                     Some(&temp_id),
                     Some(relation),
                     false,
-                    i,
-                    test_run_id,
                     relation_by_parent_field,
                     fk_on_parent,
                     schema,
                     result,
                     temp_counter,
                 );
-            }
-        } else if let Some(obj) = value.as_object() {
-            if let Some(count) = obj.get("_count").and_then(|v| v.as_u64()) {
-                let is_batch = obj
-                    .get("_batch")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-
-                for i in 0..count as usize {
-                    let mut bulk_fields: HashMap<String, Value> = HashMap::new();
-                    for (k, v) in obj {
-                        if k == "_count" || k == "_batch" {
-                            continue;
-                        }
-                        let ctx =
-                            serde_json::json!({"testRunId": test_run_id, "index": i});
-                        bulk_fields.insert(k.clone(), resolve_template(v, &ctx));
-                    }
-                    bulk_fields.insert(
-                        relation.child_field.clone(),
-                        Value::String(temp_id.clone()),
-                    );
-                    let child_temp_id = make_temp_id(&relation.child_model, temp_counter);
-                    result.ops.push(CreateOp {
-                        model: relation.child_model.clone(),
-                        fields: bulk_fields,
-                        temp_id: child_temp_id,
-                        batch: is_batch,
-                    });
-                }
             }
         }
     }

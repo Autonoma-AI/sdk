@@ -6,7 +6,7 @@ Elixir implementation of the Autonoma Environment Factory SDK.
 
 | Package | Description |
 |---------|-------------|
-| `:autonoma` | Core protocol (HMAC, refs, templates, graph, handler) |
+| `:autonoma` | Core protocol (HMAC, refs, graph, handler) |
 | `:autonoma_ecto` | Ecto ORM adapter |
 | `:autonoma_plug` | Plug server handler |
 

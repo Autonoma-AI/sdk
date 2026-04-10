@@ -6,7 +6,7 @@ Ruby implementation of the Autonoma Environment Factory SDK. Zero hard runtime d
 
 | Package | Description |
 |---------|-------------|
-| `autonoma-ai` | Core protocol (HMAC, refs, templates, graph, handler) |
+| `autonoma-ai` | Core protocol (HMAC, refs, graph, handler) |
 | `autonoma_active_record` | ActiveRecord ORM adapter (require separately) |
 | `autonoma_rails` | Rails server adapter -- controller mixin and Rack middleware |
 
