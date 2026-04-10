@@ -88,18 +88,66 @@ class Teardown
                 }
             }
 
-            // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
-            foreach (array_reverse($sortedModels) as $model) {
-                if ($model === $scopeRootModel) continue;
-                self::deleteModel(
-                    $tx, $dialect, $tableMap, $columnMaps, $model,
-                    $scopeValue, $scopeFieldByModel, $refs, $schema,
-                );
+            // Partition sorted nodes: those that depend on cycle nodes must be deleted
+            // BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
+            $cycleNodeSet = [];
+            foreach ($cycles as $cycle) {
+                foreach ($cycle as $n) {
+                    $cycleNodeSet[$n] = true;
+                }
             }
 
-            // Delete cycle nodes after their non-cycle dependents are gone
-            foreach ($cycles as $cycle) {
-                foreach ($cycle as $model) {
+            if (!empty($cycleNodeSet)) {
+                // Build dependency map: node → set of nodes it depends on
+                $dependsOn = [];
+                foreach ($schema->edges as $edge) {
+                    if ($edge->from !== $edge->to) {
+                        $dependsOn[$edge->from][$edge->to] = true;
+                    }
+                }
+
+                // Mark nodes that transitively depend on cycle nodes
+                $dependsOnCycle = [];
+                foreach ($sortedModels as $node) {
+                    $deps = $dependsOn[$node] ?? [];
+                    foreach ($deps as $dep => $_) {
+                        if (isset($cycleNodeSet[$dep]) || isset($dependsOnCycle[$dep])) {
+                            $dependsOnCycle[$node] = true;
+                            break;
+                        }
+                    }
+                }
+
+                $cycleDependents = array_filter($sortedModels, fn($n) => isset($dependsOnCycle[$n]));
+                $cycleDeps = array_filter($sortedModels, fn($n) => !isset($dependsOnCycle[$n]));
+
+                foreach (array_reverse(array_values($cycleDependents)) as $model) {
+                    if ($model === $scopeRootModel) continue;
+                    self::deleteModel(
+                        $tx, $dialect, $tableMap, $columnMaps, $model,
+                        $scopeValue, $scopeFieldByModel, $refs, $schema,
+                    );
+                }
+
+                foreach ($cycles as $cycle) {
+                    foreach ($cycle as $model) {
+                        self::deleteModel(
+                            $tx, $dialect, $tableMap, $columnMaps, $model,
+                            $scopeValue, $scopeFieldByModel, $refs, $schema,
+                        );
+                    }
+                }
+
+                foreach (array_reverse(array_values($cycleDeps)) as $model) {
+                    if ($model === $scopeRootModel) continue;
+                    self::deleteModel(
+                        $tx, $dialect, $tableMap, $columnMaps, $model,
+                        $scopeValue, $scopeFieldByModel, $refs, $schema,
+                    );
+                }
+            } else {
+                foreach (array_reverse($sortedModels) as $model) {
+                    if ($model === $scopeRootModel) continue;
                     self::deleteModel(
                         $tx, $dialect, $tableMap, $columnMaps, $model,
                         $scopeValue, $scopeFieldByModel, $refs, $schema,
@@ -120,15 +168,26 @@ class Teardown
                             break;
                         }
                     }
-                    $rootPkFieldName = 'id';
+                    // Composite PK: prefer field named "id"
+                    $rootIdFields = [];
                     if ($rootModelInfo !== null) {
                         foreach ($rootModelInfo->fields as $f) {
                             if ($f->isId) {
-                                $rootPkFieldName = $f->name;
-                                break;
+                                $rootIdFields[] = $f;
                             }
                         }
                     }
+                    $rootPkField = null;
+                    foreach ($rootIdFields as $f) {
+                        if (strtolower($f->name) === 'id') {
+                            $rootPkField = $f;
+                            break;
+                        }
+                    }
+                    if ($rootPkField === null) {
+                        $rootPkField = $rootIdFields[0] ?? null;
+                    }
+                    $rootPkFieldName = $rootPkField !== null ? $rootPkField->name : 'id';
                     $idCol = $colMap[$rootPkFieldName] ?? $rootPkFieldName;
                     $tx->query(
                         sprintf(
@@ -167,15 +226,23 @@ class Teardown
                 break;
             }
         }
-        $pkFieldName = 'id';
+        // When multiple isId fields exist (composite PK), prefer the one named "id"
+        $idFields = [];
         if ($modelInfo !== null) {
             foreach ($modelInfo->fields as $f) {
                 if ($f->isId) {
-                    $pkFieldName = $f->name;
-                    break;
+                    $idFields[] = $f;
                 }
             }
         }
+        $pkField = null;
+        foreach ($idFields as $f) {
+            if (strtolower($f->name) === 'id') {
+                $pkField = $f;
+                break;
+            }
+        }
+        $pkFieldName = $pkField !== null ? $pkField->name : ($idFields[0]->name ?? 'id');
 
         $scopeFk = $scopeFieldByModel[$model] ?? null;
         if ($scopeFk !== null) {

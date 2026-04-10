@@ -64,16 +64,58 @@ export async function teardown(
       }
     }
 
-    // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
-    const reversed = [...sorted].reverse()
-    for (const model of reversed) {
-      if (model === scopeRootModel) continue // deleted last
-      await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
-    }
+    // Partition sorted nodes: those that depend on cycle nodes must be deleted
+    // BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
+    const cycleNodeSet = new Set(cycles.flat())
+    if (cycleNodeSet.size > 0) {
+      // Build dependency map: node → set of nodes it depends on
+      const dependsOn = new Map<string, Set<string>>()
+      for (const edge of schema.edges) {
+        if (edge.from !== edge.to) {
+          if (!dependsOn.has(edge.from)) dependsOn.set(edge.from, new Set())
+          dependsOn.get(edge.from)!.add(edge.to)
+        }
+      }
 
-    // Delete cycle nodes after their non-cycle dependents are gone
-    for (const cycle of cycles) {
-      for (const model of cycle) {
+      // Mark nodes that transitively depend on cycle nodes. Iterate in sorted
+      // (creation) order so transitive deps are already marked when we reach them.
+      const dependsOnCycle = new Set<string>()
+      for (const node of sorted) {
+        const deps = dependsOn.get(node)
+        if (deps) {
+          for (const dep of deps) {
+            if (cycleNodeSet.has(dep) || dependsOnCycle.has(dep)) {
+              dependsOnCycle.add(node)
+              break
+            }
+          }
+        }
+      }
+
+      // cycleDependents: sorted nodes that depend on cycle → delete BEFORE cycle
+      // cycleDeps: sorted nodes that cycle depends on → delete AFTER cycle
+      const cycleDependents = sorted.filter((n) => dependsOnCycle.has(n))
+      const cycleDeps = sorted.filter((n) => !dependsOnCycle.has(n))
+
+      for (const model of [...cycleDependents].reverse()) {
+        if (model === scopeRootModel) continue
+        await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
+      }
+
+      for (const cycle of cycles) {
+        for (const model of cycle) {
+          await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
+        }
+      }
+
+      for (const model of [...cycleDeps].reverse()) {
+        if (model === scopeRootModel) continue
+        await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
+      }
+    } else {
+      // No cycles — simple reverse topo order
+      for (const model of [...sorted].reverse()) {
+        if (model === scopeRootModel) continue
         await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
       }
     }
@@ -84,7 +126,8 @@ export async function teardown(
       const colMap = columnMaps.get(scopeRootModel) ?? new Map<string, string>()
       if (dbTable) {
         const rootModelInfo = schema.models.find((m) => m.name === scopeRootModel)
-        const rootPkFieldName = rootModelInfo?.fields.find((f) => f.isId)?.name ?? 'id'
+        const rootIdFields = rootModelInfo?.fields.filter((f) => f.isId) ?? []
+        const rootPkFieldName = (rootIdFields.find((f) => f.name.toLowerCase() === 'id') ?? rootIdFields[0])?.name ?? 'id'
         const idCol = colMap.get(rootPkFieldName) ?? rootPkFieldName
         await tx.query(
           `DELETE FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} = ${dialect.param(1)}`,
@@ -112,7 +155,8 @@ async function deleteModel(
 
   // Find actual PK field name from schema
   const modelInfo = schema.models.find((m) => m.name === model)
-  const pkFieldName = modelInfo?.fields.find((f) => f.isId)?.name ?? 'id'
+  const idFields = modelInfo?.fields.filter((f) => f.isId) ?? []
+  const pkFieldName = (idFields.find((f) => f.name.toLowerCase() === 'id') ?? idFields[0])?.name ?? 'id'
 
   const scopeFK = scopeFieldByModel.get(model)
   if (scopeFK) {

@@ -71,17 +71,63 @@ public final class TeardownExecutor {
                 }
             }
 
-            // Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
-            List<String> reversed = new ArrayList<>(sortResult.sorted());
-            Collections.reverse(reversed);
-            for (String model : reversed) {
-                if (model.equals(finalScopeRoot)) continue;
-                deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
+            // Partition sorted nodes: those that depend on cycle nodes must be deleted
+            // BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
+            Set<String> cycleNodeSet = new HashSet<>();
+            for (List<String> cycle : sortResult.cycles()) {
+                cycleNodeSet.addAll(cycle);
             }
 
-            // Delete cycle nodes after their non-cycle dependents are gone
-            for (List<String> cycle : sortResult.cycles()) {
-                for (String model : cycle) {
+            if (!cycleNodeSet.isEmpty()) {
+                // Build dependency map: node → set of nodes it depends on
+                Map<String, Set<String>> dependsOn = new HashMap<>();
+                for (FKEdge edge : schema.edges()) {
+                    if (!edge.from().equals(edge.to())) {
+                        dependsOn.computeIfAbsent(edge.from(), k -> new HashSet<>()).add(edge.to());
+                    }
+                }
+
+                // Mark nodes that transitively depend on cycle nodes
+                Set<String> dependsOnCycle = new HashSet<>();
+                for (String node : sortResult.sorted()) {
+                    Set<String> deps = dependsOn.getOrDefault(node, Set.of());
+                    for (String dep : deps) {
+                        if (cycleNodeSet.contains(dep) || dependsOnCycle.contains(dep)) {
+                            dependsOnCycle.add(node);
+                            break;
+                        }
+                    }
+                }
+
+                List<String> cycleDependents = sortResult.sorted().stream()
+                    .filter(dependsOnCycle::contains).toList();
+                List<String> cycleDeps = sortResult.sorted().stream()
+                    .filter(n -> !dependsOnCycle.contains(n)).toList();
+
+                List<String> revDependents = new ArrayList<>(cycleDependents);
+                Collections.reverse(revDependents);
+                for (String model : revDependents) {
+                    if (model.equals(finalScopeRoot)) continue;
+                    deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
+                }
+
+                for (List<String> cycle : sortResult.cycles()) {
+                    for (String model : cycle) {
+                        deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
+                    }
+                }
+
+                List<String> revDeps = new ArrayList<>(cycleDeps);
+                Collections.reverse(revDeps);
+                for (String model : revDeps) {
+                    if (model.equals(finalScopeRoot)) continue;
+                    deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
+                }
+            } else {
+                List<String> reversed = new ArrayList<>(sortResult.sorted());
+                Collections.reverse(reversed);
+                for (String model : reversed) {
+                    if (model.equals(finalScopeRoot)) continue;
                     deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema);
                 }
             }
@@ -94,9 +140,14 @@ public final class TeardownExecutor {
                     ModelInfo rootModelInfo = schema.models().stream()
                         .filter(m -> m.name().equals(finalScopeRoot))
                         .findFirst().orElse(null);
-                    String rootPkFieldName = rootModelInfo != null
-                        ? rootModelInfo.fields().stream().filter(FieldInfo::isId).findFirst().map(FieldInfo::name).orElse("id")
-                        : "id";
+                    // Composite PK: prefer field named "id"
+                    List<FieldInfo> rootIdFields = rootModelInfo != null
+                        ? rootModelInfo.fields().stream().filter(FieldInfo::isId).toList()
+                        : List.of();
+                    FieldInfo rootPkField = rootIdFields.stream()
+                        .filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
+                        .orElse(rootIdFields.isEmpty() ? null : rootIdFields.get(0));
+                    String rootPkFieldName = rootPkField != null ? rootPkField.name() : "id";
                     String idCol = colMap.getOrDefault(rootPkFieldName, rootPkFieldName);
                     tx.query("DELETE FROM " + dialect.quoteId(dbTable) + " WHERE " + dialect.quoteId(idCol)
                         + " = " + dialect.param(1), scopeValue);
@@ -126,9 +177,13 @@ public final class TeardownExecutor {
         ModelInfo modelInfo = schema.models().stream()
             .filter(m -> m.name().equals(model))
             .findFirst().orElse(null);
-        String pkFieldName = modelInfo != null
-            ? modelInfo.fields().stream().filter(FieldInfo::isId).findFirst().map(FieldInfo::name).orElse("id")
-            : "id";
+        // When multiple isId fields exist (composite PK), prefer the one named "id"
+        List<FieldInfo> idFields = modelInfo != null
+            ? modelInfo.fields().stream().filter(FieldInfo::isId).toList()
+            : List.of();
+        FieldInfo pkField = idFields.stream().filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
+            .orElse(idFields.isEmpty() ? null : idFields.get(0));
+        String pkFieldName = pkField != null ? pkField.name() : "id";
 
         String scopeFK = scopeFieldByModel.get(model);
         if (scopeFK != null) {

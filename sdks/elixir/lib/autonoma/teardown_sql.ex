@@ -52,14 +52,48 @@ defmodule Autonoma.TeardownSQL do
         end
       end
 
-      # Bug 6: Delete non-cycle nodes in reverse topo order FIRST (dependents before cycle nodes)
-      for model <- Enum.reverse(sorted), model != scope_root do
-        delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
-      end
+      # Partition sorted nodes: those that depend on cycle nodes must be deleted
+      # BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
+      cycle_node_set = cycles |> List.flatten() |> MapSet.new()
 
-      # Delete cycle nodes AFTER their non-cycle dependents are gone
-      for cycle <- cycles, model <- cycle do
-        delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
+      if MapSet.size(cycle_node_set) > 0 do
+        # Build dependency map: node → set of nodes it depends on
+        depends_on = Enum.reduce(edges, %{}, fn edge, acc ->
+          if edge["from"] != edge["to"] do
+            Map.update(acc, edge["from"], MapSet.new([edge["to"]]), &MapSet.put(&1, edge["to"]))
+          else
+            acc
+          end
+        end)
+
+        # Mark nodes that transitively depend on cycle nodes
+        depends_on_cycle = Enum.reduce(sorted, MapSet.new(), fn node, acc ->
+          deps = Map.get(depends_on, node, MapSet.new())
+          if Enum.any?(deps, fn d -> MapSet.member?(cycle_node_set, d) || MapSet.member?(acc, d) end) do
+            MapSet.put(acc, node)
+          else
+            acc
+          end
+        end)
+
+        cycle_dependents = Enum.filter(sorted, fn n -> MapSet.member?(depends_on_cycle, n) end)
+        cycle_deps = Enum.filter(sorted, fn n -> !MapSet.member?(depends_on_cycle, n) end)
+
+        for model <- Enum.reverse(cycle_dependents), model != scope_root do
+          delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
+        end
+
+        for cycle <- cycles, model <- cycle do
+          delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
+        end
+
+        for model <- Enum.reverse(cycle_deps), model != scope_root do
+          delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
+        end
+      else
+        for model <- Enum.reverse(sorted), model != scope_root do
+          delete_model(tx, dialect, table_map, column_maps, model, scope_value, scope_field_by_model, refs, schema)
+        end
       end
 
       # Delete scope root last
@@ -68,11 +102,12 @@ defmodule Autonoma.TeardownSQL do
         col_map = Map.get(column_maps, scope_root, %{})
 
         if db_table do
-          # Bug 4: Use schema to find actual PK field name
+          # Bug 4: Use schema to find actual PK field name (composite PK: prefer "id")
           root_model_info = Enum.find(schema["models"] || [], fn m -> m["name"] == scope_root end)
           root_pk_field_name =
             if root_model_info do
-              pk = Enum.find(root_model_info["fields"] || [], fn f -> f["isId"] end)
+              id_fields = Enum.filter(root_model_info["fields"] || [], fn f -> f["isId"] end)
+              pk = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
               if pk, do: pk["name"], else: "id"
             else
               "id"
@@ -94,10 +129,12 @@ defmodule Autonoma.TeardownSQL do
       scope_fk = Map.get(scope_field_by_model, model)
 
       # Bug 4: Find actual PK field name from schema
+      # When multiple isId fields exist (composite PK), prefer the one named "id"
       model_info = Enum.find(schema["models"] || [], fn m -> m["name"] == model end)
       pk_field_name =
         if model_info do
-          pk = Enum.find(model_info["fields"] || [], fn f -> f["isId"] end)
+          id_fields = Enum.filter(model_info["fields"] || [], fn f -> f["isId"] end)
+          pk = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
           if pk, do: pk["name"], else: "id"
         else
           "id"

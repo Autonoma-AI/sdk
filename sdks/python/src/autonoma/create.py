@@ -35,8 +35,10 @@ async def create_entities(
         enum_type_map = enum_type_maps.get(model, {})
 
         # Bug 4: find actual PK field name from schema
+        # When multiple isId fields exist (composite PK), prefer the one named "id"
         model_info = next((m for m in schema_models if m.name == model), None)
-        pk_field = next((f for f in model_info.fields if f.is_id), None) if model_info else None
+        id_fields = [f for f in model_info.fields if f.is_id] if model_info else []
+        pk_field = next((f for f in id_fields if f.name.lower() == "id"), id_fields[0] if id_fields else None)
         pk_field_name = pk_field.name if pk_field else "id"
         pk_field_type = pk_field.type if pk_field else "String"
 

@@ -62,17 +62,49 @@ async def teardown(
                             [scope_value],
                         )
 
-        # Bug 6: Delete non-cycle nodes in reverse topo order BEFORE cycle nodes
-        # 2. Delete non-cycle nodes in reverse topo order
-        for model in reversed(sorted_models):
-            if model == scope_root_model:
-                continue
-            await _delete_model(tx, dialect, table_map, column_maps, model,
-                                scope_value, scope_field_by_model, refs, schema)
-
-        # 3. Delete cycle nodes
+        # Partition sorted nodes: those that depend on cycle nodes must be deleted
+        # BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
+        cycle_node_set = set()
         for cycle in cycles:
-            for model in cycle:
+            cycle_node_set.update(cycle)
+
+        if cycle_node_set:
+            # Build dependency map: node → set of nodes it depends on
+            depends_on: dict[str, set[str]] = {}
+            for edge in edge_dicts:
+                if edge["from"] != edge["to"]:
+                    depends_on.setdefault(edge["from"], set()).add(edge["to"])
+
+            # Mark nodes that transitively depend on cycle nodes
+            depends_on_cycle: set[str] = set()
+            for node in sorted_models:
+                deps = depends_on.get(node, set())
+                if any(d in cycle_node_set or d in depends_on_cycle for d in deps):
+                    depends_on_cycle.add(node)
+
+            cycle_dependents = [n for n in sorted_models if n in depends_on_cycle]
+            cycle_deps = [n for n in sorted_models if n not in depends_on_cycle]
+
+            for model in reversed(cycle_dependents):
+                if model == scope_root_model:
+                    continue
+                await _delete_model(tx, dialect, table_map, column_maps, model,
+                                    scope_value, scope_field_by_model, refs, schema)
+
+            for cycle in cycles:
+                for model in cycle:
+                    await _delete_model(tx, dialect, table_map, column_maps, model,
+                                        scope_value, scope_field_by_model, refs, schema)
+
+            for model in reversed(cycle_deps):
+                if model == scope_root_model:
+                    continue
+                await _delete_model(tx, dialect, table_map, column_maps, model,
+                                    scope_value, scope_field_by_model, refs, schema)
+        else:
+            for model in reversed(sorted_models):
+                if model == scope_root_model:
+                    continue
                 await _delete_model(tx, dialect, table_map, column_maps, model,
                                     scope_value, scope_field_by_model, refs, schema)
 
@@ -81,9 +113,10 @@ async def teardown(
             db_table = table_map.get(scope_root_model)
             col_map = column_maps.get(scope_root_model, {})
             if db_table:
-                # Bug 4: Use actual PK field name from schema
+                # Bug 4: Use actual PK field name from schema (composite PK: prefer "id")
                 root_model_info = next((m for m in schema.models if m.name == scope_root_model), None)
-                root_pk_field = next((f for f in root_model_info.fields if f.is_id), None) if root_model_info else None
+                root_id_fields = [f for f in root_model_info.fields if f.is_id] if root_model_info else []
+                root_pk_field = next((f for f in root_id_fields if f.name.lower() == "id"), root_id_fields[0] if root_id_fields else None)
                 root_pk_field_name = root_pk_field.name if root_pk_field else "id"
                 id_col = col_map.get(root_pk_field_name, root_pk_field_name)
                 await tx.query(
@@ -111,8 +144,10 @@ async def _delete_model(
     col_map = column_maps.get(model, {})
 
     # Bug 4: Find actual PK field name from schema
+    # When multiple isId fields exist (composite PK), prefer the one named "id"
     model_info = next((m for m in schema.models if m.name == model), None)
-    pk_field = next((f for f in model_info.fields if f.is_id), None) if model_info else None
+    id_fields = [f for f in model_info.fields if f.is_id] if model_info else []
+    pk_field = next((f for f in id_fields if f.name.lower() == "id"), id_fields[0] if id_fields else None)
     pk_field_name = pk_field.name if pk_field else "id"
 
     scope_fk = scope_field_by_model.get(model)

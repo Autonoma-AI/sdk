@@ -205,14 +205,25 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 			}
 
 			// Bug 4: find actual PK field name from schema
+			// When multiple IsId fields exist (composite PK), prefer the one named "id"
 			pkFieldName := "id"
 			for _, mi := range schema.Models {
 				if mi.Name == model {
+					var firstId string
 					for _, f := range mi.Fields {
 						if f.IsId {
-							pkFieldName = f.Name
-							break
+							if firstId == "" {
+								firstId = f.Name
+							}
+							if strings.EqualFold(f.Name, "id") {
+								pkFieldName = f.Name
+								firstId = "" // signal we found "id"
+								break
+							}
 						}
+					}
+					if firstId != "" {
+						pkFieldName = firstId
 					}
 					break
 				}
@@ -305,14 +316,25 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 			}
 
 			// Bug 4: find PK field name for deferred model
+			// When multiple IsId fields exist (composite PK), prefer the one named "id"
 			deferredPkFieldName := "id"
 			for _, mi := range schema.Models {
 				if mi.Name == deferred.Model {
+					var firstId string
 					for _, f := range mi.Fields {
 						if f.IsId {
-							deferredPkFieldName = f.Name
-							break
+							if firstId == "" {
+								firstId = f.Name
+							}
+							if strings.EqualFold(f.Name, "id") {
+								deferredPkFieldName = f.Name
+								firstId = ""
+								break
+							}
 						}
+					}
+					if firstId != "" {
+						deferredPkFieldName = firstId
 					}
 					break
 				}

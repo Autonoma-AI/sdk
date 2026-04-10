@@ -77,20 +77,81 @@ func Teardown(
 			}
 		}
 
-		// Bug 6: Delete non-cycle nodes in reverse topo order FIRST (dependents before cycle nodes)
-		for i := len(result.Sorted) - 1; i >= 0; i-- {
-			model := result.Sorted[i]
-			if model == scopeRootModel {
-				continue
-			}
-			if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
-				return err
+		// Partition sorted nodes: those that depend on cycle nodes must be deleted
+		// BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
+		cycleNodeSet := make(map[string]bool)
+		for _, cycle := range result.Cycles {
+			for _, n := range cycle {
+				cycleNodeSet[n] = true
 			}
 		}
 
-		// Delete cycle nodes AFTER their non-cycle dependents are gone
-		for _, cycle := range result.Cycles {
-			for _, model := range cycle {
+		if len(cycleNodeSet) > 0 {
+			// Build dependency map: node → set of nodes it depends on
+			dependsOn := make(map[string]map[string]bool)
+			for _, edge := range schema.Edges {
+				if edge.From != edge.To {
+					if dependsOn[edge.From] == nil {
+						dependsOn[edge.From] = make(map[string]bool)
+					}
+					dependsOn[edge.From][edge.To] = true
+				}
+			}
+
+			// Mark nodes that transitively depend on cycle nodes
+			dependsOnCycle := make(map[string]bool)
+			for _, node := range result.Sorted {
+				deps := dependsOn[node]
+				for dep := range deps {
+					if cycleNodeSet[dep] || dependsOnCycle[dep] {
+						dependsOnCycle[node] = true
+						break
+					}
+				}
+			}
+
+			var cycleDependents, cycleDeps []string
+			for _, n := range result.Sorted {
+				if dependsOnCycle[n] {
+					cycleDependents = append(cycleDependents, n)
+				} else {
+					cycleDeps = append(cycleDeps, n)
+				}
+			}
+
+			for i := len(cycleDependents) - 1; i >= 0; i-- {
+				model := cycleDependents[i]
+				if model == scopeRootModel {
+					continue
+				}
+				if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
+					return err
+				}
+			}
+
+			for _, cycle := range result.Cycles {
+				for _, model := range cycle {
+					if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
+						return err
+					}
+				}
+			}
+
+			for i := len(cycleDeps) - 1; i >= 0; i-- {
+				model := cycleDeps[i]
+				if model == scopeRootModel {
+					continue
+				}
+				if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
+					return err
+				}
+			}
+		} else {
+			for i := len(result.Sorted) - 1; i >= 0; i-- {
+				model := result.Sorted[i]
+				if model == scopeRootModel {
+					continue
+				}
 				if err := deleteModel(ctx, tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema); err != nil {
 					return err
 				}
@@ -105,15 +166,25 @@ func Teardown(
 				colMap = make(map[string]string)
 			}
 			if dbTable != "" {
-				// Bug 4: find actual PK field name from schema
+				// Bug 4: find actual PK field name from schema (composite PK: prefer "id")
 				rootPkFieldName := "id"
 				for _, mi := range schema.Models {
 					if mi.Name == scopeRootModel {
+						var firstId string
 						for _, f := range mi.Fields {
 							if f.IsId {
-								rootPkFieldName = f.Name
-								break
+								if firstId == "" {
+									firstId = f.Name
+								}
+								if strings.EqualFold(f.Name, "id") {
+									rootPkFieldName = f.Name
+									firstId = ""
+									break
+								}
 							}
+						}
+						if firstId != "" {
+							rootPkFieldName = firstId
 						}
 						break
 					}
@@ -158,14 +229,25 @@ func deleteModel(
 	}
 
 	// Bug 4: find actual PK field name from schema
+	// When multiple IsId fields exist (composite PK), prefer the one named "id"
 	pkFieldName := "id"
 	for _, mi := range schema.Models {
 		if mi.Name == model {
+			var firstId string
 			for _, f := range mi.Fields {
 				if f.IsId {
-					pkFieldName = f.Name
-					break
+					if firstId == "" {
+						firstId = f.Name
+					}
+					if strings.EqualFold(f.Name, "id") {
+						pkFieldName = f.Name
+						firstId = ""
+						break
+					}
 				}
+			}
+			if firstId != "" {
+				pkFieldName = firstId
 			}
 			break
 		}

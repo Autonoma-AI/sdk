@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "set"
 require_relative "types"
 require_relative "graph"
 
@@ -62,17 +63,51 @@ module Autonoma
           )
         end
 
-        # Delete non-cycle nodes in reverse topo order first (dependents before cycle nodes)
-        sorted_models.reverse_each do |model|
-          next if model == scope_root_model
+        # Partition sorted nodes: those that depend on cycle nodes must be deleted
+        # BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
+        cycle_node_set = cycles.flatten.to_set
 
-          delete_model(tx, dialect, table_map, column_maps, model,
-                       scope_value, scope_field_by_model, refs, schema)
-        end
+        if cycle_node_set.any?
+          # Build dependency map: node → set of nodes it depends on
+          depends_on = {}
+          edge_dicts.each do |edge|
+            next if edge["from"] == edge["to"]
+            (depends_on[edge["from"]] ||= Set.new).add(edge["to"])
+          end
 
-        # Delete cycle nodes after their non-cycle dependents are gone
-        cycles.each do |cycle|
-          cycle.each do |model|
+          # Mark nodes that transitively depend on cycle nodes
+          depends_on_cycle = Set.new
+          sorted_models.each do |node|
+            deps = depends_on[node] || Set.new
+            if deps.any? { |d| cycle_node_set.include?(d) || depends_on_cycle.include?(d) }
+              depends_on_cycle.add(node)
+            end
+          end
+
+          cycle_dependents = sorted_models.select { |n| depends_on_cycle.include?(n) }
+          cycle_deps = sorted_models.reject { |n| depends_on_cycle.include?(n) }
+
+          cycle_dependents.reverse_each do |model|
+            next if model == scope_root_model
+            delete_model(tx, dialect, table_map, column_maps, model,
+                         scope_value, scope_field_by_model, refs, schema)
+          end
+
+          cycles.each do |cycle|
+            cycle.each do |model|
+              delete_model(tx, dialect, table_map, column_maps, model,
+                           scope_value, scope_field_by_model, refs, schema)
+            end
+          end
+
+          cycle_deps.reverse_each do |model|
+            next if model == scope_root_model
+            delete_model(tx, dialect, table_map, column_maps, model,
+                         scope_value, scope_field_by_model, refs, schema)
+          end
+        else
+          sorted_models.reverse_each do |model|
+            next if model == scope_root_model
             delete_model(tx, dialect, table_map, column_maps, model,
                          scope_value, scope_field_by_model, refs, schema)
           end
@@ -84,7 +119,9 @@ module Autonoma
           col_map = column_maps[scope_root_model] || {}
           if db_table
             root_model_info = schema.models.find { |m| m.name == scope_root_model }
-            root_pk_field_name = root_model_info&.fields&.find { |f| f.is_id }&.name || "id"
+            # Composite PK: prefer field named "id"
+            root_id_fields = root_model_info&.fields&.select { |f| f.is_id } || []
+            root_pk_field_name = (root_id_fields.find { |f| f.name.downcase == "id" } || root_id_fields.first)&.name || "id"
             id_col = col_map[root_pk_field_name] || root_pk_field_name
             tx.query(
               "DELETE FROM #{dialect.quote_id(db_table)} WHERE #{dialect.quote_id(id_col)} = #{dialect.param(1)}",
@@ -103,7 +140,9 @@ module Autonoma
 
       # Find actual PK field name from schema
       model_info = schema.models.find { |m| m.name == model }
-      pk_field_name = model_info&.fields&.find { |f| f.is_id }&.name || "id"
+      # When multiple is_id fields exist (composite PK), prefer the one named "id"
+      id_fields = model_info&.fields&.select { |f| f.is_id } || []
+      pk_field_name = (id_fields.find { |f| f.name.downcase == "id" } || id_fields.first)&.name || "id"
 
       scope_fk = scope_field_by_model[model]
       if scope_fk

@@ -32,7 +32,8 @@ export async function createEntities(
 
     // Bug 4: find actual PK field name from schema
     const modelInfo = schemaModels.find((m) => m.name === model)
-    const pkField = modelInfo?.fields.find((f) => f.isId)
+    const idFields = modelInfo?.fields.filter((f) => f.isId) ?? []
+    const pkField = idFields.find((f) => f.name.toLowerCase() === 'id') ?? idFields[0]
     const pkFieldName = pkField?.name ?? 'id'
     const pkFieldType = pkField?.type ?? 'String'
 

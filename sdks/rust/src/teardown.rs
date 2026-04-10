@@ -1,7 +1,7 @@
 //! Tear down scoped test data via raw SQL DELETE in reverse topological order.
 
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::dialect::Dialect;
 use crate::graph::{find_deferrable_edge, topo_sort};
@@ -121,40 +121,68 @@ pub async fn teardown(
         }
     }
 
-    // Bug 6: Delete non-cycle nodes in reverse topo order FIRST (dependents before cycle nodes)
-    for model in sorted_models.iter().rev() {
-        if scope_root_model.as_deref() == Some(model.as_str()) {
-            continue;
-        }
-        delete_model(
-            executor,
-            dialect,
-            table_map,
-            column_maps,
-            model,
-            scope_value,
-            &scope_field_by_model,
-            refs,
-            schema,
-        )
-        .await?;
-    }
+    // Partition sorted nodes: those that depend on cycle nodes must be deleted
+    // BEFORE cycles, those that cycle nodes depend on must be deleted AFTER.
+    let cycle_node_set: HashSet<&str> = cycles.iter().flatten().map(|s| s.as_str()).collect();
 
-    // Delete cycle nodes AFTER their non-cycle dependents are gone
-    for cycle in &cycles {
-        for model in cycle {
-            delete_model(
-                executor,
-                dialect,
-                table_map,
-                column_maps,
-                model,
-                scope_value,
-                &scope_field_by_model,
-                refs,
-                schema,
-            )
-            .await?;
+    if !cycle_node_set.is_empty() {
+        // Build dependency map: node → set of nodes it depends on
+        let mut depends_on: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for edge in &schema.edges {
+            if edge.from_model != edge.to_model {
+                depends_on.entry(edge.from_model.as_str()).or_default().insert(edge.to_model.as_str());
+            }
+        }
+
+        // Mark nodes that transitively depend on cycle nodes
+        let mut depends_on_cycle: HashSet<&str> = HashSet::new();
+        for node in &sorted_models {
+            if let Some(deps) = depends_on.get(node.as_str()) {
+                for dep in deps {
+                    if cycle_node_set.contains(dep) || depends_on_cycle.contains(dep) {
+                        depends_on_cycle.insert(node.as_str());
+                        break;
+                    }
+                }
+            }
+        }
+
+        let cycle_dependents: Vec<&str> = sorted_models.iter()
+            .filter(|n| depends_on_cycle.contains(n.as_str()))
+            .map(|s| s.as_str()).collect();
+        let cycle_deps: Vec<&str> = sorted_models.iter()
+            .filter(|n| !depends_on_cycle.contains(n.as_str()))
+            .map(|s| s.as_str()).collect();
+
+        for model in cycle_dependents.iter().rev() {
+            if scope_root_model.as_deref() == Some(*model) {
+                continue;
+            }
+            delete_model(executor, dialect, table_map, column_maps, model,
+                scope_value, &scope_field_by_model, refs, schema).await?;
+        }
+
+        for cycle in &cycles {
+            for model in cycle {
+                delete_model(executor, dialect, table_map, column_maps, model,
+                    scope_value, &scope_field_by_model, refs, schema).await?;
+            }
+        }
+
+        for model in cycle_deps.iter().rev() {
+            if scope_root_model.as_deref() == Some(*model) {
+                continue;
+            }
+            delete_model(executor, dialect, table_map, column_maps, model,
+                scope_value, &scope_field_by_model, refs, schema).await?;
+        }
+    } else {
+        for model in sorted_models.iter().rev() {
+            if scope_root_model.as_deref() == Some(model.as_str()) {
+                continue;
+            }
+            delete_model(executor, dialect, table_map, column_maps, model,
+                scope_value, &scope_field_by_model, refs, schema).await?;
         }
     }
 
@@ -162,10 +190,14 @@ pub async fn teardown(
     if let Some(ref root) = scope_root_model {
         if let Some(db_table) = table_map.get(root) {
             let col_map = column_maps.get(root).cloned().unwrap_or_default();
-            // Bug 4: use dynamic PK field from schema
+            // Bug 4: use dynamic PK field from schema (composite PK: prefer "id")
             let root_model_info = schema.models.iter().find(|m| m.name == *root);
-            let root_pk_field_name = root_model_info
-                .and_then(|mi| mi.fields.iter().find(|f| f.is_id))
+            let root_id_fields: Vec<&crate::types::FieldInfo> = root_model_info
+                .map(|mi| mi.fields.iter().filter(|f| f.is_id).collect())
+                .unwrap_or_default();
+            let root_pk_field_name = root_id_fields.iter()
+                .find(|f| f.name.eq_ignore_ascii_case("id"))
+                .or(root_id_fields.first())
                 .map(|f| f.name.as_str())
                 .unwrap_or("id");
             let id_col = col_map
@@ -206,9 +238,14 @@ async fn delete_model(
     let col_map = column_maps.get(model).cloned().unwrap_or_default();
 
     // Bug 4: Find actual PK field name from schema
+    // When multiple is_id fields exist (composite PK), prefer the one named "id"
     let model_info = schema.models.iter().find(|m| m.name == model);
-    let pk_field_name = model_info
-        .and_then(|mi| mi.fields.iter().find(|f| f.is_id))
+    let id_fields: Vec<&crate::types::FieldInfo> = model_info
+        .map(|mi| mi.fields.iter().filter(|f| f.is_id).collect())
+        .unwrap_or_default();
+    let pk_field_name = id_fields.iter()
+        .find(|f| f.name.eq_ignore_ascii_case("id"))
+        .or(id_fields.first())
         .map(|f| f.name.as_str())
         .unwrap_or("id");
 
