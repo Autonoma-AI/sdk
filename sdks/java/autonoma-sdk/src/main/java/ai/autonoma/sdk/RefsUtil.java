@@ -80,6 +80,18 @@ public final class RefsUtil {
     private RefsUtil() {}
 
     /**
+     * Serialize an object to JSON using the custom mapper that handles
+     * DB types (Timestamp, Instant, LocalDateTime, BigDecimal, UUID).
+     */
+    public static String serializeToJson(Object value) {
+        try {
+            return MAPPER.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new RuntimeException("JSON serialization failed", e);
+        }
+    }
+
+    /**
      * Sign refs into a JWT-like token (header.payload.signature).
      */
     public static String signRefs(Map<String, Object> payload, String secret) {

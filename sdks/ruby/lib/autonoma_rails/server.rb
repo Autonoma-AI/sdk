@@ -41,7 +41,7 @@ module AutonomaRails
       req = Autonoma::HandlerRequest.new(body: body_str, headers: headers)
       result = Autonoma::Handler.handle_request(enriched, req)
 
-      render json: result.body, status: result.status
+      render json: Autonoma::Refs.make_json_safe(result.body), status: result.status
     end
   end
 
@@ -76,7 +76,7 @@ module AutonomaRails
       [
         result.status,
         { "Content-Type" => "application/json" },
-        [JSON.generate(result.body)]
+        [JSON.generate(Autonoma::Refs.make_json_safe(result.body))]
       ]
     end
 

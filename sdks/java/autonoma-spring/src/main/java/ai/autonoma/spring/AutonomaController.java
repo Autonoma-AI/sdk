@@ -1,6 +1,7 @@
 package ai.autonoma.spring;
 
 import ai.autonoma.sdk.AutonomaHandler;
+import ai.autonoma.sdk.RefsUtil;
 import ai.autonoma.sdk.types.HandlerConfig;
 import ai.autonoma.sdk.types.HandlerRequest;
 import ai.autonoma.sdk.types.HandlerResponse;
@@ -52,7 +53,7 @@ public class AutonomaController {
     @PostMapping(value = "${autonoma.endpoint:/api/autonoma}",
                  consumes = MediaType.APPLICATION_JSON_VALUE,
                  produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> handle(
+    public ResponseEntity<String> handle(
             @RequestBody String body,
             HttpServletRequest request) {
 
@@ -60,7 +61,9 @@ public class AutonomaController {
         HandlerRequest handlerReq = new HandlerRequest(body, headers);
         HandlerResponse result = AutonomaHandler.handleRequest(config, handlerReq);
 
-        return ResponseEntity.status(result.status()).body(result.body());
+        return ResponseEntity.status(result.status())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(RefsUtil.serializeToJson(result.body()));
     }
 
     private static Map<String, String> extractHeaders(HttpServletRequest request) {

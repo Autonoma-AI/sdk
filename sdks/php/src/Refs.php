@@ -16,7 +16,7 @@ class Refs
      * Recursively serialize a value for JSON encoding.
      * Converts DateTime/DateTimeImmutable to ISO 8601 strings.
      */
-    private static function serializeForJson(mixed $value): mixed
+    public static function serializeForJson(mixed $value): mixed
     {
         if ($value instanceof \DateTimeInterface) {
             return $value->format('c');

@@ -3,6 +3,7 @@
 namespace Autonoma\Sdk\Laravel;
 
 use Autonoma\Sdk\Handler;
+use Autonoma\Sdk\Refs;
 use Autonoma\Sdk\Types\HandlerConfig;
 use Autonoma\Sdk\Types\HandlerRequest;
 use Illuminate\Http\JsonResponse;
@@ -27,7 +28,7 @@ class AutonomaController
 
         $response = Handler::handleRequest($config, $handlerRequest);
 
-        return new JsonResponse($response->body, $response->status);
+        return new JsonResponse(Refs::serializeForJson($response->body), $response->status);
     }
 
     private static function normalizeHeaders(Request $request): array

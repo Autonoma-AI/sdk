@@ -66,6 +66,6 @@ module Autonoma
       end
     end
 
-    private_class_method :base64url_encode, :base64url_decode, :hmac_sign, :make_json_safe
+    private_class_method :base64url_encode, :base64url_decode, :hmac_sign
   end
 end
