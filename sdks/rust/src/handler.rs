@@ -13,7 +13,7 @@ use crate::introspect::introspect_database;
 use crate::refs::{sign_refs, verify_refs};
 use crate::teardown::teardown;
 use crate::tree::resolve_tree;
-use crate::types::{AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, IntrospectionResult};
+use crate::types::{AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult};
 
 pub const PROTOCOL_VERSION: &str = include_str!("../../../protocol/version.txt").trim_ascii();
 
@@ -379,7 +379,15 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
 
     let first_user = find_first_user(&refs);
     let auth_context = AuthContext { scope_value: &scope_value, refs: &refs };
-    let auth = (config.auth)(first_user.as_ref(), &auth_context);
+    let mut auth = (config.auth)(first_user.as_ref(), &auth_context);
+
+    if let Some(ref after_up) = config.after_up {
+        let hook_ctx = HookContext {
+            scenario_name: scope_value.clone(),
+            refs: refs.clone(),
+        };
+        auth = after_up(&hook_ctx, auth);
+    }
 
     // Convert refs to Value
     let refs_map: serde_json::Map<String, Value> = refs
@@ -441,6 +449,20 @@ async fn handle_down(config: &HandlerConfig, body: &Value) -> Result<HandlerResp
         .get("testRunId")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+
+    if let Some(ref before_down) = config.before_down {
+        let refs_for_hook: HashMap<String, Vec<HashMap<String, Value>>> =
+            if let Some(refs_val) = payload.get("refs") {
+                serde_json::from_value(refs_val.clone()).unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
+        let hook_ctx = HookContext {
+            scenario_name: test_run_id.to_string(),
+            refs: refs_for_hook,
+        };
+        before_down(&hook_ctx);
+    }
 
     teardown(
         config.executor.as_ref(),

@@ -239,6 +239,11 @@ module Autonoma
       auth_context = AuthContext.new(scope_value: scope_value, refs: refs)
       auth = config.auth.call(first_user, auth_context)
 
+      if config.after_up
+        hook_ctx = HookContext.new(scenario_name: scope_value, refs: refs)
+        auth = config.after_up.call(hook_ctx, auth)
+      end
+
       refs_token = Refs.sign_refs(
         { "refs" => refs, "testRunId" => scope_value, "environment" => "" },
         config.signing_secret
@@ -262,6 +267,11 @@ module Autonoma
 
       introspection = get_introspection(config)
       dialect = Dialect.get_dialect(config.dialect)
+
+      if config.before_down
+        hook_ctx = HookContext.new(scenario_name: payload["testRunId"], refs: payload["refs"] || {})
+        config.before_down.call(hook_ctx)
+      end
 
       Teardown.teardown(
         config.executor, dialect,

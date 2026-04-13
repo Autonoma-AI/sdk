@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import uuid
@@ -11,7 +12,7 @@ from typing import Any
 from .hmac_util import verify_signature
 from .refs import sign_refs, verify_refs
 from .errors import AutonomaError, invalid_signature, invalid_body, unknown_action, production_blocked, invalid_refs_token, same_secrets
-from .types import AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, IntrospectionResult
+from .types import AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult
 from .dialect import get_dialect
 from .introspect import introspect_database
 from .tree import resolve_tree
@@ -244,6 +245,14 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
     if inspect.isawaitable(auth):
         auth = await auth
 
+    if config.after_up is not None:
+        hook_ctx = HookContext(scenario_name=scope_value, refs=refs)
+        result = config.after_up(hook_ctx, auth)
+        if asyncio.iscoroutine(result):
+            auth = await result
+        else:
+            auth = result
+
     refs_token = sign_refs(
         {"refs": refs, "testRunId": scope_value, "environment": ""},
         config.signing_secret,
@@ -264,6 +273,12 @@ async def _handle_down(config: HandlerConfig, body: dict[str, Any]) -> HandlerRe
 
     introspection = await _get_introspection(config)
     dialect = get_dialect(config.dialect)
+
+    if config.before_down is not None:
+        hook_ctx = HookContext(scenario_name=payload["testRunId"], refs=payload.get("refs") or {})
+        result = config.before_down(hook_ctx)
+        if asyncio.iscoroutine(result):
+            await result
 
     await teardown(
         config.executor, dialect,

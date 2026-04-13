@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { handleRequest } from '../src/handler.js'
 import { signBody } from '../src/hmac.js'
 import { signRefs } from '../src/refs.js'
-import type { HandlerConfig, SQLExecutor } from '../src/types.js'
+import type { AuthResult, HandlerConfig, HookContext, SQLExecutor } from '../src/types.js'
 
 /**
  * Create a mock SQLExecutor that returns canned information_schema data
@@ -210,10 +210,69 @@ describe('handleRequest', () => {
     })
   })
 
+  describe('hooks', () => {
+    it('afterUp hook is called and can modify auth result', async () => {
+      const afterUpSpy = vi.fn((ctx: HookContext, auth: AuthResult): AuthResult => ({
+        ...auth,
+        headers: { ...auth.headers, 'X-Custom': 'enriched' },
+      }))
+      const config = createConfig({ afterUp: afterUpSpy })
+      const req = signedRequest(
+        { action: 'up', create: { Organization: [{ name: 'Org' }] }, testRunId: 'run-123' },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      expect(afterUpSpy).toHaveBeenCalledOnce()
+      const [ctx] = afterUpSpy.mock.calls[0]!
+      expect(ctx.scenarioName).toBeDefined()
+      expect(ctx.refs).toBeDefined()
+      const body = res.body as any
+      expect(body.auth.headers['X-Custom']).toBe('enriched')
+    })
+
+    it('beforeDown hook is called before teardown', async () => {
+      const beforeDownSpy = vi.fn()
+      const config = createConfig({ beforeDown: beforeDownSpy })
+      const refsToken = signRefs(
+        { refs: { Organization: [{ id: 'org-1' }] }, testRunId: 'run-123', environment: '' },
+        config.signingSecret,
+      )
+      const req = signedRequest(
+        { action: 'down', refsToken },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      expect(beforeDownSpy).toHaveBeenCalledOnce()
+      const [ctx] = beforeDownSpy.mock.calls[0]!
+      expect(ctx.scenarioName).toBe('run-123')
+      expect(ctx.refs).toBeDefined()
+    })
+
+    it('async afterUp hook is supported', async () => {
+      const config = createConfig({
+        afterUp: async (ctx: HookContext, auth: AuthResult): Promise<AuthResult> => ({
+          ...auth,
+          credentials: { asyncKey: 'asyncValue' },
+        }),
+      })
+      const req = signedRequest(
+        { action: 'up', create: { Organization: [{ name: 'Org' }] }, testRunId: 'run-123' },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      const body = res.body as any
+      expect(body.auth.credentials.asyncKey).toBe('asyncValue')
+    })
+  })
+
   describe('composite PK', () => {
     it('prefers field named "id" over first isId field in composite PKs', async () => {
-      // Create a mock executor that simulates a composite PK: (organizationId, id)
-      // where organizationId comes first by ordinal_position
       const queries: string[] = []
       let insertCounter = 0
       const executor: SQLExecutor & { queries: string[] } = {
@@ -228,7 +287,6 @@ describe('handleRequest', () => {
             return [
               { table_name: 'organization', column_name: 'id', data_type: 'uuid', udt_name: 'uuid', is_nullable: 'NO', column_default: 'gen_random_uuid()' },
               { table_name: 'organization', column_name: 'name', data_type: 'text', udt_name: 'text', is_nullable: 'NO', column_default: null },
-              // Composite PK: organization_id comes first, then id
               { table_name: 'member', column_name: 'organization_id', data_type: 'uuid', udt_name: 'uuid', is_nullable: 'NO', column_default: null },
               { table_name: 'member', column_name: 'id', data_type: 'uuid', udt_name: 'uuid', is_nullable: 'NO', column_default: 'gen_random_uuid()' },
               { table_name: 'member', column_name: 'role', data_type: 'text', udt_name: 'text', is_nullable: 'NO', column_default: null },
@@ -240,7 +298,6 @@ describe('handleRequest', () => {
           if (trimmed.includes('primary key'))
             return [
               { table_name: 'organization', column_name: 'id' },
-              // Composite PK: organization_id listed first
               { table_name: 'member', column_name: 'organization_id' },
               { table_name: 'member', column_name: 'id' },
             ] as T[]
@@ -255,7 +312,6 @@ describe('handleRequest', () => {
                 record[cols[i]!] = params[i]
               }
             }
-            // Ensure record has id if not provided
             if (!record.id) record.id = `mock-id-${insertCounter++}`
             return [record] as T[]
           }
@@ -272,7 +328,7 @@ describe('handleRequest', () => {
         scopeField: 'organizationId',
         sharedSecret: 'test-secret',
         signingSecret: 'test-signing-secret',
-        auth: async (user) => ({ headers: { Authorization: 'Bearer token' } }),
+        auth: async (user, _ctx) => ({ headers: { Authorization: 'Bearer token' } }),
       }
 
       const req = signedRequest(
@@ -294,16 +350,12 @@ describe('handleRequest', () => {
       expect(body.refs.Member).toBeDefined()
       expect(body.refs.Member[0]).toBeDefined()
 
-      // The SDK should have auto-generated a UUID for the "id" field (the preferred PK),
-      // NOT for "organizationId" (which should have been populated via the FK to Organization)
       const member = body.refs.Member[0]
       expect(member.id).toBeDefined()
       expect(typeof member.id).toBe('string')
 
-      // Verify the INSERT used the "id" column for UUID generation
       const memberInsert = queries.find((q) => q.toLowerCase().includes('insert') && q.toLowerCase().includes('member'))
       expect(memberInsert).toBeDefined()
-      // The insert should include an "id" column with a generated UUID
       expect(memberInsert).toMatch(/"id"/)
     })
   })

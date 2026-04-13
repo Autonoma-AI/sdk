@@ -24,6 +24,7 @@ module Autonoma
 
   HandlerResponse = Struct.new(:status, :body, keyword_init: true)
 
+  HookContext = Struct.new(:scenario_name, :refs, keyword_init: true)
   AuthContext = Struct.new(:scope_value, :refs, keyword_init: true)
 
   HandlerConfig = Struct.new(
@@ -38,11 +39,14 @@ module Autonoma
     :allow_production,
     :auth,
     :sdk,
+    :before_down,
+    :after_up,
     keyword_init: true
   ) do
     def initialize(executor:, scope_field:, shared_secret:, signing_secret:, auth:,
                    dialect: "postgres", db_schema: nil, table_name_map: nil,
-                   exclude_tables: nil, allow_production: false, sdk: nil)
+                   exclude_tables: nil, allow_production: false, sdk: nil,
+                   before_down: nil, after_up: nil)
       super
     end
   end

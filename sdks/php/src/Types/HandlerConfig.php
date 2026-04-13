@@ -14,5 +14,9 @@ class HandlerConfig {
         public readonly ?array $excludeTables = null,
         public readonly bool $allowProduction = false,
         public /*readonly*/ ?array $sdk = null,
+        /** @var callable(array{scenarioName: string, refs: array}): void|null */
+        public readonly mixed $beforeDown = null,
+        /** @var callable(array{scenarioName: string, refs: array}, array): array|null */
+        public readonly mixed $afterUp = null,
     ) {}
 }

@@ -372,6 +372,14 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 		}
 	}
 
+	if config.AfterUp != nil {
+		hookCtx := HookContext{ScenarioName: scopeValue, Refs: refs}
+		auth, err = config.AfterUp(hookCtx, auth)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	refsToken, err := SignRefs(RefsPayload{
 		Refs:        refs,
 		TestRunID:   scopeValue,
@@ -408,6 +416,17 @@ func handleDown(ctx context.Context, config *HandlerConfig, body map[string]any)
 	dialect, err := GetDialect(config.Dialect)
 	if err != nil {
 		return nil, err
+	}
+
+	if config.BeforeDown != nil {
+		hookRefs := payload.Refs
+		if hookRefs == nil {
+			hookRefs = map[string][]map[string]any{}
+		}
+		hookCtx := HookContext{ScenarioName: payload.TestRunID, Refs: hookRefs}
+		if err := config.BeforeDown(hookCtx); err != nil {
+			return nil, err
+		}
 	}
 
 	err = Teardown(ctx, config.Executor, dialect, introspection.TableMap, introspection.ColumnMaps,

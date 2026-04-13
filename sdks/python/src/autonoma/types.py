@@ -57,6 +57,13 @@ class SQLExecutor(Protocol):
 
 
 @dataclass
+class HookContext:
+    """Context passed to handler hooks."""
+    scenario_name: str
+    refs: dict[str, list[dict[str, Any]]]
+
+
+@dataclass
 class AuthContext:
     """Context passed to the auth callback alongside the user record."""
     scope_value: str
@@ -80,6 +87,8 @@ class HandlerConfig:
     exclude_tables: list[str] | None = None
     allow_production: bool = False
     sdk: dict[str, str] | None = None
+    before_down: Callable[[HookContext], Any] | None = None
+    after_up: Callable[[HookContext, dict[str, Any]], dict[str, Any]] | None = None
 
 
 @dataclass

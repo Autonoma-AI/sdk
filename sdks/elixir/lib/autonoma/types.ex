@@ -51,6 +51,11 @@ defmodule Autonoma.Types do
           enum_type_maps: %{String.t() => %{String.t() => String.t()}}
         }
 
+  @type hook_context :: %{
+          scenario_name: String.t(),
+          refs: %{String.t() => [map()]}
+        }
+
   @type handler_config :: %{
           optional(:executor) => sql_executor(),
           optional(:adapter) => module(),
@@ -64,7 +69,9 @@ defmodule Autonoma.Types do
           required(:shared_secret) => String.t(),
           required(:signing_secret) => String.t(),
           optional(:allow_production) => boolean(),
-          required(:auth) => (map() | nil, map() -> map())
+          required(:auth) => (map() | nil, map() -> map()),
+          optional(:before_down) => (hook_context() -> any()),
+          optional(:after_up) => (hook_context(), map() -> map())
         }
 
   @type handler_request :: %{

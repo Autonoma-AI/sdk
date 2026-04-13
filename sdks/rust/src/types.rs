@@ -75,6 +75,12 @@ pub trait SqlExecutor: Send + Sync {
     ) -> Result<(), String>;
 }
 
+/// Context passed to handler hooks (before_down, after_up).
+pub struct HookContext {
+    pub scenario_name: String,
+    pub refs: HashMap<String, Vec<HashMap<String, Value>>>,
+}
+
 /// Context passed to the auth callback alongside the user record.
 pub struct AuthContext<'a> {
     pub scope_value: &'a str,
@@ -97,6 +103,10 @@ pub struct HandlerConfig {
     /// Cached introspection result (populated on first request).
     /// Initialize with `tokio::sync::OnceCell::new()`.
     pub introspection_cache: tokio::sync::OnceCell<IntrospectionResult>,
+    /// Optional hook called before teardown in `down`.
+    pub before_down: Option<Box<dyn Fn(&HookContext) + Send + Sync>>,
+    /// Optional hook called after entity creation and auth in `up`.
+    pub after_up: Option<Box<dyn Fn(&HookContext, HashMap<String, Value>) -> HashMap<String, Value> + Send + Sync>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

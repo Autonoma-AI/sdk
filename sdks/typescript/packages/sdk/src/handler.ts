@@ -1,7 +1,9 @@
 import type {
+  AuthResult,
   HandlerConfig,
   HandlerRequest,
   HandlerResponse,
+  HookContext,
   ResolvedEntitySpec,
   SdkInfo,
 } from './types'
@@ -210,7 +212,12 @@ async function handleUp(
   const scopeValue = detectScopeValue(refs, schema.scopeField) ?? testRunId
 
   const firstUser = findFirstUser(refs)
-  const auth = await config.auth(firstUser, { scopeValue, refs })
+  let auth: AuthResult = await config.auth(firstUser, { scopeValue, refs })
+
+  if (config.afterUp) {
+    const hookCtx: HookContext = { scenarioName: scopeValue, refs }
+    auth = await config.afterUp(hookCtx, auth)
+  }
 
   const refsToken = signRefs(
     { refs, testRunId: scopeValue, environment: '' },
@@ -237,6 +244,11 @@ async function handleDown(
 
   const { schema, tableMap, columnMaps } = await getIntrospection(config)
   const dialect = getDialect(config.dialect)
+
+  if (config.beforeDown) {
+    const hookCtx: HookContext = { scenarioName: payload.testRunId, refs: payload.refs ?? {} }
+    await config.beforeDown(hookCtx)
+  }
 
   await teardown(config.executor, dialect, tableMap, columnMaps, schema, payload.testRunId, payload.refs)
 

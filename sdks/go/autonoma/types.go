@@ -61,6 +61,11 @@ type AuthResult struct {
 	Extra map[string]any `json:"-"`
 }
 
+type HookContext struct {
+	ScenarioName string
+	Refs         map[string][]map[string]any
+}
+
 // AuthContext is passed to the auth callback alongside the user record.
 type AuthContext struct {
 	ScopeValue string
@@ -79,6 +84,8 @@ type HandlerConfig struct {
 	AllowProduction bool
 	Auth            func(user map[string]any, ctx AuthContext) (*AuthResult, error)
 	SDK             *SdkInfo
+	BeforeDown      func(ctx HookContext) error
+	AfterUp         func(ctx HookContext, auth map[string]any) (map[string]any, error)
 }
 
 type HandlerRequest struct {

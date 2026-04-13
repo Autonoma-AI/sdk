@@ -48,6 +48,8 @@ fn make_config() -> HandlerConfig {
             server: "actix".to_string(),
         }),
         introspection_cache: tokio::sync::OnceCell::new(),
+        before_down: None,
+        after_up: None,
     }
 }
 

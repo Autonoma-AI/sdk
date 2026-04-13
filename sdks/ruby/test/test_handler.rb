@@ -2,6 +2,7 @@
 
 require "minitest/autorun"
 require "json"
+require "securerandom"
 require_relative "../lib/autonoma"
 
 # Mock executor that returns canned introspection results for handler tests.
@@ -32,6 +33,10 @@ class HandlerMockExecutor
     elsif sql.include?("FOREIGN KEY") || sql.include?("foreign_keys")
       []
     elsif sql.include?("pg_enum") || sql.include?("enum")
+      []
+    elsif sql.include?("INSERT")
+      [{ "id" => "user-#{SecureRandom.hex(4)}", "name" => "Test", "email" => "test@test.com" }]
+    elsif sql.include?("DELETE")
       []
     else
       []
@@ -131,5 +136,58 @@ class TestHandler < Minitest::Test
     assert_equal 1, schema["models"].length
     assert_equal "Users", schema["models"][0]["name"]
     assert_equal "organizationId", schema["scopeField"]
+  end
+
+  def test_after_up_hook_modifies_auth
+    config = Autonoma::HandlerConfig.new(
+      executor: @executor,
+      scope_field: "organizationId",
+      shared_secret: "shared-secret",
+      signing_secret: "signing-secret",
+      auth: ->(user) { { "headers" => { "Authorization" => "Bearer test-token" } } },
+      after_up: ->(hook_ctx, auth) {
+        auth["headers"]["X-Custom"] = "enriched"
+        auth
+      }
+    )
+
+    req = make_request({
+      "action" => "up",
+      "create" => { "Users" => [{ "name" => "Test", "email" => "test@test.com" }] },
+      "testRunId" => "run-1"
+    })
+    result = Autonoma::Handler.handle_request(config, req)
+
+    assert_equal 200, result.status
+    assert_equal "enriched", result.body["auth"]["headers"]["X-Custom"]
+  end
+
+  def test_before_down_hook_is_called
+    hook_called = false
+    captured_ctx = nil
+
+    config = Autonoma::HandlerConfig.new(
+      executor: @executor,
+      scope_field: "organizationId",
+      shared_secret: "shared-secret",
+      signing_secret: "signing-secret",
+      auth: ->(user) { { "headers" => {} } },
+      before_down: ->(hook_ctx) {
+        hook_called = true
+        captured_ctx = hook_ctx
+      }
+    )
+
+    refs_token = Autonoma::Refs.sign_refs(
+      { "refs" => { "Users" => [{ "id" => "u1" }] }, "testRunId" => "run-1", "environment" => "" },
+      "signing-secret"
+    )
+
+    req = make_request({ "action" => "down", "refsToken" => refs_token })
+    result = Autonoma::Handler.handle_request(config, req)
+
+    assert_equal 200, result.status
+    assert hook_called, "before_down hook should have been called"
+    assert_equal "run-1", captured_ctx.scenario_name
   end
 end
