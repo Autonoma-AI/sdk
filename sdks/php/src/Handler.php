@@ -329,7 +329,8 @@ class Handler
         $scopeValue = self::detectScopeValue($refs, $schema->scopeField) ?? $testRunId;
 
         $firstUser = self::findFirstUser($refs);
-        $auth = ($config->auth)($firstUser);
+        $authContext = ['scope_value' => $scopeValue, 'refs' => $refs];
+        $auth = ($config->auth)($firstUser, $authContext);
 
         $refsToken = Refs::signRefs(
             ['refs' => $refs, 'testRunId' => $scopeValue, 'environment' => ''],

@@ -30,7 +30,7 @@ def _make_config() -> HandlerConfig:
         scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,
-        auth=lambda user: {"headers": {"Authorization": "Bearer test-token"}},
+        auth=lambda user, ctx: {"headers": {"Authorization": "Bearer test-token"}},
     )
 
 
@@ -122,6 +122,7 @@ def test_neither_config_nor_factory_raises():
     import pytest
     with pytest.raises(TypeError, match="required"):
         create_fastapi_handler()
+
 
 
 # --- fastapi_handler standalone tests ---

@@ -61,6 +61,12 @@ type AuthResult struct {
 	Extra map[string]any `json:"-"`
 }
 
+// AuthContext is passed to the auth callback alongside the user record.
+type AuthContext struct {
+	ScopeValue string
+	Refs       map[string][]map[string]any
+}
+
 type HandlerConfig struct {
 	Executor        SQLExecutor
 	ScopeField      string
@@ -71,7 +77,7 @@ type HandlerConfig struct {
 	SharedSecret    string
 	SigningSecret   string
 	AllowProduction bool
-	Auth            func(user map[string]any) (*AuthResult, error)
+	Auth            func(user map[string]any, ctx AuthContext) (*AuthResult, error)
 	SDK             *SdkInfo
 }
 

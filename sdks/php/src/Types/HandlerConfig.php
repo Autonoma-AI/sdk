@@ -6,7 +6,7 @@ class HandlerConfig {
         public readonly string $scopeField,
         public readonly string $sharedSecret,
         public readonly string $signingSecret,
-        /** @var callable(?array): array */
+        /** @var callable(?array, array): array */
         public readonly mixed $auth,
         public readonly string $dialect = 'postgres',
         public readonly ?string $dbSchema = null,

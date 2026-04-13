@@ -79,7 +79,7 @@ function createConfig(overrides?: Partial<HandlerConfig>): HandlerConfig {
     scopeField: 'organizationId',
     sharedSecret: 'test-secret',
     signingSecret: 'test-signing-secret',
-    auth: async (user) => ({ headers: { Authorization: `Bearer jwt-token-${user?.id ?? 'anon'}` } }),
+    auth: async (user, _ctx) => ({ headers: { Authorization: `Bearer jwt-token-${user?.id ?? 'anon'}` } }),
     ...overrides,
   }
 }

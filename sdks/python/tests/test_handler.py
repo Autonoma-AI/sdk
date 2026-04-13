@@ -25,7 +25,7 @@ def _make_config(shared="shared-secret", signing="signing-secret"):
         scope_field="organizationId",
         shared_secret=shared,
         signing_secret=signing,
-        auth=lambda user: {"headers": {"Authorization": f"Bearer test-token-{user['id'] if user else 'anon'}"}},
+        auth=lambda user, ctx: {"headers": {"Authorization": f"Bearer test-token-{user['id'] if user else 'anon'}"}},
     )
 
 

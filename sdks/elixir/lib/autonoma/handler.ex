@@ -178,7 +178,8 @@ defmodule Autonoma.Handler do
     scope_value = detect_scope_value(refs, schema["scopeField"]) || test_run_id
 
     first_user = find_first_user(refs)
-    auth = config.auth.(first_user)
+    auth_context = %{"scope_value" => scope_value, "refs" => refs}
+    auth = config.auth.(first_user, auth_context)
 
     refs_token = Refs.sign(
       %{"refs" => refs, "testRunId" => scope_value, "environment" => ""},

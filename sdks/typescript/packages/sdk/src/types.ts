@@ -101,12 +101,20 @@ export interface HandlerConfig {
   allowProduction?: boolean
   /**
    * Auth callback — called after entity creation during `up`.
-   * Receives the first User record from refs (or null if no User model exists).
+   * Receives the first User record from refs (or null if no User model exists)
+   * and a context object with scopeValue and refs.
    * Must return auth credentials for the test runner.
    */
-  auth: (user: Record<string, unknown> | null) => Promise<AuthResult> | AuthResult
+  auth: (user: Record<string, unknown> | null, context: AuthContext) => Promise<AuthResult> | AuthResult
   /** SDK identity metadata. Server and ORM adapters populate this. */
   sdk?: Partial<SdkInfo>
+}
+
+export interface AuthContext {
+  /** The detected scope value (e.g. organization ID) or testRunId fallback. */
+  scopeValue: string
+  /** All created entity refs, keyed by model name. */
+  refs: Record<string, Record<string, unknown>[]>
 }
 
 export interface AuthCookie {
