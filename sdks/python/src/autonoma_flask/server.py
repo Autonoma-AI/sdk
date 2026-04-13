@@ -10,6 +10,7 @@ from typing import Any
 from flask import Blueprint, Response, make_response, request
 
 from autonoma.handler import handle_request
+from autonoma.serializer import default_serializer
 from autonoma.types import HandlerConfig, HandlerRequest
 
 
@@ -34,7 +35,7 @@ def create_flask_handler(config: HandlerConfig) -> Blueprint:
         req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
         result = asyncio.run(handle_request(enriched, req))
 
-        response: Response = make_response(json.dumps(result.body), result.status)
+        response: Response = make_response(json.dumps(result.body, default=default_serializer), result.status)
         response.headers["Content-Type"] = "application/json"
         return response
 
@@ -52,7 +53,7 @@ def flask_handler(config: HandlerConfig) -> Any:
         req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
         result = asyncio.run(handle_request(enriched, req))
 
-        response: Response = make_response(json.dumps(result.body), result.status)
+        response: Response = make_response(json.dumps(result.body, default=default_serializer), result.status)
         response.headers["Content-Type"] = "application/json"
         return response
 

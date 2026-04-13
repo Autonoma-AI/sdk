@@ -4,20 +4,8 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import date, datetime
-from decimal import Decimal
-from uuid import UUID
 
-
-def _default_serializer(obj: object) -> str:
-    """Custom JSON serializer for types not serializable by default json module."""
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    if isinstance(obj, UUID):
-        return str(obj)
-    if isinstance(obj, Decimal):
-        return str(obj)
-    return str(obj)
+from autonoma.serializer import default_serializer as _default_serializer
 
 
 def sign_refs(payload: dict, secret: str) -> str:

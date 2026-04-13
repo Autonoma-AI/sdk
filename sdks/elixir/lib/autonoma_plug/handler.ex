@@ -30,6 +30,6 @@ defmodule Autonoma.Plug.Handler do
 
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(result.status, Jason.encode!(result.body))
+    |> send_resp(result.status, Jason.encode!(Autonoma.Refs.sanitize_for_json(result.body)))
   end
 end

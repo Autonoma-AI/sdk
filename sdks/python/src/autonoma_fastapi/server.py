@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Callable
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from starlette.responses import Response
 
 from autonoma.handler import handle_request
+from autonoma.serializer import default_serializer
 from autonoma.types import HandlerConfig, HandlerRequest
 
 
@@ -43,7 +45,7 @@ def create_fastapi_handler(
     router: APIRouter = APIRouter()
 
     @router.post("/")
-    async def autonoma_handler(request: Request) -> JSONResponse:
+    async def autonoma_handler(request: Request) -> Response:
         req_config = enriched if enriched is not None else _enrich_config(config_factory(), "fastapi")
 
         body: bytes = await request.body()
@@ -53,7 +55,11 @@ def create_fastapi_handler(
         req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
         result = await handle_request(req_config, req)
 
-        return JSONResponse(status_code=result.status, content=result.body)
+        return Response(
+            content=json.dumps(result.body, default=default_serializer),
+            status_code=result.status,
+            media_type="application/json",
+        )
 
     return router
 
@@ -63,7 +69,7 @@ async def fastapi_handler(
     request: Request | None = None,
     *,
     config_factory: Callable[[], HandlerConfig] | None = None,
-) -> JSONResponse:
+) -> Response:
     """Standalone async handler for use in custom routes.
 
     Accepts either a fixed ``config`` or a ``config_factory`` that
@@ -85,4 +91,8 @@ async def fastapi_handler(
     req: HandlerRequest = HandlerRequest(body=body_str, headers=headers)
     result = await handle_request(enriched, req)
 
-    return JSONResponse(status_code=result.status, content=result.body)
+    return Response(
+        content=json.dumps(result.body, default=default_serializer),
+        status_code=result.status,
+        media_type="application/json",
+    )

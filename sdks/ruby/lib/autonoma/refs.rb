@@ -4,6 +4,8 @@ require "openssl"
 require "base64"
 require "json"
 require "bigdecimal"
+require "date"
+require "time"
 
 module Autonoma
   module Refs
@@ -66,6 +68,6 @@ module Autonoma
       end
     end
 
-    private_class_method :base64url_encode, :base64url_decode, :hmac_sign, :make_json_safe
+    private_class_method :base64url_encode, :base64url_decode, :hmac_sign
   end
 end
