@@ -10,10 +10,10 @@ from flask import Flask
 
 from autonoma.types import HandlerConfig
 from autonoma_flask import create_flask_handler
-from autonoma_sqlalchemy import SQLAlchemyAdapter
+from autonoma_sqlalchemy import sqlalchemy_executor
 
-from database import SessionLocal, engine, Base
-from models import Organization, User, Project, Task
+from database import engine, Base
+import models  # noqa: F401 — imported so Base.metadata.create_all() can discover tables
 
 
 # ---------------------------------------------------------------------------
@@ -30,20 +30,18 @@ with app.app_context():
     print("Database tables created.")
 
 # ---------------------------------------------------------------------------
-# 3. Set up the Autonoma adapter and handler
+# 3. Set up the Autonoma executor and handler
 # ---------------------------------------------------------------------------
-# The SQLAlchemy adapter is shared between FastAPI and Flask — the only
-# difference is the server adapter (create_flask_handler vs create_fastapi_handler).
-adapter = SQLAlchemyAdapter(
-    session_factory=SessionLocal,
-    models=[Organization, User, Project, Task],
-    scope_field="organization_id",
-)
-
+# The SQLAlchemy executor wraps the engine into a SQL executor that the
+# SDK uses for schema introspection, entity creation, and teardown.
 config = HandlerConfig(
-    adapter=adapter,
+    executor=sqlalchemy_executor(engine),
+    scope_field="organization_id",
     shared_secret=os.environ.get("AUTONOMA_SHARED_SECRET", "my-shared-secret"),
     signing_secret=os.environ.get("AUTONOMA_SIGNING_SECRET", "my-signing-secret"),
+    auth=lambda user, context: {
+        "headers": {"Authorization": "Bearer test-token"}
+    },
 )
 
 # Mount the Autonoma blueprint at /api/autonoma

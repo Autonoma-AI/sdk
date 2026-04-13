@@ -11,25 +11,26 @@ pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma
 ## Usage
 
 ```typescript
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '@/lib/db'
 
-const adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+const executor = prismaExecutor(prisma)
 ```
 
-Pass the adapter to your server handler:
+Pass the executor to your server handler:
 
 ```typescript
 // app/api/autonoma/route.ts
 import { createHandler } from '@autonoma-ai/server-web'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '@/lib/db'
 
 export const POST = createHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  executor: prismaExecutor(prisma),
+  scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user) => {
+  auth: async (user, context) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }
   },
@@ -49,12 +50,12 @@ During `down`: the adapter deletes everything where `scopeField = <root entity I
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import { PrismaClient } from '@prisma/client'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { checkScenario } from '@autonoma-ai/sdk'
 import { execSync } from 'node:child_process'
 
 describe('environment factory', () => {
-  let container, prisma, adapter
+  let container, prisma, executor
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer('postgres:16-alpine').start()
@@ -63,7 +64,7 @@ describe('environment factory', () => {
       stdio: 'pipe',
     })
     prisma = new PrismaClient({ datasourceUrl: container.getConnectionUri() })
-    adapter = prismaAdapter(prisma, { scopeField: 'organizationId' })
+    executor = prismaExecutor(prisma)
   }, 60_000)
 
   afterAll(async () => {
@@ -72,7 +73,7 @@ describe('environment factory', () => {
   })
 
   it('creates and tears down data', async () => {
-    const result = await checkScenario(adapter, {
+    const result = await checkScenario(executor, {
       create: {
         Organization: [{
           name: 'Test Org',

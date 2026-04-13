@@ -6,11 +6,14 @@ Multi-language SDK for the Autonoma Environment Factory endpoint. Provides autom
 
 | Language | Path | ORM Adapters | Server Adapters |
 |----------|------|-------------|-----------------|
-| TypeScript | [`sdks/typescript/`](sdks/typescript/) | Prisma, Drizzle | Express, Web (Next/Hono/Deno), Node HTTP |
+| TypeScript | [`sdks/typescript/`](sdks/typescript/) | Prisma, Drizzle, pg, mysql2 | Express, Web (Next/Hono/Deno), Node HTTP |
 | Python | [`sdks/python/`](sdks/python/) | SQLAlchemy, Django | FastAPI, Flask, Django |
 | Elixir | [`sdks/elixir/`](sdks/elixir/) | Ecto | Plug (Phoenix) |
 | Java | [`sdks/java/`](sdks/java/) | JDBC | Spring Boot (Spring MVC) |
 | Ruby | [`sdks/ruby/`](sdks/ruby/) | ActiveRecord | Rails |
+| Rust | [`sdks/rust/`](sdks/rust/) | SQLx (Postgres, MySQL) | Actix Web, Axum |
+| Go | [`sdks/go/`](sdks/go/) | database/sql | Gin |
+| PHP | [`sdks/php/`](sdks/php/) | PDO, Doctrine | Laravel |
 
 ## Architecture
 

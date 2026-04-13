@@ -83,15 +83,19 @@ docker stop autonoma-postgres
 The key integration in `core/autonoma_config.py`:
 
 ```python
-from autonoma_django import DjangoAdapter, create_django_handler
+from autonoma_django import django_executor, create_django_handler
 
-adapter = DjangoAdapter([Organization, User, Project, Task], scope_field="organization_id")
-
-handler = create_django_handler(HandlerConfig(
-    adapter=adapter,
+config = HandlerConfig(
+    executor=django_executor(),
+    scope_field="organization_id",
     shared_secret="my-shared-secret",
     signing_secret="my-signing-secret",
-))
+    auth=lambda user, context: {
+        "headers": {"Authorization": "Bearer test-token"}
+    },
+)
+
+handler = create_django_handler(config)
 ```
 
 Then in `autonoma_example/urls.py`:

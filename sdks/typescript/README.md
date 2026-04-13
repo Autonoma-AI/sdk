@@ -28,14 +28,15 @@ pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
 ```ts
 // app/api/autonoma/route.ts
 import { createHandler } from '@autonoma-ai/server-web'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { prisma } from '@/lib/db'
 
 export const POST = createHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  executor: prismaExecutor(prisma),
+  scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user) => {
+  auth: async (user, context) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }
   },
@@ -47,16 +48,17 @@ export const POST = createHandler({
 ```ts
 import express from 'express'
 import { createExpressHandler } from '@autonoma-ai/server-express'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { prisma } from './db'
 
 const app = express()
 
 app.post('/api/autonoma', createExpressHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  executor: prismaExecutor(prisma),
+  scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user) => {
+  auth: async (user, context) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }
   },
