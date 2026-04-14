@@ -1,0 +1,32 @@
+{
+  "name": "@autonoma-ai/server-hono",
+  "version": "0.1.12",
+  "description": "Hono server adapter for Autonoma SDK",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@autonoma-ai/sdk": "^0.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "tsup": "^8.4.0"
+  }
+}
