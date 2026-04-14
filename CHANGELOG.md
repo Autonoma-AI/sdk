@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.12](https://github.com/Autonoma-AI/sdk/compare/v0.1.11...v0.1.12) (2026-04-14)
+
+
+### Features
+
+* add beforeDown/afterUp handler hooks across all SDKs ([#37](https://github.com/Autonoma-AI/sdk/issues/37)) ([06e7ea2](https://github.com/Autonoma-AI/sdk/commit/06e7ea210ae6371283a531dbae3b70061f23fe08))
+* enrich auth callback with context (scope_value, refs) across all SDKs ([#36](https://github.com/Autonoma-AI/sdk/issues/36)) ([df33dd2](https://github.com/Autonoma-AI/sdk/commit/df33dd2b977d021e2efff599fdc05665d95d0f9c))
+* support per-request executor in FastAPI adapter ([#35](https://github.com/Autonoma-AI/sdk/issues/35)) ([d898e69](https://github.com/Autonoma-AI/sdk/commit/d898e69133167e7303d3bdaccadb0953fb610f10))
+
+
+### Bug Fixes
+
+* composite PK identity and teardown cycle ordering ([#33](https://github.com/Autonoma-AI/sdk/issues/33)) ([63ff5d5](https://github.com/Autonoma-AI/sdk/commit/63ff5d5fa52e281ec6f41b63cb2623e30c793b28))
+* remove legacy OrmAdapter code from Python and Elixir SDKs ([#29](https://github.com/Autonoma-AI/sdk/issues/29)) ([ee7a940](https://github.com/Autonoma-AI/sdk/commit/ee7a940a3afc9614e68fa8560dbe38065aa61e25))
+* use custom JSON serializer for response bodies across server adapters ([#38](https://github.com/Autonoma-AI/sdk/issues/38)) ([08d967b](https://github.com/Autonoma-AI/sdk/commit/08d967bc98b93a4692b2a9597f6b03bc1f1ad7ed))
+
 ## [0.1.11](https://github.com/Autonoma-AI/sdk/compare/v0.1.10...v0.1.11) (2026-04-10)
 
 
