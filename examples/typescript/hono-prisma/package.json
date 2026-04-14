@@ -1,0 +1,22 @@
+{
+  "name": "autonoma-hono-prisma-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@autonoma-ai/sdk": "latest",
+    "@autonoma-ai/sdk-prisma": "latest",
+    "@autonoma-ai/server-hono": "latest",
+    "@hono/node-server": "^1.13.0",
+    "@prisma/client": "^5.22.0",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  }
+}
