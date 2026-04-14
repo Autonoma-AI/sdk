@@ -12,12 +12,12 @@ from typing import Any
 from .hmac_util import verify_signature
 from .refs import sign_refs, verify_refs
 from .errors import AutonomaError, invalid_signature, invalid_body, unknown_action, production_blocked, invalid_refs_token, same_secrets
-from .types import AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult
+from .types import AuthContext, FactoryContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult
 from .dialect import get_dialect
 from .introspect import introspect_database
 from .tree import resolve_tree
 from .create import create_entities, update_entity
-from .teardown import teardown
+from .teardown import compute_teardown_order, teardown
 
 def _load_protocol_version() -> str:
     try:
@@ -192,9 +192,33 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
 
                 resolved_fields.append(fields)
 
-            spec = {model: {"count": len(resolved_fields), "fields": resolved_fields, "batch": op.batch}}
-            created = await create_entities(tx, dialect, introspection.table_map, introspection.column_maps, spec, introspection.enum_type_maps, schema.models)
-            records = created.get(model, [])
+            factory = (config.factories or {}).get(model)
+
+            if factory:
+                # Factory path: call user-defined create() for each record
+                records: list[dict[str, Any]] = []
+                for fields in resolved_fields:
+                    factory_ctx = FactoryContext(
+                        refs=refs,
+                        executor=tx,
+                        scenario_name=test_run_id,
+                        test_run_id=test_run_id,
+                    )
+                    record = factory.create(fields, factory_ctx)
+                    if inspect.isawaitable(record):
+                        record = await record
+                    if record.get(pk_field_name) is None:
+                        raise AutonomaError(
+                            f'Factory for "{model}" must return a record with "{pk_field_name}"',
+                            "FACTORY_MISSING_PK",
+                            500,
+                        )
+                    records.append(record)
+            else:
+                # SQL fallback path (existing behavior)
+                spec = {model: {"count": len(resolved_fields), "fields": resolved_fields, "batch": op.batch}}
+                created = await create_entities(tx, dialect, introspection.table_map, introspection.column_maps, spec, introspection.enum_type_maps, schema.models)
+                records = created.get(model, [])
 
             if model not in refs:
                 refs[model] = []
@@ -280,10 +304,40 @@ async def _handle_down(config: HandlerConfig, body: dict[str, Any]) -> HandlerRe
         if asyncio.iscoroutine(result):
             await result
 
+    # Determine which models have factory teardown
+    factory_teardown_models: set[str] = set()
+    if config.factories:
+        for model, factory in config.factories.items():
+            if factory.teardown is not None:
+                factory_teardown_models.add(model)
+
+    # Run factory teardowns in reverse topo order
+    if factory_teardown_models:
+        td_info = compute_teardown_order(introspection.schema)
+        full_order = td_info["order"] + ([td_info["scope_root_model"]] if td_info["scope_root_model"] else [])
+        td_refs = payload.get("refs") or {}
+
+        for model in reversed(full_order):
+            if model not in factory_teardown_models:
+                continue
+            records = td_refs.get(model, [])
+            factory_ctx = FactoryContext(
+                refs=td_refs,
+                executor=config.executor,
+                scenario_name=payload["testRunId"],
+                test_run_id=payload["testRunId"],
+            )
+            for record in reversed(records):
+                result = config.factories[model].teardown(record, factory_ctx)
+                if inspect.isawaitable(result):
+                    await result
+
+    # SQL teardown for remaining models (skipping factory-teardown ones)
     await teardown(
         config.executor, dialect,
         introspection.table_map, introspection.column_maps,
         introspection.schema, payload["testRunId"], payload.get("refs"),
+        skip_models=factory_teardown_models,
     )
 
     return HandlerResponse(status=200, body={**_build_sdk_meta(config), "ok": True})

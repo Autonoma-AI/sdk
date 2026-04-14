@@ -5,15 +5,17 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use std::collections::HashSet;
+
 use crate::create::{create_entities, update_entity};
 use crate::dialect::get_dialect;
 use crate::errors::*;
 use crate::hmac::verify_signature;
 use crate::introspect::introspect_database;
 use crate::refs::{sign_refs, verify_refs};
-use crate::teardown::teardown;
+use crate::teardown::{compute_teardown_order, teardown};
 use crate::tree::resolve_tree;
-use crate::types::{AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult};
+use crate::types::{AuthContext, FactoryContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult};
 
 pub const PROTOCOL_VERSION: &str = include_str!("../../../protocol/version.txt").trim_ascii();
 
@@ -266,40 +268,75 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
             resolved_fields.push(fields);
         }
 
-        let fields_json: Vec<Value> = resolved_fields
-            .iter()
-            .map(|f| {
-                Value::Object(f.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            })
-            .collect();
+        // Check if a factory is registered for this model
+        let has_factory = config
+            .factories
+            .as_ref()
+            .map(|f| f.contains_key(model))
+            .unwrap_or(false);
 
-        let spec: HashMap<String, Value> = [(
-            model.clone(),
-            json!({
-                "count": resolved_fields.len(),
-                "fields": fields_json,
-                "batch": op.batch
-            }),
-        )]
-        .into();
+        let records: Vec<HashMap<String, Value>> = if has_factory {
+            // Factory path: call user-defined create() for each record
+            let factory = config.factories.as_ref().unwrap().get(model).unwrap();
+            let mut factory_records = Vec::new();
+            for fields in &resolved_fields {
+                let factory_ctx = FactoryContext {
+                    refs: &refs,
+                    executor: config.executor.as_ref(),
+                    scenario_name: test_run_id.clone(),
+                    test_run_id: test_run_id.clone(),
+                };
+                let record = factory.create(fields.clone(), &factory_ctx).await?;
+                if record.get(pk_field_name).map_or(true, |v| v.is_null()) {
+                    return Err(AutonomaError {
+                        message: format!(
+                            "Factory for \"{}\" must return a record with \"{}\"",
+                            model, pk_field_name
+                        ),
+                        code: "FACTORY_MISSING_PK".to_string(),
+                        status: 500,
+                    });
+                }
+                factory_records.push(record);
+            }
+            factory_records
+        } else {
+            // SQL fallback path (existing behavior)
+            let fields_json: Vec<Value> = resolved_fields
+                .iter()
+                .map(|f| {
+                    Value::Object(f.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                })
+                .collect();
 
-        let created = create_entities(
-            config.executor.as_ref(),
-            dialect.as_ref(),
-            &introspection.table_map,
-            &introspection.column_maps,
-            &spec,
-            &introspection.enum_type_maps,
-            &schema.models,
-        )
-        .await
-        .map_err(|e| AutonomaError {
-            message: e,
-            code: "CREATE_ERROR".to_string(),
-            status: 500,
-        })?;
+            let spec: HashMap<String, Value> = [(
+                model.clone(),
+                json!({
+                    "count": resolved_fields.len(),
+                    "fields": fields_json,
+                    "batch": op.batch
+                }),
+            )]
+            .into();
 
-        let records = created.get(model).cloned().unwrap_or_default();
+            let created = create_entities(
+                config.executor.as_ref(),
+                dialect.as_ref(),
+                &introspection.table_map,
+                &introspection.column_maps,
+                &spec,
+                &introspection.enum_type_maps,
+                &schema.models,
+            )
+            .await
+            .map_err(|e| AutonomaError {
+                message: e,
+                code: "CREATE_ERROR".to_string(),
+                status: 500,
+            })?;
+
+            created.get(model).cloned().unwrap_or_default()
+        };
 
         refs.entry(model.clone()).or_default().extend(records.clone());
 
@@ -464,6 +501,62 @@ async fn handle_down(config: &HandlerConfig, body: &Value) -> Result<HandlerResp
         before_down(&hook_ctx);
     }
 
+    // Determine which models have factory teardown
+    let mut factory_teardown_models: HashSet<String> = HashSet::new();
+    if let Some(ref factories) = config.factories {
+        for (model, factory) in factories {
+            if factory.has_teardown() {
+                factory_teardown_models.insert(model.clone());
+            }
+        }
+    }
+
+    // Run factory teardowns in reverse topo order
+    if !factory_teardown_models.is_empty() {
+        let teardown_info = compute_teardown_order(&introspection.schema);
+        // Include scope root in the order for factory teardown
+        let mut full_order = teardown_info.order.clone();
+        if let Some(ref root) = teardown_info.scope_root_model {
+            full_order.push(root.clone());
+        }
+
+        let refs_for_factory: HashMap<String, Vec<HashMap<String, Value>>> =
+            if let Some(refs_val) = payload.get("refs") {
+                serde_json::from_value(refs_val.clone()).unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
+
+        // Process in reverse order
+        for model in full_order.iter().rev() {
+            if !factory_teardown_models.contains(model) {
+                continue;
+            }
+            let records = refs_for_factory.get(model).cloned().unwrap_or_default();
+            let factory = config.factories.as_ref().unwrap().get(model).unwrap();
+            let factory_ctx = FactoryContext {
+                refs: &refs_for_factory,
+                executor: config.executor.as_ref(),
+                scenario_name: test_run_id.to_string(),
+                test_run_id: test_run_id.to_string(),
+            };
+            // Teardown records in reverse order
+            for record in records.iter().rev() {
+                factory.teardown(record, &factory_ctx).await.map_err(|e| AutonomaError {
+                    message: e.message,
+                    code: "FACTORY_TEARDOWN_ERROR".to_string(),
+                    status: 500,
+                })?;
+            }
+        }
+    }
+
+    let skip_models = if factory_teardown_models.is_empty() {
+        None
+    } else {
+        Some(&factory_teardown_models)
+    };
+
     teardown(
         config.executor.as_ref(),
         dialect.as_ref(),
@@ -472,6 +565,7 @@ async fn handle_down(config: &HandlerConfig, body: &Value) -> Result<HandlerResp
         &introspection.schema,
         test_run_id,
         payload.get("refs"),
+        skip_models,
     )
     .await
     .map_err(|e| AutonomaError {

@@ -3,6 +3,7 @@
 namespace Autonoma\Sdk;
 
 use Autonoma\Sdk\Dialect\DialectFactory;
+use Autonoma\Sdk\Types\FactoryContext;
 use Autonoma\Sdk\Types\HandlerConfig;
 use Autonoma\Sdk\Types\HandlerRequest;
 use Autonoma\Sdk\Types\HandlerResponse;
@@ -161,7 +162,7 @@ class Handler
         $idMap = [];
 
         $config->executor->transaction(function ($tx) use (
-            &$refs, &$idMap, $tree, $schema, $dialect, $introspection, $config,
+            &$refs, &$idMap, $tree, $schema, $dialect, $introspection, $config, $testRunId,
         ) {
             $i = 0;
             while ($i < count($tree->ops)) {
@@ -254,9 +255,30 @@ class Handler
                     $resolvedFields[] = $fields;
                 }
 
-                $spec = [$model => ['count' => count($resolvedFields), 'fields' => $resolvedFields, 'batch' => $op->batch]];
-                $created = Create::createEntities($tx, $dialect, $introspection->tableMap, $introspection->columnMaps, $spec, $introspection->enumTypeMaps, $schema->models);
-                $records = $created[$model] ?? [];
+                $factory = $config->factories[$model] ?? null;
+
+                if ($factory !== null) {
+                    // Factory path: call user-defined create() for each record
+                    $records = [];
+                    foreach ($resolvedFields as $fields) {
+                        $factoryCtx = new FactoryContext(
+                            refs: $refs,
+                            executor: $tx,
+                            scenarioName: $testRunId,
+                            testRunId: $testRunId,
+                        );
+                        $record = ($factory->create)($fields, $factoryCtx);
+                        if (!isset($record[$pkFieldName]) || $record[$pkFieldName] === null) {
+                            throw AutonomaError::factoryMissingPk($model, $pkFieldName);
+                        }
+                        $records[] = $record;
+                    }
+                } else {
+                    // SQL fallback path (existing behavior)
+                    $spec = [$model => ['count' => count($resolvedFields), 'fields' => $resolvedFields, 'batch' => $op->batch]];
+                    $created = Create::createEntities($tx, $dialect, $introspection->tableMap, $introspection->columnMaps, $spec, $introspection->enumTypeMaps, $schema->models);
+                    $records = $created[$model] ?? [];
+                }
 
                 if (!isset($refs[$model])) {
                     $refs[$model] = [];
@@ -369,6 +391,42 @@ class Handler
             ($config->beforeDown)($hookCtx);
         }
 
+        // Determine which models have factory teardown
+        $factoryTeardownModels = [];
+        if ($config->factories !== null) {
+            foreach ($config->factories as $model => $factory) {
+                if ($factory->teardown !== null) {
+                    $factoryTeardownModels[] = $model;
+                }
+            }
+        }
+
+        // Run factory teardowns in reverse topo order
+        if (!empty($factoryTeardownModels)) {
+            $teardownInfo = Teardown::computeTeardownOrder($introspection->schema);
+            $fullOrder = $teardownInfo['scopeRootModel'] !== null
+                ? array_merge($teardownInfo['order'], [$teardownInfo['scopeRootModel']])
+                : $teardownInfo['order'];
+            $payloadRefs = $payload['refs'] ?? [];
+
+            foreach (array_reverse($fullOrder) as $model) {
+                if (!in_array($model, $factoryTeardownModels, true)) {
+                    continue;
+                }
+                $records = $payloadRefs[$model] ?? [];
+                $factoryCtx = new FactoryContext(
+                    refs: $payloadRefs,
+                    executor: $config->executor,
+                    scenarioName: $payload['testRunId'],
+                    testRunId: $payload['testRunId'],
+                );
+                foreach (array_reverse($records) as $record) {
+                    ($config->factories[$model]->teardown)($record, $factoryCtx);
+                }
+            }
+        }
+
+        // SQL teardown for remaining models (skipping factory-teardown ones)
         Teardown::teardown(
             $config->executor,
             $dialect,
@@ -377,6 +435,7 @@ class Handler
             $introspection->schema,
             $payload['testRunId'],
             $payload['refs'] ?? null,
+            $factoryTeardownModels,
         );
 
         return new HandlerResponse(

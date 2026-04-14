@@ -206,17 +206,45 @@ public final class AutonomaHandler {
                     resolvedFields.add(fields);
                 }
 
-                Map<String, Map<String, Object>> spec = Map.of(model, Map.of(
-                    "count", resolvedFields.size(),
-                    "fields", resolvedFields,
-                    "batch", op.batch()
-                ));
+                List<Map<String, Object>> records;
+                FactoryDefinition factory = config.getFactories() != null
+                    ? config.getFactories().get(model) : null;
 
-                Map<String, List<Map<String, Object>>> created = EntityCreator.createEntities(
-                    tx, dialect, introspection.tableMap(), introspection.columnMaps(),
-                    spec, introspection.enumTypeMaps(), schema.models()
-                );
-                List<Map<String, Object>> records = created.getOrDefault(model, List.of());
+                if (factory != null) {
+                    // Factory path: call user-defined create() for each record
+                    records = new ArrayList<>();
+                    for (Map<String, Object> fields : resolvedFields) {
+                        FactoryContext factoryCtx = new FactoryContext(
+                            refs, tx, testRunId, testRunId
+                        );
+                        Map<String, Object> record;
+                        try {
+                            record = factory.getCreate().create(fields, factoryCtx);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        if (record.get(pkFieldName) == null) {
+                            throw new AutonomaError(
+                                "Factory for \"" + model + "\" must return a record with \"" + pkFieldName + "\"",
+                                "FACTORY_MISSING_PK", 500
+                            );
+                        }
+                        records.add(record);
+                    }
+                } else {
+                    // SQL fallback path (existing behavior)
+                    Map<String, Map<String, Object>> spec = Map.of(model, Map.of(
+                        "count", resolvedFields.size(),
+                        "fields", resolvedFields,
+                        "batch", op.batch()
+                    ));
+
+                    Map<String, List<Map<String, Object>>> created = EntityCreator.createEntities(
+                        tx, dialect, introspection.tableMap(), introspection.columnMaps(),
+                        spec, introspection.enumTypeMaps(), schema.models()
+                    );
+                    records = created.getOrDefault(model, List.of());
+                }
 
                 refs.computeIfAbsent(model, k -> new ArrayList<>()).addAll(records);
 
@@ -322,10 +350,52 @@ public final class AutonomaHandler {
             config.getBeforeDown().accept(hookCtx);
         }
 
+        // Determine which models have factory teardown
+        Set<String> factoryTeardownModels = new HashSet<>();
+        if (config.getFactories() != null) {
+            for (var entry : config.getFactories().entrySet()) {
+                if (entry.getValue().getTeardown() != null) {
+                    factoryTeardownModels.add(entry.getKey());
+                }
+            }
+        }
+
+        // Run factory teardowns in reverse topo order
+        if (!factoryTeardownModels.isEmpty()) {
+            TeardownExecutor.TeardownOrder teardownOrder = TeardownExecutor.computeTeardownOrder(introspection.schema());
+            // Include scope root in the order for factory teardown
+            List<String> fullOrder = new ArrayList<>(teardownOrder.order());
+            if (teardownOrder.scopeRootModel() != null) {
+                fullOrder.add(teardownOrder.scopeRootModel());
+            }
+            Map<String, List<Map<String, Object>>> teardownRefs = refs != null ? refs : Map.of();
+            String testRunIdValue = (String) payload.get("testRunId");
+
+            List<String> reversedOrder = new ArrayList<>(fullOrder);
+            Collections.reverse(reversedOrder);
+            for (String model : reversedOrder) {
+                if (!factoryTeardownModels.contains(model)) continue;
+                List<Map<String, Object>> records = teardownRefs.getOrDefault(model, List.of());
+                FactoryContext factoryCtx = new FactoryContext(
+                    teardownRefs, config.getExecutor(), testRunIdValue, testRunIdValue
+                );
+                List<Map<String, Object>> reversedRecords = new ArrayList<>(records);
+                Collections.reverse(reversedRecords);
+                for (Map<String, Object> record : reversedRecords) {
+                    try {
+                        config.getFactories().get(model).getTeardown().teardown(record, factoryCtx);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            }
+        }
+
+        // SQL teardown for remaining models (skipping factory-teardown ones)
         TeardownExecutor.teardown(
             config.getExecutor(), dialect,
             introspection.tableMap(), introspection.columnMaps(),
-            introspection.schema(), (String) payload.get("testRunId"), refs
+            introspection.schema(), (String) payload.get("testRunId"), refs, factoryTeardownModels
         );
 
         Map<String, Object> responseBody = new LinkedHashMap<>(buildSdkMeta(config));

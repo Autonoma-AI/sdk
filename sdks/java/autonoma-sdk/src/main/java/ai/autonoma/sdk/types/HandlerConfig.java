@@ -18,6 +18,7 @@ public class HandlerConfig {
     private List<String> excludeTables;
     private boolean allowProduction = false;
     private SdkInfo sdk;
+    private Map<String, FactoryDefinition> factories;
     private Consumer<HookContext> beforeDown;
     private BiFunction<HookContext, AuthResult, AuthResult> afterUp;
 
@@ -48,6 +49,8 @@ public class HandlerConfig {
     public HandlerConfig setExcludeTables(List<String> excludeTables) { this.excludeTables = excludeTables; return this; }
     public HandlerConfig setAllowProduction(boolean allowProduction) { this.allowProduction = allowProduction; return this; }
     public HandlerConfig setSdk(SdkInfo sdk) { this.sdk = sdk; return this; }
+    public Map<String, FactoryDefinition> getFactories() { return factories; }
+    public HandlerConfig setFactories(Map<String, FactoryDefinition> factories) { this.factories = factories; return this; }
     public Consumer<HookContext> getBeforeDown() { return beforeDown; }
     public HandlerConfig setBeforeDown(Consumer<HookContext> beforeDown) { this.beforeDown = beforeDown; return this; }
     public BiFunction<HookContext, AuthResult, AuthResult> getAfterUp() { return afterUp; }
@@ -62,6 +65,7 @@ public class HandlerConfig {
         copy.excludeTables = this.excludeTables;
         copy.allowProduction = this.allowProduction;
         copy.sdk = sdk;
+        copy.factories = this.factories;
         copy.beforeDown = this.beforeDown;
         copy.afterUp = this.afterUp;
         return copy;

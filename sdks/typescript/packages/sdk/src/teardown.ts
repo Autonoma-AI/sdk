@@ -12,16 +12,19 @@ import { topoSort, findDeferrableEdge } from './graph'
  *   4. Delete non-scoped models by their record IDs from refs
  *   5. Delete the scope root entity last by id = scopeValue
  */
-export async function teardown(
-  executor: SQLExecutor,
-  dialect: Dialect,
-  tableMap: Map<string, string>,
-  columnMaps: Map<string, Map<string, string>>,
+/**
+ * Compute the teardown order for models (reverse topological order).
+ * Returns an array of model names in the order they should be deleted,
+ * plus the scope root model name (deleted last) and cycle info for FK nullification.
+ */
+export function computeTeardownOrder(
   schema: SchemaInfo,
-  scopeValue: string,
-  refs?: Record<string, Record<string, unknown>[]>,
-): Promise<void> {
-  // Find scope root: the model that the scopeField FK points TO
+): {
+  order: string[]
+  scopeRootModel: string | null
+  cycles: string[][]
+  scopeFieldByModel: Map<string, string>
+} {
   let scopeRootModel: string | null = null
   for (const edge of schema.edges) {
     if (edge.localField.toLowerCase() === schema.scopeField.toLowerCase() && edge.to !== edge.from) {
@@ -30,7 +33,6 @@ export async function teardown(
     }
   }
 
-  // Build map: model → FK field name that points to the scope root
   const scopeFieldByModel = new Map<string, string>()
   if (scopeRootModel) {
     for (const edge of schema.edges) {
@@ -43,100 +45,119 @@ export async function teardown(
   const modelNames = schema.models.map((m) => m.name)
   const { sorted, cycles } = topoSort(modelNames, schema.edges)
 
+  // Build condensation graph for correct ordering
+  const components: string[][] = []
+  const nodeToComp = new Map<string, number>()
+
+  for (const cycle of cycles) {
+    const idx = components.length
+    components.push(cycle)
+    for (const node of cycle) nodeToComp.set(node, idx)
+  }
+  for (const node of sorted) {
+    nodeToComp.set(node, components.length)
+    components.push([node])
+  }
+
+  const condAdj = new Map<number, Set<number>>()
+  const condInDeg = new Map<number, number>()
+  for (let i = 0; i < components.length; i++) {
+    condAdj.set(i, new Set())
+    condInDeg.set(i, 0)
+  }
+  for (const edge of schema.edges) {
+    if (edge.from === edge.to) continue
+    const fc = nodeToComp.get(edge.from)
+    const tc = nodeToComp.get(edge.to)
+    if (fc !== undefined && tc !== undefined && fc !== tc && !condAdj.get(tc)!.has(fc)) {
+      condAdj.get(tc)!.add(fc)
+      condInDeg.set(fc, (condInDeg.get(fc) ?? 0) + 1)
+    }
+  }
+
+  const condQueue: number[] = []
+  for (const [idx, deg] of condInDeg) {
+    if (deg === 0) condQueue.push(idx)
+  }
+  const condOrder: number[] = []
+  while (condQueue.length > 0) {
+    condQueue.sort()
+    const idx = condQueue.shift()!
+    condOrder.push(idx)
+    for (const neighbor of condAdj.get(idx)!) {
+      const nd = (condInDeg.get(neighbor) ?? 1) - 1
+      condInDeg.set(neighbor, nd)
+      if (nd === 0) condQueue.push(neighbor)
+    }
+  }
+
+  // Flatten in reverse condensation order, excluding scope root
+  const order: string[] = []
+  for (const compIdx of [...condOrder].reverse()) {
+    for (const model of components[compIdx]) {
+      if (model !== scopeRootModel) {
+        order.push(model)
+      }
+    }
+  }
+
+  return { order, scopeRootModel, cycles, scopeFieldByModel }
+}
+
+export async function teardown(
+  executor: SQLExecutor,
+  dialect: Dialect,
+  tableMap: Map<string, string>,
+  columnMaps: Map<string, Map<string, string>>,
+  schema: SchemaInfo,
+  scopeValue: string,
+  refs?: Record<string, Record<string, unknown>[]>,
+  skipModels?: Set<string>,
+): Promise<void> {
+  const { order, scopeRootModel, cycles, scopeFieldByModel } = computeTeardownOrder(schema)
+
   await executor.transaction(async (tx) => {
     // Break cycles by nullifying deferrable FKs
     for (const cycle of cycles) {
       const edge = findDeferrableEdge(cycle, schema.edges)
-      if (edge) {
-        const scopeFK = scopeFieldByModel.get(edge.from)
-        if (scopeFK) {
-          const dbTable = tableMap.get(edge.from)
-          const colMap = columnMaps.get(edge.from) ?? new Map<string, string>()
-          if (dbTable) {
-            const dbFKCol = colMap.get(edge.localField) ?? edge.localField
-            const dbScopeCol = colMap.get(scopeFK) ?? scopeFK
-            await tx.query(
-              `UPDATE ${dialect.quoteId(dbTable)} SET ${dialect.quoteId(dbFKCol)} = NULL WHERE ${dialect.quoteId(dbScopeCol)} = ${dialect.param(1)}`,
-              [scopeValue],
-            )
-          }
-        }
-      }
+      if (!edge) continue
+
+      const scopeFK = scopeFieldByModel.get(edge.from)
+      if (!scopeFK) continue
+
+      const dbTable = tableMap.get(edge.from)
+      if (!dbTable) continue
+
+      const colMap = columnMaps.get(edge.from) ?? new Map<string, string>()
+      const dbFKCol = colMap.get(edge.localField) ?? edge.localField
+      const dbScopeCol = colMap.get(scopeFK) ?? scopeFK
+      await tx.query(
+        `UPDATE ${dialect.quoteId(dbTable)} SET ${dialect.quoteId(dbFKCol)} = NULL WHERE ${dialect.quoteId(dbScopeCol)} = ${dialect.param(1)}`,
+        [scopeValue],
+      )
     }
 
-    // Build condensation graph: each SCC is a super-node, each sorted node
-    // is its own node. Topo-sort the condensation DAG and delete in reverse
-    // order so that dependents of cycles are deleted before the cycle itself.
-    const components: string[][] = []
-    const nodeToComp = new Map<string, number>()
-
-    for (const cycle of cycles) {
-      const idx = components.length
-      components.push(cycle)
-      for (const node of cycle) nodeToComp.set(node, idx)
-    }
-    for (const node of sorted) {
-      nodeToComp.set(node, components.length)
-      components.push([node])
+    // Delete in reverse condensation order (dependents first), skipping factory-teardown models
+    for (const model of order) {
+      if (skipModels?.has(model)) continue
+      await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
     }
 
-    // Build condensation DAG edges (dependency → dependent)
-    const condAdj = new Map<number, Set<number>>()
-    const condInDeg = new Map<number, number>()
-    for (let i = 0; i < components.length; i++) {
-      condAdj.set(i, new Set())
-      condInDeg.set(i, 0)
-    }
-    for (const edge of schema.edges) {
-      if (edge.from === edge.to) continue
-      const fc = nodeToComp.get(edge.from)
-      const tc = nodeToComp.get(edge.to)
-      if (fc !== undefined && tc !== undefined && fc !== tc && !condAdj.get(tc)!.has(fc)) {
-        condAdj.get(tc)!.add(fc)
-        condInDeg.set(fc, (condInDeg.get(fc) ?? 0) + 1)
-      }
-    }
+    // Delete the scope root entity last (unless skipped by factory teardown)
+    if (!scopeRootModel || skipModels?.has(scopeRootModel)) return
 
-    // Kahn's algorithm on the condensation DAG
-    const condQueue: number[] = []
-    for (const [idx, deg] of condInDeg) {
-      if (deg === 0) condQueue.push(idx)
-    }
-    const condOrder: number[] = []
-    while (condQueue.length > 0) {
-      condQueue.sort()
-      const idx = condQueue.shift()!
-      condOrder.push(idx)
-      for (const neighbor of condAdj.get(idx)!) {
-        const nd = (condInDeg.get(neighbor) ?? 1) - 1
-        condInDeg.set(neighbor, nd)
-        if (nd === 0) condQueue.push(neighbor)
-      }
-    }
+    const dbTable = tableMap.get(scopeRootModel)
+    if (!dbTable) return
 
-    // Delete in reverse condensation order (dependents first)
-    for (const compIdx of [...condOrder].reverse()) {
-      for (const model of components[compIdx]) {
-        if (model === scopeRootModel) continue
-        await deleteModel(tx, dialect, tableMap, columnMaps, model, scopeValue, scopeFieldByModel, refs, schema)
-      }
-    }
-
-    // Delete the scope root entity last
-    if (scopeRootModel) {
-      const dbTable = tableMap.get(scopeRootModel)
-      const colMap = columnMaps.get(scopeRootModel) ?? new Map<string, string>()
-      if (dbTable) {
-        const rootModelInfo = schema.models.find((m) => m.name === scopeRootModel)
-        const rootIdFields = rootModelInfo?.fields.filter((f) => f.isId) ?? []
-        const rootPkFieldName = (rootIdFields.find((f) => f.name.toLowerCase() === 'id') ?? rootIdFields[0])?.name ?? 'id'
-        const idCol = colMap.get(rootPkFieldName) ?? rootPkFieldName
-        await tx.query(
-          `DELETE FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} = ${dialect.param(1)}`,
-          [scopeValue],
-        )
-      }
-    }
+    const colMap = columnMaps.get(scopeRootModel) ?? new Map<string, string>()
+    const rootModelInfo = schema.models.find((m) => m.name === scopeRootModel)
+    const rootIdFields = rootModelInfo?.fields.filter((f) => f.isId) ?? []
+    const rootPkFieldName = (rootIdFields.find((f) => f.name.toLowerCase() === 'id') ?? rootIdFields[0])?.name ?? 'id'
+    const idCol = colMap.get(rootPkFieldName) ?? rootPkFieldName
+    await tx.query(
+      `DELETE FROM ${dialect.quoteId(dbTable)} WHERE ${dialect.quoteId(idCol)} = ${dialect.param(1)}`,
+      [scopeValue],
+    )
   })
 }
 

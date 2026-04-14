@@ -29,6 +29,14 @@ defmodule Autonoma.Error do
     %__MODULE__{message: "Invalid refs token: #{detail}", code: "INVALID_REFS_TOKEN", status: 403}
   end
 
+  def factory_missing_pk(model, pk_field) do
+    %__MODULE__{
+      message: "Factory for \"#{model}\" must return a record with \"#{pk_field}\"",
+      code: "FACTORY_MISSING_PK",
+      status: 500
+    }
+  end
+
   def same_secrets do
     %__MODULE__{
       message:

@@ -60,6 +60,14 @@ func ErrInvalidBody(reason string) *AutonomaError {
 	}
 }
 
+func ErrFactoryMissingPK(model, pkField string) *AutonomaError {
+	return &AutonomaError{
+		Message: fmt.Sprintf("Factory for %q must return a record with %q", model, pkField),
+		Code:    "FACTORY_MISSING_PK",
+		Status:  500,
+	}
+}
+
 func ErrSameSecrets() *AutonomaError {
 	return &AutonomaError{
 		Message: "sharedSecret and signingSecret must be different. The shared secret is known by Autonoma; the signing secret must be private.",

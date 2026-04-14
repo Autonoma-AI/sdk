@@ -50,6 +50,7 @@ fn make_config() -> HandlerConfig {
         introspection_cache: tokio::sync::OnceCell::new(),
         before_down: None,
         after_up: None,
+        factories: None,
     }
 }
 

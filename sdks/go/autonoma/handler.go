@@ -274,16 +274,40 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 				resolvedFields[j] = fields
 			}
 
-			spec := map[string]ResolvedEntitySpec{
-				model: {Count: len(resolvedFields), Fields: resolvedFields},
-			}
+			var records []map[string]any
+			factory, hasFactory := config.Factories[model]
 
-			created, err := CreateEntities(ctx, tx, dialect, introspection.TableMap, introspection.ColumnMaps, spec, introspection.EnumTypeMaps, schema.Models)
-			if err != nil {
-				return err
-			}
+			if hasFactory {
+				// Factory path: call user-defined Create() for each record
+				for _, fields := range resolvedFields {
+					factoryCtx := FactoryContext{
+						Refs:         refs,
+						Executor:     tx,
+						ScenarioName: testRunID,
+						TestRunID:    testRunID,
+					}
+					record, err := factory.Create(fields, factoryCtx)
+					if err != nil {
+						return err
+					}
+					if record[pkFieldName] == nil {
+						return ErrFactoryMissingPK(model, pkFieldName)
+					}
+					records = append(records, record)
+				}
+			} else {
+				// SQL fallback path (existing behavior)
+				spec := map[string]ResolvedEntitySpec{
+					model: {Count: len(resolvedFields), Fields: resolvedFields},
+				}
 
-			records := created[model]
+				created, err := CreateEntities(ctx, tx, dialect, introspection.TableMap, introspection.ColumnMaps, spec, introspection.EnumTypeMaps, schema.Models)
+				if err != nil {
+					return err
+				}
+
+				records = created[model]
+			}
 			if refs[model] == nil {
 				refs[model] = nil
 			}
@@ -429,8 +453,54 @@ func handleDown(ctx context.Context, config *HandlerConfig, body map[string]any)
 		}
 	}
 
+	// Determine which models have factory teardown
+	factoryTeardownModels := make(map[string]bool)
+	if config.Factories != nil {
+		for model, factory := range config.Factories {
+			if factory.Teardown != nil {
+				factoryTeardownModels[model] = true
+			}
+		}
+	}
+
+	// Run factory teardowns in reverse topo order
+	if len(factoryTeardownModels) > 0 {
+		tdInfo := ComputeTeardownOrder(introspection.Schema)
+		fullOrder := make([]string, len(tdInfo.Order))
+		copy(fullOrder, tdInfo.Order)
+		if tdInfo.ScopeRootModel != "" {
+			fullOrder = append(fullOrder, tdInfo.ScopeRootModel)
+		}
+		tdRefs := payload.Refs
+		if tdRefs == nil {
+			tdRefs = map[string][]map[string]any{}
+		}
+
+		// Iterate in reverse
+		for i := len(fullOrder) - 1; i >= 0; i-- {
+			model := fullOrder[i]
+			if !factoryTeardownModels[model] {
+				continue
+			}
+			records := tdRefs[model]
+			factoryCtx := FactoryContext{
+				Refs:         tdRefs,
+				Executor:     config.Executor,
+				ScenarioName: payload.TestRunID,
+				TestRunID:    payload.TestRunID,
+			}
+			// Call teardown per record in reverse order
+			for j := len(records) - 1; j >= 0; j-- {
+				if err := config.Factories[model].Teardown(records[j], factoryCtx); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	// SQL teardown for remaining models (skipping factory-teardown ones)
 	err = Teardown(ctx, config.Executor, dialect, introspection.TableMap, introspection.ColumnMaps,
-		introspection.Schema, payload.TestRunID, payload.Refs)
+		introspection.Schema, payload.TestRunID, payload.Refs, factoryTeardownModels)
 	if err != nil {
 		return nil, err
 	}

@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { handleRequest } from '../src/handler.js'
 import { signBody } from '../src/hmac.js'
 import { signRefs } from '../src/refs.js'
-import type { AuthResult, HandlerConfig, HookContext, SQLExecutor } from '../src/types.js'
+import { defineFactory } from '../src/factory.js'
+import type { AuthResult, FactoryContext, HandlerConfig, HookContext, SQLExecutor } from '../src/types.js'
 
 /**
  * Create a mock SQLExecutor that returns canned information_schema data
@@ -357,6 +358,239 @@ describe('handleRequest', () => {
       const memberInsert = queries.find((q) => q.toLowerCase().includes('insert') && q.toLowerCase().includes('member'))
       expect(memberInsert).toBeDefined()
       expect(memberInsert).toMatch(/"id"/)
+    })
+  })
+
+  describe('factories', () => {
+    it('uses factory create instead of SQL when factory is registered', async () => {
+      const factoryCreateSpy = vi.fn(async (data: Record<string, unknown>, _ctx: FactoryContext) => ({
+        id: 'factory-org-1',
+        name: data.name,
+      }))
+
+      const executor = createMockExecutor()
+      const config = createConfig({
+        executor,
+        factories: {
+          Organization: defineFactory({ create: factoryCreateSpy }),
+        },
+      })
+
+      const req = signedRequest(
+        { action: 'up', create: { Organization: [{ name: 'FactoryOrg' }] }, testRunId: 'run-factory' },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      expect(factoryCreateSpy).toHaveBeenCalledOnce()
+      expect(factoryCreateSpy.mock.calls[0]![0]).toMatchObject({ name: 'FactoryOrg' })
+
+      const body = res.body as any
+      expect(body.refs.Organization[0].id).toBe('factory-org-1')
+
+      // No INSERT query for Organization should have been issued
+      const orgInserts = executor.queries.filter((q) => q.toLowerCase().includes('insert') && q.toLowerCase().includes('organization'))
+      expect(orgInserts).toHaveLength(0)
+    })
+
+    it('hybrid mode: factory for some models, SQL for others', async () => {
+      const factoryCreateSpy = vi.fn(async (data: Record<string, unknown>) => ({
+        id: 'factory-org-1',
+        name: data.name,
+      }))
+
+      const executor = createMockExecutor()
+      const config = createConfig({
+        executor,
+        factories: {
+          Organization: defineFactory({ create: factoryCreateSpy }),
+          // User has no factory — falls back to SQL
+        },
+      })
+
+      const req = signedRequest(
+        {
+          action: 'up',
+          create: {
+            Organization: [{ name: 'HybridOrg' }],
+            User: [{ email: 'test@example.com', name: 'Test' }],
+          },
+          testRunId: 'run-hybrid',
+        },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      expect(factoryCreateSpy).toHaveBeenCalledOnce()
+
+      // User should have been created via SQL INSERT
+      const userInserts = executor.queries.filter((q) => q.toLowerCase().includes('insert') && q.toLowerCase().includes('"user"'))
+      expect(userInserts.length).toBeGreaterThan(0)
+    })
+
+    it('factory receives pre-resolved FK IDs (not temp IDs)', async () => {
+      let receivedData: Record<string, unknown> | null = null
+
+      const executor = createMockExecutor()
+      const config = createConfig({
+        executor,
+        factories: {
+          Organization: defineFactory({
+            create: async (data) => ({ id: 'resolved-org-id', name: data.name }),
+          }),
+          User: defineFactory({
+            create: async (data, _ctx) => {
+              receivedData = { ...data }
+              return { id: 'user-1', email: data.email, organizationId: data.organizationId }
+            },
+          }),
+        },
+      })
+
+      // Nest User under Organization so tree resolver wires the FK
+      const req = signedRequest(
+        {
+          action: 'up',
+          create: {
+            Organization: [{ name: 'Org', User: [{ email: 'a@b.com', name: 'A' }] }],
+          },
+          testRunId: 'run-fk',
+        },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(200)
+      // The User factory should receive the real org ID, not __temp_Organization_0
+      expect(receivedData).toBeDefined()
+      expect(receivedData!.organizationId).toBe('resolved-org-id')
+    })
+
+    it('errors when factory does not return PK field', async () => {
+      const config = createConfig({
+        factories: {
+          Organization: defineFactory({
+            create: async (data) => ({ name: data.name }), // missing 'id'
+          }),
+        },
+      })
+
+      const req = signedRequest(
+        { action: 'up', create: { Organization: [{ name: 'NoPK' }] }, testRunId: 'run-nopk' },
+        config.sharedSecret,
+      )
+      const res = await handleRequest(config, req)
+
+      expect(res.status).toBe(500)
+      expect(res.body.code).toBe('FACTORY_MISSING_PK')
+    })
+
+    it('factory teardown is called per record in reverse order', async () => {
+      const teardownCalls: string[] = []
+      const config = createConfig({
+        factories: {
+          Organization: defineFactory({
+            create: async (data) => ({ id: `org-${data.name}`, name: data.name }),
+            teardown: async (record) => {
+              teardownCalls.push(record.id as string)
+            },
+          }),
+        },
+      })
+
+      // First create
+      const upReq = signedRequest(
+        {
+          action: 'up',
+          create: { Organization: [{ name: 'A' }, { name: 'B' }] },
+          testRunId: 'run-teardown',
+        },
+        config.sharedSecret,
+      )
+      const upRes = await handleRequest(config, upReq)
+      expect(upRes.status).toBe(200)
+      const refsToken = (upRes.body as any).refsToken
+
+      // Then teardown
+      const downReq = signedRequest(
+        { action: 'down', refsToken },
+        config.sharedSecret,
+      )
+      const downRes = await handleRequest(config, downReq)
+
+      expect(downRes.status).toBe(200)
+      expect(teardownCalls).toHaveLength(2)
+      // Reverse order: B first, then A
+      expect(teardownCalls).toEqual(['org-B', 'org-A'])
+    })
+
+    it('SQL teardown is used when factory has no teardown defined', async () => {
+      const executor = createMockExecutor()
+      const config = createConfig({
+        executor,
+        factories: {
+          Organization: defineFactory({
+            create: async (data) => ({ id: 'org-1', name: data.name }),
+            // No teardown — SQL DELETE should be used
+          }),
+        },
+      })
+
+      const upReq = signedRequest(
+        { action: 'up', create: { Organization: [{ name: 'Org' }] }, testRunId: 'run-sql-td' },
+        config.sharedSecret,
+      )
+      const upRes = await handleRequest(config, upReq)
+      expect(upRes.status).toBe(200)
+
+      const refsToken = (upRes.body as any).refsToken
+      const downReq = signedRequest(
+        { action: 'down', refsToken },
+        config.sharedSecret,
+      )
+      const downRes = await handleRequest(config, downReq)
+
+      expect(downRes.status).toBe(200)
+      // SQL DELETE should have been used
+      const deleteQueries = executor.queries.filter((q) => q.toLowerCase().includes('delete'))
+      expect(deleteQueries.length).toBeGreaterThan(0)
+    })
+
+    it('factory context contains refs of previously created models', async () => {
+      let userCtx: FactoryContext | null = null
+
+      const config = createConfig({
+        factories: {
+          Organization: defineFactory({
+            create: async (data) => ({ id: 'org-ctx', name: data.name }),
+          }),
+          User: defineFactory({
+            create: async (data, ctx) => {
+              userCtx = ctx
+              return { id: 'user-ctx', email: data.email, organizationId: data.organizationId }
+            },
+          }),
+        },
+      })
+
+      const req = signedRequest(
+        {
+          action: 'up',
+          create: { Organization: [{ name: 'Org' }], User: [{ email: 'x@y.com', name: 'X' }] },
+          testRunId: 'run-ctx',
+        },
+        config.sharedSecret,
+      )
+      await handleRequest(config, req)
+
+      expect(userCtx).not.toBeNull()
+      // By the time User factory runs, Organization should already be in refs
+      expect(userCtx!.refs.Organization).toBeDefined()
+      expect(userCtx!.refs.Organization).toHaveLength(1)
+      expect(userCtx!.refs.Organization[0]!.id).toBe('org-ctx')
+      expect(userCtx!.testRunId).toBe('run-ctx')
     })
   })
 

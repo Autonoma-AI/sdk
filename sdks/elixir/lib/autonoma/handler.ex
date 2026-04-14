@@ -146,7 +146,7 @@ defmodule Autonoma.Handler do
 
     {refs, _id_map} =
       config.executor.(:transaction, fn tx ->
-        {refs, id_map, _i} = process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, 0)
+        {refs, id_map, _i} = process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, 0, config, test_run_id)
 
         # Resolve deferred FK updates
         Enum.each(tree.deferred_updates, fn du ->
@@ -195,15 +195,15 @@ defmodule Autonoma.Handler do
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"auth" => auth, "refs" => refs, "refsToken" => refs_token})}
   end
 
-  defp process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i) do
+  defp process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id) do
     if i >= length(tree.ops) do
       {refs, id_map, i}
     else
-      do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i)
+      do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id)
     end
   end
 
-  defp do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i) do
+  defp do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id) do
     op = Enum.at(tree.ops, i)
     model = op.model
 
@@ -271,11 +271,36 @@ defmodule Autonoma.Handler do
         fields
       end)
 
-    is_batch = op.batch
-    spec = %{model => %{"count" => length(resolved_fields), "fields" => resolved_fields, "batch" => is_batch}}
+    factories = Map.get(config, :factories, %{}) || %{}
+    factory = Map.get(factories, model)
 
-    created = Create.create_entities(tx, dialect, table_map, column_maps, spec, enum_type_maps, schema["models"] || [])
-    records = Map.get(created, model, [])
+    records =
+      if factory do
+        # Factory path: call user-defined create() for each record
+        Enum.map(resolved_fields, fn fields ->
+          factory_ctx = %{
+            refs: refs,
+            executor: tx,
+            scenario_name: test_run_id,
+            test_run_id: test_run_id
+          }
+
+          record = factory.create.(fields, factory_ctx)
+
+          if Map.get(record, pk_field_name) == nil do
+            raise Error.factory_missing_pk(model, pk_field_name)
+          end
+
+          record
+        end)
+      else
+        # SQL fallback path (existing behavior)
+        is_batch = op.batch
+        spec = %{model => %{"count" => length(resolved_fields), "fields" => resolved_fields, "batch" => is_batch}}
+
+        created = Create.create_entities(tx, dialect, table_map, column_maps, spec, enum_type_maps, schema["models"] || [])
+        Map.get(created, model, [])
+      end
 
     refs =
       Map.update(refs, model, records, fn existing -> existing ++ records end)
@@ -295,7 +320,7 @@ defmodule Autonoma.Handler do
         end
       end)
 
-    process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i + 1)
+    process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i + 1, config, test_run_id)
   end
 
   defp collect_batch(ops, i, model, batch_flag, acc) do
@@ -331,7 +356,42 @@ defmodule Autonoma.Handler do
       hook -> hook.(%{scenario_name: payload["testRunId"], refs: payload["refs"] || %{}})
     end
 
-    TeardownSQL.teardown(config.executor, dialect, table_map, column_maps, schema, payload["testRunId"], payload["refs"])
+    # Determine which models have factory teardown
+    factories = Map.get(config, :factories, %{}) || %{}
+    factory_teardown_models =
+      factories
+      |> Enum.filter(fn {_model, factory} -> factory[:teardown] != nil end)
+      |> Enum.map(fn {model, _} -> model end)
+      |> MapSet.new()
+
+    # Run factory teardowns in reverse topo order
+    if MapSet.size(factory_teardown_models) > 0 do
+      %{order: order, scope_root: scope_root} = TeardownSQL.compute_teardown_order(schema)
+      full_order = if scope_root, do: order ++ [scope_root], else: order
+      td_refs = payload["refs"] || %{}
+
+      full_order
+      |> Enum.reverse()
+      |> Enum.filter(fn model -> MapSet.member?(factory_teardown_models, model) end)
+      |> Enum.each(fn model ->
+        records = Map.get(td_refs, model, [])
+        factory_ctx = %{
+          refs: td_refs,
+          executor: config.executor,
+          scenario_name: payload["testRunId"],
+          test_run_id: payload["testRunId"]
+        }
+
+        records
+        |> Enum.reverse()
+        |> Enum.each(fn record ->
+          factories[model].teardown.(record, factory_ctx)
+        end)
+      end)
+    end
+
+    # SQL teardown for remaining models (skipping factory-teardown ones)
+    TeardownSQL.teardown(config.executor, dialect, table_map, column_maps, schema, payload["testRunId"], payload["refs"], factory_teardown_models)
 
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"ok" => true})}
   end

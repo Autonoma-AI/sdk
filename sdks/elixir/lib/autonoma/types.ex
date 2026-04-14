@@ -56,6 +56,20 @@ defmodule Autonoma.Types do
           refs: %{String.t() => [map()]}
         }
 
+  @type factory_context :: %{
+          refs: %{String.t() => [map()]},
+          executor: sql_executor(),
+          scenario_name: String.t(),
+          test_run_id: String.t()
+        }
+
+  @type factory_definition :: %{
+          required(:create) => (map(), factory_context() -> map()),
+          optional(:teardown) => (map(), factory_context() -> any()) | nil
+        }
+
+  @type factory_registry :: %{String.t() => factory_definition()}
+
   @type handler_config :: %{
           optional(:executor) => sql_executor(),
           optional(:adapter) => module(),
@@ -71,7 +85,8 @@ defmodule Autonoma.Types do
           optional(:allow_production) => boolean(),
           required(:auth) => (map() | nil, map() -> map()),
           optional(:before_down) => (hook_context() -> any()),
-          optional(:after_up) => (hook_context(), map() -> map())
+          optional(:after_up) => (hook_context(), map() -> map()),
+          optional(:factories) => factory_registry()
         }
 
   @type handler_request :: %{

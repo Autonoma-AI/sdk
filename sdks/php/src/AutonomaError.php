@@ -36,4 +36,11 @@ class AutonomaError extends \RuntimeException {
             500,
         );
     }
+    public static function factoryMissingPk(string $model, string $pkField): self {
+        return new self(
+            "Factory for \"{$model}\" must return a record with \"{$pkField}\"",
+            'FACTORY_MISSING_PK',
+            500,
+        );
+    }
 }

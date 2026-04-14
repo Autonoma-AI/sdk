@@ -12,6 +12,8 @@ class HandlerConfig {
         public readonly ?string $dbSchema = null,
         public readonly ?array $tableNameMap = null,
         public readonly ?array $excludeTables = null,
+        /** @var array<string, FactoryDefinition>|null Factory definitions per model */
+        public readonly ?array $factories = null,
         public readonly bool $allowProduction = false,
         public /*readonly*/ ?array $sdk = null,
         /** @var callable(array{scenarioName: string, refs: array}): void|null */

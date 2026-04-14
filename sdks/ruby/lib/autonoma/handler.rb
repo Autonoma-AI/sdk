@@ -2,6 +2,7 @@
 
 require "json"
 require "securerandom"
+require "set"
 require "time"
 
 require_relative "hmac"
@@ -193,9 +194,33 @@ module Autonoma
             fields
           end
 
-          spec = { model => { "count" => resolved_fields.length, "fields" => resolved_fields, "batch" => op.batch } }
-          created = Create.create_entities(tx, dialect, introspection.table_map, introspection.column_maps, spec, introspection.enum_type_maps, schema.models)
-          records = created[model] || []
+          factory = config.factories && config.factories[model]
+
+          if factory
+            # Factory path: call user-defined create for each record
+            records = resolved_fields.map do |fields|
+              factory_ctx = FactoryContext.new(
+                refs: refs,
+                executor: tx,
+                scenario_name: test_run_id,
+                test_run_id: test_run_id
+              )
+              record = factory.create.call(fields, factory_ctx)
+              if record[pk_field_name].nil?
+                raise AutonomaError.new(
+                  "Factory for \"#{model}\" must return a record with \"#{pk_field_name}\"",
+                  "FACTORY_MISSING_PK",
+                  500
+                )
+              end
+              record
+            end
+          else
+            # SQL fallback path (existing behavior)
+            spec = { model => { "count" => resolved_fields.length, "fields" => resolved_fields, "batch" => op.batch } }
+            created = Create.create_entities(tx, dialect, introspection.table_map, introspection.column_maps, spec, introspection.enum_type_maps, schema.models)
+            records = created[model] || []
+          end
 
           refs[model] = (refs[model] || []) + records
 
@@ -273,10 +298,42 @@ module Autonoma
         config.before_down.call(hook_ctx)
       end
 
+      # Determine which models have factory teardown
+      factory_teardown_models = Set.new
+      if config.factories
+        config.factories.each do |model, factory|
+          factory_teardown_models.add(model) if factory.teardown
+        end
+      end
+
+      # Run factory teardowns in reverse topo order
+      if factory_teardown_models.any?
+        td_info = Teardown.compute_teardown_order(introspection.schema)
+        full_order = td_info[:scope_root_model] ? td_info[:order] + [td_info[:scope_root_model]] : td_info[:order]
+        td_refs = payload["refs"] || {}
+
+        full_order.reverse_each do |model|
+          next unless factory_teardown_models.include?(model)
+
+          records = td_refs[model] || []
+          factory_ctx = FactoryContext.new(
+            refs: td_refs,
+            executor: config.executor,
+            scenario_name: payload["testRunId"],
+            test_run_id: payload["testRunId"]
+          )
+          records.reverse_each do |record|
+            config.factories[model].teardown.call(record, factory_ctx)
+          end
+        end
+      end
+
+      # SQL teardown for remaining models (skipping factory-teardown ones)
       Teardown.teardown(
         config.executor, dialect,
         introspection.table_map, introspection.column_maps,
-        introspection.schema, payload["testRunId"], payload["refs"]
+        introspection.schema, payload["testRunId"], payload["refs"],
+        skip_models: factory_teardown_models
       )
 
       HandlerResponse.new(status: 200, body: build_sdk_meta(config).merge("ok" => true))

@@ -191,3 +191,268 @@ class TestHandler < Minitest::Test
     assert_equal "run-1", captured_ctx.scenario_name
   end
 end
+
+# Mock executor that returns Organization + User introspection data for factory tests.
+class FactoryMockExecutor
+  attr_reader :queries
+
+  def initialize
+    @queries = []
+    @insert_counter = 0
+  end
+
+  def query(sql, params = [])
+    @queries << sql
+    trimmed = sql.strip.downcase
+
+    if trimmed.include?("information_schema.tables") && !trimmed.include?("table_constraints")
+      [{ "table_name" => "organization" }, { "table_name" => "user" }]
+    elsif trimmed.include?("information_schema.columns") && !trimmed.include?("table_constraints")
+      [
+        { "table_name" => "organization", "column_name" => "id", "data_type" => "uuid",
+          "udt_name" => "uuid", "is_nullable" => "NO", "column_default" => "gen_random_uuid()" },
+        { "table_name" => "organization", "column_name" => "name", "data_type" => "text",
+          "udt_name" => "text", "is_nullable" => "NO", "column_default" => nil },
+        { "table_name" => "user", "column_name" => "id", "data_type" => "uuid",
+          "udt_name" => "uuid", "is_nullable" => "NO", "column_default" => "gen_random_uuid()" },
+        { "table_name" => "user", "column_name" => "email", "data_type" => "text",
+          "udt_name" => "text", "is_nullable" => "NO", "column_default" => nil },
+        { "table_name" => "user", "column_name" => "name", "data_type" => "text",
+          "udt_name" => "text", "is_nullable" => "NO", "column_default" => nil },
+        { "table_name" => "user", "column_name" => "organization_id", "data_type" => "uuid",
+          "udt_name" => "uuid", "is_nullable" => "NO", "column_default" => nil }
+      ]
+    elsif trimmed.include?("foreign key")
+      [{ "from_table" => "user", "from_column" => "organization_id",
+         "to_table" => "organization", "to_column" => "id", "is_nullable" => "NO" }]
+    elsif trimmed.include?("primary key")
+      [{ "table_name" => "organization", "column_name" => "id" },
+       { "table_name" => "user", "column_name" => "id" }]
+    elsif trimmed.include?("pg_type")
+      []
+    elsif trimmed.start_with?("insert")
+      @insert_counter += 1
+      record = { "id" => "mock-id-#{@insert_counter}" }
+      if params&.any?
+        col_match = sql.match(/\(([^)]+)\)\s*VALUES/i)
+        if col_match
+          cols = col_match[1].split(",").map { |c| c.strip.delete('"') }
+          cols.each_with_index do |col, i|
+            record[col] = params[i] if i < params.length
+          end
+        end
+      end
+      [record]
+    else
+      []
+    end
+  end
+
+  def transaction
+    yield self
+  end
+end
+
+class TestFactories < Minitest::Test
+  def make_factory_config(**overrides)
+    defaults = {
+      executor: FactoryMockExecutor.new,
+      scope_field: "organizationId",
+      shared_secret: "test-secret",
+      signing_secret: "test-signing-secret",
+      auth: ->(_user, _ctx) { { "headers" => { "Authorization" => "Bearer token" } } }
+    }
+    defaults.merge!(overrides)
+    Autonoma::HandlerConfig.new(**defaults)
+  end
+
+  def make_request(body, secret = "test-secret")
+    body_str = body.is_a?(String) ? body : JSON.generate(body)
+    sig = Autonoma::Hmac.sign_body(body_str, secret)
+    Autonoma::HandlerRequest.new(
+      body: body_str,
+      headers: { "x-signature" => sig }
+    )
+  end
+
+  def test_factory_create_instead_of_sql
+    calls = []
+
+    org_create = ->(data, _ctx) {
+      calls << data
+      { "id" => "factory-org-1", "name" => data["name"] }
+    }
+
+    executor = FactoryMockExecutor.new
+    config = make_factory_config(
+      executor: executor,
+      factories: { "Organization" => Autonoma::Factory.define_factory(create: org_create) }
+    )
+    req = make_request(
+      { "action" => "up", "create" => { "Organization" => [{ "name" => "FactoryOrg" }] }, "testRunId" => "run-1" }
+    )
+    result = Autonoma::Handler.handle_request(config, req)
+
+    assert_equal 200, result.status
+    assert_equal 1, calls.length
+    assert_equal "FactoryOrg", calls[0]["name"]
+    assert_equal "factory-org-1", result.body["refs"]["Organization"][0]["id"]
+    # No INSERT for Organization
+    org_inserts = executor.queries.select { |q| q.downcase.include?("insert") && q.downcase.include?("organization") }
+    assert_equal 0, org_inserts.length
+  end
+
+  def test_hybrid_factory_and_sql
+    org_create = ->(data, _ctx) {
+      { "id" => "factory-org-1", "name" => data["name"] }
+    }
+
+    executor = FactoryMockExecutor.new
+    config = make_factory_config(
+      executor: executor,
+      factories: { "Organization" => Autonoma::Factory.define_factory(create: org_create) }
+    )
+    req = make_request(
+      { "action" => "up", "create" => { "Organization" => [{ "name" => "Org" }], "User" => [{ "email" => "a@b.com", "name" => "A" }] }, "testRunId" => "run-2" }
+    )
+    result = Autonoma::Handler.handle_request(config, req)
+
+    assert_equal 200, result.status
+    # User should be created via SQL
+    user_inserts = executor.queries.select { |q| q.downcase.include?("insert") && q.downcase.include?('"user"') }
+    assert user_inserts.length > 0, "User should be created via SQL INSERT"
+  end
+
+  def test_factory_receives_resolved_fk_ids
+    received = {}
+
+    org_create = ->(data, _ctx) {
+      { "id" => "resolved-org-id", "name" => data["name"] }
+    }
+
+    user_create = ->(data, _ctx) {
+      received.merge!(data)
+      { "id" => "user-1", "email" => data["email"], "organizationId" => data["organizationId"] }
+    }
+
+    config = make_factory_config(
+      factories: {
+        "Organization" => Autonoma::Factory.define_factory(create: org_create),
+        "User" => Autonoma::Factory.define_factory(create: user_create)
+      }
+    )
+    # Nest User under Organization so tree resolver wires the FK
+    req = make_request(
+      { "action" => "up", "create" => { "Organization" => [{ "name" => "Org", "User" => [{ "email" => "a@b.com", "name" => "A" }] }] }, "testRunId" => "run-3" }
+    )
+    result = Autonoma::Handler.handle_request(config, req)
+
+    assert_equal 200, result.status
+    assert_equal "resolved-org-id", received["organizationId"]
+  end
+
+  def test_factory_missing_pk_error
+    org_create = ->(data, _ctx) {
+      { "name" => data["name"] } # missing 'id'
+    }
+
+    config = make_factory_config(
+      factories: { "Organization" => Autonoma::Factory.define_factory(create: org_create) }
+    )
+    req = make_request(
+      { "action" => "up", "create" => { "Organization" => [{ "name" => "NoPK" }] }, "testRunId" => "run-4" }
+    )
+    result = Autonoma::Handler.handle_request(config, req)
+
+    assert_equal 500, result.status
+    assert_equal "FACTORY_MISSING_PK", result.body["code"]
+  end
+
+  def test_factory_teardown_called_per_record
+    teardown_calls = []
+
+    org_create = ->(data, _ctx) {
+      { "id" => "org-#{data['name']}", "name" => data["name"] }
+    }
+
+    org_teardown = ->(record, _ctx) {
+      teardown_calls << record["id"]
+    }
+
+    config = make_factory_config(
+      factories: { "Organization" => Autonoma::Factory.define_factory(create: org_create, teardown: org_teardown) }
+    )
+
+    # Create
+    up_req = make_request(
+      { "action" => "up", "create" => { "Organization" => [{ "name" => "A" }, { "name" => "B" }] }, "testRunId" => "run-5" }
+    )
+    up_res = Autonoma::Handler.handle_request(config, up_req)
+    assert_equal 200, up_res.status
+    refs_token = up_res.body["refsToken"]
+
+    # Teardown
+    down_req = make_request({ "action" => "down", "refsToken" => refs_token })
+    down_res = Autonoma::Handler.handle_request(config, down_req)
+
+    assert_equal 200, down_res.status
+    assert_equal 2, teardown_calls.length
+    assert_equal ["org-B", "org-A"], teardown_calls # reverse order
+  end
+
+  def test_sql_fallback_teardown
+    org_create = ->(data, _ctx) {
+      { "id" => "org-1", "name" => data["name"] }
+    }
+
+    executor = FactoryMockExecutor.new
+    config = make_factory_config(
+      executor: executor,
+      factories: { "Organization" => Autonoma::Factory.define_factory(create: org_create) } # no teardown
+    )
+
+    up_req = make_request(
+      { "action" => "up", "create" => { "Organization" => [{ "name" => "Org" }] }, "testRunId" => "run-6" }
+    )
+    up_res = Autonoma::Handler.handle_request(config, up_req)
+    assert_equal 200, up_res.status
+
+    down_req = make_request({ "action" => "down", "refsToken" => up_res.body["refsToken"] })
+    down_res = Autonoma::Handler.handle_request(config, down_req)
+
+    assert_equal 200, down_res.status
+    delete_queries = executor.queries.select { |q| q.downcase.include?("delete") }
+    assert delete_queries.length > 0, "SQL DELETE should be used for teardown without factory teardown"
+  end
+
+  def test_factory_context_has_refs
+    captured_ctx = {}
+
+    org_create = ->(data, _ctx) {
+      { "id" => "org-ctx", "name" => data["name"] }
+    }
+
+    user_create = ->(data, ctx) {
+      captured_ctx["refs"] = ctx.refs.dup
+      captured_ctx["test_run_id"] = ctx.test_run_id
+      { "id" => "user-ctx", "email" => data["email"], "organizationId" => data["organizationId"] }
+    }
+
+    config = make_factory_config(
+      factories: {
+        "Organization" => Autonoma::Factory.define_factory(create: org_create),
+        "User" => Autonoma::Factory.define_factory(create: user_create)
+      }
+    )
+    req = make_request(
+      { "action" => "up", "create" => { "Organization" => [{ "name" => "Org" }], "User" => [{ "email" => "x@y.com", "name" => "X" }] }, "testRunId" => "run-7" }
+    )
+    Autonoma::Handler.handle_request(config, req)
+
+    assert captured_ctx.key?("refs"), "Factory context should have refs"
+    assert captured_ctx["refs"].key?("Organization"), "Refs should contain Organization"
+    assert_equal 1, captured_ctx["refs"]["Organization"].length
+    assert_equal "org-ctx", captured_ctx["refs"]["Organization"][0]["id"]
+    assert_equal "run-7", captured_ctx["test_run_id"]
+  end
+end

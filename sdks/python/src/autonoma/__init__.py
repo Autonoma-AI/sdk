@@ -5,7 +5,9 @@ from autonoma.types import (
     AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, SQLExecutor,
     SchemaInfo, ModelInfo, FieldInfo, FKEdge, SchemaRelation,
     IntrospectionResult, CreateOp, DeferredUpdate,
+    FactoryContext, FactoryDefinition, FactoryRegistry,
 )
+from autonoma.factory import define_factory
 from autonoma.check import check_scenario, CheckResult, CheckError
 from autonoma.dialect import get_dialect, PostgresDialect, MySQLDialect
 
@@ -14,6 +16,7 @@ __all__ = [
     "AuthContext", "HandlerConfig", "HandlerRequest", "HandlerResponse", "SQLExecutor",
     "SchemaInfo", "ModelInfo", "FieldInfo", "FKEdge", "SchemaRelation",
     "IntrospectionResult", "CreateOp", "DeferredUpdate",
+    "FactoryContext", "FactoryDefinition", "FactoryRegistry", "define_factory",
     "check_scenario", "CheckResult", "CheckError",
     "get_dialect", "PostgresDialect", "MySQLDialect",
 ]
