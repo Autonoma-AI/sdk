@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.13](https://github.com/Autonoma-AI/sdk/compare/v0.1.12...v0.1.13) (2026-04-14)
+
+
+### Features
+
+* add hono implementation sdk ([#40](https://github.com/Autonoma-AI/sdk/issues/40)) ([ff81811](https://github.com/Autonoma-AI/sdk/commit/ff81811e6ca5fd31a50ac496a349d8aadd1d04bc))
+
+
+### Bug Fixes
+
+* pnpm lock file ([#42](https://github.com/Autonoma-AI/sdk/issues/42)) ([2bec029](https://github.com/Autonoma-AI/sdk/commit/2bec029008dc7868337fda3d69c4fa8118c89738))
+
 ## [0.1.12](https://github.com/Autonoma-AI/sdk/compare/v0.1.11...v0.1.12) (2026-04-14)
 
 
