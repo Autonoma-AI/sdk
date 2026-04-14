@@ -92,19 +92,19 @@ docker stop autonoma-postgres
 The key integration is in the router (`lib/autonoma_example/router.ex`):
 
 ```elixir
-# Create the adapter
-adapter = Autonoma.Ecto.Adapter.new(
-  AutonomaExample.Repo,
-  [Organization, User, Project, Task],
-  scope_field: "organization_id"
-)
+# Create the executor
+executor = Autonoma.Ecto.Executor.ecto_executor(AutonomaExample.Repo)
 
 # Mount the endpoint
 forward "/api/autonoma", Autonoma.Plug.Handler, %{
-  adapter: adapter,
+  executor: executor,
+  scope_field: "organization_id",
   shared_secret: "my-shared-secret",
-  signing_secret: "my-signing-secret"
+  signing_secret: "my-signing-secret",
+  auth: fn _user, _context ->
+    %{"headers" => %{"Authorization" => "Bearer test-token"}}
+  end
 }
 ```
 
-The Ecto adapter introspects your schemas automatically — no manual configuration needed.
+The SDK introspects your database schema automatically — no manual configuration of models needed.

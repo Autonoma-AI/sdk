@@ -87,14 +87,17 @@ With Next.js App Router + Drizzle, the integration is a single route handler:
 ```typescript
 // src/app/api/autonoma/route.ts
 import { createHandler } from '@autonoma-ai/server-web'
-import { drizzleAdapter } from '@autonoma-ai/sdk-drizzle'
+import { drizzleExecutor } from '@autonoma-ai/sdk-drizzle'
 import { db } from '@/db'
-import * as schema from '@/db/schema'
 
 export const POST = createHandler({
-  adapter: drizzleAdapter(db, schema, { scopeField: 'organizationId' }),
+  executor: drizzleExecutor(db),
+  scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user, context) => {
+    return { headers: { Authorization: `Bearer test-token` } }
+  },
 })
 ```
 

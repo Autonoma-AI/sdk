@@ -12,6 +12,11 @@ Runnable example projects for every supported framework combination. Each exampl
 | Python | Flask | SQLAlchemy | [`python/flask-sqlalchemy`](python/flask-sqlalchemy/) |
 | Python | Django | Django ORM | [`python/django`](python/django/) |
 | Elixir | Phoenix | Ecto | [`elixir/phoenix-ecto`](elixir/phoenix-ecto/) |
+| Java | Spring Boot | JDBC | [`java/spring-boot`](java/spring-boot/) |
+| Ruby | Rails | ActiveRecord | [`ruby/rails`](ruby/rails/) |
+| Rust | Axum | SQLx | [`rust/axum-sqlx`](rust/axum-sqlx/) |
+| Go | Gin | database/sql | [`go/gin`](go/gin/) |
+| PHP | Laravel | Eloquent | [`php/laravel`](php/laravel/) |
 
 ## Common setup
 

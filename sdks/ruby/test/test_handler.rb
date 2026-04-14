@@ -144,7 +144,7 @@ class TestHandler < Minitest::Test
       scope_field: "organizationId",
       shared_secret: "shared-secret",
       signing_secret: "signing-secret",
-      auth: ->(user) { { "headers" => { "Authorization" => "Bearer test-token" } } },
+      auth: ->(user, _context) { { "headers" => { "Authorization" => "Bearer test-token" } } },
       after_up: ->(hook_ctx, auth) {
         auth["headers"]["X-Custom"] = "enriched"
         auth
@@ -171,7 +171,7 @@ class TestHandler < Minitest::Test
       scope_field: "organizationId",
       shared_secret: "shared-secret",
       signing_secret: "signing-secret",
-      auth: ->(user) { { "headers" => {} } },
+      auth: ->(user, _context) { { "headers" => {} } },
       before_down: ->(hook_ctx) {
         hook_called = true
         captured_ctx = hook_ctx

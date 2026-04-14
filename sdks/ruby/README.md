@@ -42,7 +42,7 @@ class AutonomaController < ApplicationController
       scope_field: "organizationId",
       shared_secret: ENV["AUTONOMA_SHARED_SECRET"],
       signing_secret: ENV["AUTONOMA_SIGNING_SECRET"],
-      auth: ->(user) {
+      auth: ->(user, context) {
         { "headers" => { "Authorization" => "Bearer #{user['id']}" } }
       }
     )

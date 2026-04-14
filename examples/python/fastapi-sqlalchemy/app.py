@@ -12,10 +12,10 @@ from fastapi import FastAPI
 
 from autonoma.types import HandlerConfig
 from autonoma_fastapi import create_fastapi_handler
-from autonoma_sqlalchemy import SQLAlchemyAdapter
+from autonoma_sqlalchemy import sqlalchemy_executor
 
-from database import SessionLocal, engine, Base
-from models import Organization, User, Project, Task
+from database import engine, Base
+import models  # noqa: F401 — imported so Base.metadata.create_all() can discover tables
 
 
 # ---------------------------------------------------------------------------
@@ -37,25 +37,21 @@ app = FastAPI(title="Autonoma Example", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
-# 3. Set up the Autonoma adapter and handler
+# 3. Set up the Autonoma executor and handler
 # ---------------------------------------------------------------------------
-# The SQLAlchemy adapter needs:
-#   - session_factory: a callable that returns new database sessions
-#   - models: the list of SQLAlchemy model classes to expose
-#   - scope_field: the field name used for data isolation
-adapter = SQLAlchemyAdapter(
-    session_factory=SessionLocal,
-    models=[Organization, User, Project, Task],
-    scope_field="organization_id",
-)
-
-# Create the handler config
+# The SQLAlchemy executor wraps the engine into a SQL executor that the
+# SDK uses for schema introspection, entity creation, and teardown.
 config = HandlerConfig(
-    adapter=adapter,
+    executor=sqlalchemy_executor(engine),
+    scope_field="organization_id",
     # Shared secret — both you and Autonoma know this.
     shared_secret=os.environ.get("AUTONOMA_SHARED_SECRET", "my-shared-secret"),
     # Signing secret — only you know this.
     signing_secret=os.environ.get("AUTONOMA_SIGNING_SECRET", "my-signing-secret"),
+    # Auth callback — called after entity creation during `up`.
+    auth=lambda user, context: {
+        "headers": {"Authorization": "Bearer test-token"}
+    },
 )
 
 # Mount the Autonoma router at /api/autonoma

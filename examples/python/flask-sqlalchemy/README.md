@@ -74,15 +74,18 @@ The key integration in `app.py`:
 
 ```python
 from autonoma_flask import create_flask_handler
-from autonoma_sqlalchemy import SQLAlchemyAdapter
+from autonoma_sqlalchemy import sqlalchemy_executor
 
-adapter = SQLAlchemyAdapter(SessionLocal, [Organization, User, Project, Task], scope_field="organization_id")
-
-bp = create_flask_handler(HandlerConfig(
-    adapter=adapter,
+config = HandlerConfig(
+    executor=sqlalchemy_executor(engine),
+    scope_field="organization_id",
     shared_secret="my-shared-secret",
     signing_secret="my-signing-secret",
-))
+    auth=lambda user, context: {
+        "headers": {"Authorization": "Bearer test-token"}
+    },
+)
 
+bp = create_flask_handler(config)
 app.register_blueprint(bp, url_prefix="/api/autonoma")
 ```

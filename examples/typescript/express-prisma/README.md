@@ -93,15 +93,19 @@ docker stop autonoma-postgres
 The key integration is just a few lines in `src/index.ts`:
 
 ```typescript
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { createExpressHandler } from '@autonoma-ai/server-express'
 
 // Wire up the Autonoma endpoint
 app.post('/api/autonoma', createExpressHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  executor: prismaExecutor(prisma),
+  scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  auth: async (user, context) => {
+    return { headers: { Authorization: `Bearer test-token` } }
+  },
 }))
 ```
 
-That's it. The SDK introspects your Prisma schema automatically — no manual configuration of models or fields needed.
+That's it. The SDK introspects your database schema automatically — no manual configuration of models or fields needed.

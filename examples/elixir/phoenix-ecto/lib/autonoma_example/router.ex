@@ -6,8 +6,6 @@ defmodule AutonomaExample.Router do
 
   use Phoenix.Router
 
-  alias AutonomaExample.Schemas.{Organization, User, Project, Task}
-
   # ---------------------------------------------------------------------------
   # Autonoma Endpoint
   # ---------------------------------------------------------------------------
@@ -18,19 +16,20 @@ defmodule AutonomaExample.Router do
   #
   # We use `forward` to delegate all requests under /api/autonoma to the handler.
 
-  # Create the Ecto adapter — it introspects your schemas automatically
-  @adapter Autonoma.Ecto.Adapter.new(
-    AutonomaExample.Repo,
-    [Organization, User, Project, Task],
-    scope_field: "organization_id"
-  )
+  # Create the Ecto executor — wraps the Repo into a SQL executor
+  @executor Autonoma.Ecto.Executor.ecto_executor(AutonomaExample.Repo)
 
   @autonoma_config %{
-    adapter: @adapter,
+    executor: @executor,
+    scope_field: "organization_id",
     # Shared secret — both you and Autonoma know this.
     shared_secret: System.get_env("AUTONOMA_SHARED_SECRET") || "my-shared-secret",
     # Signing secret — only you know this.
-    signing_secret: System.get_env("AUTONOMA_SIGNING_SECRET") || "my-signing-secret"
+    signing_secret: System.get_env("AUTONOMA_SIGNING_SECRET") || "my-signing-secret",
+    # Auth callback — called after entity creation during `up`.
+    auth: fn _user, _context ->
+      %{"headers" => %{"Authorization" => "Bearer test-token"}}
+    end
   }
 
   forward "/api/autonoma", Autonoma.Plug.Handler, @autonoma_config

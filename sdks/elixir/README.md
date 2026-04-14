@@ -19,10 +19,7 @@ Add to your `mix.exs` deps:
 ```elixir
 defp deps do
   [
-    {:autonoma, path: "path/to/autonoma"},
-    # optional:
-    {:autonoma_ecto, path: "path/to/autonoma_ecto"},
-    {:autonoma_plug, path: "path/to/autonoma_plug"},
+    {:autonoma, "~> 0.1"}
   ]
 end
 ```
@@ -31,17 +28,20 @@ end
 
 ```elixir
 # In your router
+executor = Autonoma.Ecto.Executor.ecto_executor(MyApp.Repo)
+
 config = %{
+  executor: executor,
+  scope_field: "organization_id",
   shared_secret: System.get_env("AUTONOMA_SHARED_SECRET"),
   signing_secret: System.get_env("AUTONOMA_SIGNING_SECRET"),
-  adapter: MyApp.AutonomaAdapter,
-  auth: fn user ->
+  auth: fn user, _context ->
     token = MyApp.Auth.create_session_token(user["id"])
     %{"headers" => %{"Authorization" => "Bearer #{token}"}}
   end
 }
 
-plug Autonoma.Plug.Handler, config
+forward "/api/autonoma", Autonoma.Plug.Handler, config
 ```
 
 ## Commands

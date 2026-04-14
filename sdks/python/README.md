@@ -6,48 +6,48 @@ Python implementation of the Autonoma Environment Factory SDK.
 
 | Package | Description |
 |---------|-------------|
-| `autonoma-sdk` | Core protocol (HMAC, refs, graph, handler) |
-| `autonoma-sdk[sqlalchemy]` | SQLAlchemy ORM adapter |
-| `autonoma-sdk[django]` | Django ORM adapter and server handler |
-| `autonoma-sdk[flask]` | Flask server adapter |
-| `autonoma-sdk[fastapi]` | FastAPI server adapter |
-| `autonoma-sdk[postgres]` | PostgreSQL driver (psycopg2) |
-| `autonoma-sdk[all]` | All adapters and drivers |
+| `autonoma-ai` | Core protocol (HMAC, refs, graph, handler) |
+| `autonoma-ai[sqlalchemy]` | SQLAlchemy executor adapter |
+| `autonoma-ai[django]` | Django executor adapter and server handler |
+| `autonoma-ai[flask]` | Flask server adapter |
+| `autonoma-ai[fastapi]` | FastAPI server adapter |
+| `autonoma-ai[postgres]` | PostgreSQL driver (psycopg2) |
+| `autonoma-ai[all]` | All adapters and drivers |
 
 ## Quick Start
 
 ### Install
 
 ```bash
-pip install autonoma-sdk
+pip install autonoma-ai
 # With extras:
-pip install "autonoma-sdk[sqlalchemy,fastapi]"
+pip install "autonoma-ai[sqlalchemy,fastapi,postgres]"
 # Or everything:
-pip install "autonoma-sdk[all]"
+pip install "autonoma-ai[all]"
 ```
 
 ### FastAPI + SQLAlchemy
 
 ```python
-from autonoma.handler import handle_request, PROTOCOL_VERSION
-from autonoma.types import HandlerConfig, HandlerRequest
+from autonoma.types import HandlerConfig
+from autonoma_fastapi import create_fastapi_handler
+from autonoma_sqlalchemy import sqlalchemy_executor
+from sqlalchemy import create_engine
+
+engine = create_engine("postgresql://user:pass@localhost/mydb")
 
 config = HandlerConfig(
+    executor=sqlalchemy_executor(engine),
+    scope_field="organization_id",
     shared_secret="your-shared-secret",
     signing_secret="your-signing-secret",
-    adapter=my_adapter,
-    auth=lambda user: {
+    auth=lambda user, context: {
         "headers": {"Authorization": f"Bearer {create_session_token(user['id'])}"}
     },
 )
 
-@app.post("/api/autonoma")
-async def autonoma_endpoint(request: Request):
-    body = await request.body()
-    headers = dict(request.headers)
-    req = HandlerRequest(body=body.decode(), headers=headers)
-    result = handle_request(config, req)
-    return JSONResponse(content=result.body, status_code=result.status)
+router = create_fastapi_handler(config)
+app.include_router(router, prefix="/api/autonoma")
 ```
 
 ## Commands

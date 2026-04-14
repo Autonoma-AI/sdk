@@ -11,27 +11,26 @@ pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-drizzle
 ## Usage
 
 ```typescript
-import { drizzleAdapter } from '@autonoma-ai/sdk-drizzle'
+import { drizzleExecutor } from '@autonoma-ai/sdk-drizzle'
 import { db } from '~/db'
-import * as schema from '~/db/schema'
 
-const adapter = drizzleAdapter(db, schema, { scopeField: 'organizationId' })
+const executor = drizzleExecutor(db)
 ```
 
-Pass the adapter to your server handler:
+Pass the executor to your server handler:
 
 ```typescript
 // app/api/autonoma/route.ts
 import { createHandler } from '@autonoma-ai/server-web'
-import { drizzleAdapter } from '@autonoma-ai/sdk-drizzle'
+import { drizzleExecutor } from '@autonoma-ai/sdk-drizzle'
 import { db } from '~/db'
-import * as schema from '~/db/schema'
 
 export const POST = createHandler({
-  adapter: drizzleAdapter(db, schema, { scopeField: 'organizationId' }),
+  executor: drizzleExecutor(db),
+  scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user) => {
+  auth: async (user, context) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }
   },

@@ -78,17 +78,20 @@ The key integration in `app.py`:
 
 ```python
 from autonoma_fastapi import create_fastapi_handler
-from autonoma_sqlalchemy import SQLAlchemyAdapter
+from autonoma_sqlalchemy import sqlalchemy_executor
 
-adapter = SQLAlchemyAdapter(SessionLocal, [Organization, User, Project, Task], scope_field="organization_id")
-
-router = create_fastapi_handler(HandlerConfig(
-    adapter=adapter,
+config = HandlerConfig(
+    executor=sqlalchemy_executor(engine),
+    scope_field="organization_id",
     shared_secret="my-shared-secret",
     signing_secret="my-signing-secret",
-))
+    auth=lambda user, context: {
+        "headers": {"Authorization": "Bearer test-token"}
+    },
+)
 
+router = create_fastapi_handler(config)
 app.include_router(router, prefix="/api/autonoma")
 ```
 
-The SDK introspects your SQLAlchemy models automatically — no manual configuration needed.
+The SDK introspects your database schema automatically — no manual configuration of models needed.

@@ -7,9 +7,8 @@
 // Route: POST /api/autonoma
 
 import { createHandler } from '@autonoma-ai/server-web'
-import { drizzleAdapter } from '@autonoma-ai/sdk-drizzle'
+import { drizzleExecutor } from '@autonoma-ai/sdk-drizzle'
 import { db } from '@/db'
-import * as schema from '@/db/schema'
 
 // ---------------------------------------------------------------------------
 // Create the Autonoma handler
@@ -22,14 +21,20 @@ import * as schema from '@/db/schema'
 // the entire Autonoma endpoint.
 
 export const POST = createHandler({
-  // The Drizzle adapter needs the db instance AND the schema object.
-  // Unlike Prisma (which has metadata built into the client), Drizzle needs
-  // the schema passed explicitly so it can introspect tables and relations.
-  adapter: drizzleAdapter(db, schema, { scopeField: 'organizationId' }),
+  // The Drizzle executor wraps the db instance into a SQL executor.
+  executor: drizzleExecutor(db),
+
+  // The scope field tells the SDK which field to use for data isolation.
+  scopeField: 'organizationId',
 
   // Shared secret — both you and Autonoma know this.
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET ?? 'my-shared-secret',
 
   // Signing secret — only you know this.
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET ?? 'my-signing-secret',
+
+  // Auth callback — called after entity creation during `up`.
+  auth: async (user, context) => {
+    return { headers: { Authorization: `Bearer test-token` } }
+  },
 })

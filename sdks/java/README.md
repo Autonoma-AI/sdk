@@ -42,7 +42,7 @@ public class AutonomaConfig {
             "organizationId",
             System.getenv("AUTONOMA_SHARED_SECRET"),
             System.getenv("AUTONOMA_SIGNING_SECRET"),
-            user -> AuthResult.ofHeaders(
+            (user, context) -> AuthResult.ofHeaders(
                 Map.of("Authorization", "Bearer " + createToken(user))
             )
         );

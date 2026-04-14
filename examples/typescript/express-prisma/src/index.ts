@@ -7,7 +7,7 @@
 
 import express from 'express'
 import { PrismaClient } from '@prisma/client'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { createExpressHandler } from '@autonoma-ai/server-express'
 
 // ---------------------------------------------------------------------------
@@ -39,9 +39,11 @@ app.use(express.json())
 app.post(
   '/api/autonoma',
   createExpressHandler({
-    // The Prisma adapter introspects your schema automatically.
-    // `scopeField` tells it which field to use for data isolation.
-    adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+    // The Prisma executor wraps PrismaClient into a SQL executor.
+    executor: prismaExecutor(prisma),
+
+    // The scope field tells the SDK which field to use for data isolation.
+    scopeField: 'organizationId',
 
     // Shared secret — both you and Autonoma know this.
     // Used to verify that incoming requests are genuinely from Autonoma.
@@ -50,6 +52,13 @@ app.post(
     // Signing secret — only you know this. Autonoma never sees it.
     // Used to sign ref tokens so they can't be tampered with.
     signingSecret: process.env.AUTONOMA_SIGNING_SECRET ?? 'my-signing-secret',
+
+    // Auth callback — called after entity creation during `up`.
+    // Receives the first User record (or null) and a context with scopeValue and refs.
+    // Must return auth credentials for the test runner.
+    auth: async (user, context) => {
+      return { headers: { Authorization: `Bearer test-token` } }
+    },
   }),
 )
 

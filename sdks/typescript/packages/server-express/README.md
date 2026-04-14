@@ -15,16 +15,17 @@ pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-express
 ```typescript
 import express from 'express'
 import { createExpressHandler } from '@autonoma-ai/server-express'
-import { prismaAdapter } from '@autonoma-ai/sdk-prisma'
+import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { prisma } from './db'
 
 const app = express()
 
 app.post('/api/autonoma', createExpressHandler({
-  adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
+  executor: prismaExecutor(prisma),
+  scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user) => {
+  auth: async (user, context) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }
   },
@@ -49,11 +50,11 @@ app.post('/api/autonoma', async (req, reply) => {
 
 ## Auth callback
 
-The `auth` callback receives the first `User` record created during setup (or `null` if no User model exists) and must return credentials for the test runner to authenticate:
+The `auth` callback receives the first `User` record created during setup (or `null` if no User model exists) and a context object with `scopeValue` and `refs`. It must return credentials for the test runner to authenticate:
 
 ```typescript
 // Session cookie
-auth: async (user) => {
+auth: async (user, context) => {
   const session = await createSession(user.id as string)
   return {
     cookies: [{ name: 'session', value: session.token, httpOnly: true, sameSite: 'lax', path: '/' }],
@@ -61,13 +62,13 @@ auth: async (user) => {
 }
 
 // Bearer token
-auth: async (user) => {
+auth: async (user, context) => {
   const token = jwt.sign({ sub: user.id }, SECRET)
   return { headers: { Authorization: `Bearer ${token}` } }
 }
 
 // Username + password (for login-page flows)
-auth: async (user) => {
+auth: async (user, context) => {
   return { credentials: { email: user.email as string, password: 'TestP@ssw0rd123!' } }
 }
 ```
