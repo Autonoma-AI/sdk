@@ -21,7 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@autonoma-ai/sdk": "^0.1.12"
+    "@autonoma-ai/sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
