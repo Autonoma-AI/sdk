@@ -139,13 +139,20 @@ func main() {
 	// Models WITHOUT a factory (Project, Task) fall back to raw SQL INSERT,
 	// which works fine for simple tables without business logic.
 	config := &autonoma.HandlerConfig{
-		Executor:     autonoma.NewSQLExecutor(db),
-		ScopeField:   "organization_id",
-		Dialect:      "postgres",
+		// Connects the SDK to your database through your ORM (Prisma, Drizzle, SQLAlchemy, etc.)
+		Executor: autonoma.NewSQLExecutor(db),
+		// The column that scopes all models to a tenant (e.g. organization_id). The SDK uses this to
+		// isolate test data and ensure teardown only removes records belonging to the test run.
+		ScopeField: "organization_id",
+		Dialect:    "postgres",
+		// Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
 		SharedSecret: sharedSecret,
+		// Private to your server only. Used to sign the refs token that tracks created records,
+		// so teardown can only delete what was created.
 		SigningSecret: signingSecret,
 
-		// Register factories for models that have business logic
+		// Custom create/teardown logic for models with business logic (password hashing, slug
+		// generation, etc.). Models without a factory fall back to raw SQL INSERT.
 		Factories: autonoma.FactoryRegistry{
 			// Organization: uses repository which handles slug generation,
 			// default settings, external service setup, etc.
@@ -172,6 +179,8 @@ func main() {
 			// This is fine because they're simple tables with no business logic.
 		},
 
+		// Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
+		// so Autonoma can make authenticated requests as the test user.
 		Auth: func(user map[string]any, ctx autonoma.AuthContext) (*autonoma.AuthResult, error) {
 			return &autonoma.AuthResult{
 				Extra: map[string]any{

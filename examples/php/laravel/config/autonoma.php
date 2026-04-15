@@ -15,8 +15,13 @@ use Autonoma\Sdk\Types\FactoryContext;
 
 return [
     'connection' => env('AUTONOMA_DB_CONNECTION'),
+    // The column that scopes all models to a tenant (e.g. organization_id). The SDK uses this to
+    // isolate test data and ensure teardown only removes records belonging to the test run.
     'scope_field' => env('AUTONOMA_SCOPE_FIELD', 'organization_id'),
+    // Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
     'shared_secret' => env('AUTONOMA_SHARED_SECRET', 'my-shared-secret'),
+    // Private to your server only. Used to sign the refs token that tracks created records,
+    // so teardown can only delete what was created.
     'signing_secret' => env('AUTONOMA_SIGNING_SECRET', 'my-signing-secret'),
     'dialect' => env('AUTONOMA_DIALECT', 'postgres'),
     'db_schema' => env('AUTONOMA_DB_SCHEMA'),
@@ -24,17 +29,14 @@ return [
     'allow_production' => false,
     'path' => 'api/autonoma',
     'middleware' => [],
+    // Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
+    // so Autonoma can make authenticated requests as the test user.
     'auth' => function (?array $user, array $context): array {
         return ['headers' => ['Authorization' => 'Bearer test-token']];
     },
 
-    // -------------------------------------------------------------------------
-    // Factories (Hybrid Mode)
-    // -------------------------------------------------------------------------
-    // Register factories for models that have business logic (password hashing,
-    // slug generation, external service calls, etc.). Models WITHOUT a factory
-    // (Project, Task) fall back to raw SQL INSERT — which works fine for simple
-    // tables without business logic.
+    // Custom create/teardown logic for models with business logic (password hashing, slug
+    // generation, etc.). Models without a factory fall back to raw SQL INSERT.
     'factories' => [
         // Organization: uses the repository which handles slug generation,
         // default settings, external service setup, etc.

@@ -41,12 +41,19 @@ user_repo = UserRepository()
 # Models WITHOUT a factory (Project, Task) fall back to raw SQL INSERT,
 # which works fine for simple tables without business logic.
 config = HandlerConfig(
+    # Connects the SDK to your database through your ORM (Prisma, Drizzle, SQLAlchemy, etc.)
     executor=django_executor(),
+    # The column that scopes all models to a tenant (e.g. organization_id). The SDK uses this to
+    # isolate test data and ensure teardown only removes records belonging to the test run.
     scope_field="organization_id",
+    # Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
     shared_secret=os.environ.get("AUTONOMA_SHARED_SECRET", "my-shared-secret"),
+    # Private to your server only. Used to sign the refs token that tracks created records,
+    # so teardown can only delete what was created.
     signing_secret=os.environ.get("AUTONOMA_SIGNING_SECRET", "my-signing-secret"),
 
-    # Register factories for models that have business logic
+    # Custom create/teardown logic for models with business logic (password hashing, slug
+    # generation, etc.). Models without a factory fall back to raw SQL INSERT.
     factories={
         # Organization: uses the repository which handles slug generation,
         # default settings, external service setup, etc.
@@ -74,6 +81,8 @@ config = HandlerConfig(
         # This is fine because they're simple tables with no business logic.
     },
 
+    # Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
+    # so Autonoma can make authenticated requests as the test user.
     auth=lambda user, context: {
         "headers": {"Authorization": "Bearer test-token"}
     },

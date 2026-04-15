@@ -36,25 +36,26 @@ public class AutonomaConfig {
         UserRepository userRepo = new UserRepository(dataSource);
 
         HandlerConfig config = new HandlerConfig(
+            // Connects the SDK to your database through your ORM (Prisma, Drizzle, SQLAlchemy, etc.)
             executor,
+            // The column that scopes all models to a tenant (e.g. organization_id). The SDK uses this to
+            // isolate test data and ensure teardown only removes records belonging to the test run.
             "organization_id",
+            // Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
             System.getenv("AUTONOMA_SHARED_SECRET") != null ? System.getenv("AUTONOMA_SHARED_SECRET") : "my-shared-secret",
+            // Private to your server only. Used to sign the refs token that tracks created records,
+            // so teardown can only delete what was created.
             System.getenv("AUTONOMA_SIGNING_SECRET") != null ? System.getenv("AUTONOMA_SIGNING_SECRET") : "my-signing-secret",
+            // Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
+            // so Autonoma can make authenticated requests as the test user.
             (user, context) -> AuthResult.ofHeaders(
                 Map.of("Authorization", "Bearer test-token")
             )
         );
         config.setDialect("postgres");
 
-        // -----------------------------------------------------------------------
-        // Register factories for models that have business logic
-        // -----------------------------------------------------------------------
-        // Factories let you use your own repositories/services to create test data.
-        // The SDK still handles scenario resolution, FK ordering, and teardown —
-        // but delegates actual creation to your code for models that need it.
-        //
-        // Models WITHOUT a factory (Project, Task) fall back to raw SQL INSERT,
-        // which works fine for simple tables without business logic.
+        // Custom create/teardown logic for models with business logic (password hashing, slug
+        // generation, etc.). Models without a factory fall back to raw SQL INSERT.
         config.setFactories(Map.of(
             // Organization: uses the repository which handles slug generation,
             // default settings, external service setup, etc.

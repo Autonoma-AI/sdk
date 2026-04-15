@@ -32,12 +32,19 @@ const userRepo = new UserRepository()
 // which works fine for simple tables without business logic.
 
 export const POST = createHandler({
+  // Connects the SDK to your database through your ORM (Prisma, Drizzle, SQLAlchemy, etc.)
   executor: drizzleExecutor(db),
+  // The column that scopes all models to a tenant (e.g. organizationId). The SDK uses this to
+  // isolate test data and ensure teardown only removes records belonging to the test run.
   scopeField: 'organizationId',
+  // Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET ?? 'my-shared-secret',
+  // Private to your server only. Used to sign the refs token that tracks created records,
+  // so teardown can only delete what was created.
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET ?? 'my-signing-secret',
 
-  // Register factories for models that have business logic
+  // Custom create/teardown logic for models with business logic (password hashing, slug
+  // generation, etc.). Models without a factory fall back to raw SQL INSERT.
   factories: {
     // Organization: uses the repository which handles slug generation,
     // default settings, external service setup, etc.
@@ -69,6 +76,8 @@ export const POST = createHandler({
     // This is fine because they're simple tables with no business logic.
   },
 
+  // Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
+  // so Autonoma can make authenticated requests as the test user.
   auth: async (user, context) => {
     return { headers: { Authorization: `Bearer test-token` } }
   },

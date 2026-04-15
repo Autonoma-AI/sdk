@@ -31,18 +31,19 @@ defmodule AutonomaExample.Router do
   @executor Autonoma.Ecto.Executor.ecto_executor(AutonomaExample.Repo)
 
   @autonoma_config %{
+    # Connects the SDK to your database through your ORM (Prisma, Drizzle, SQLAlchemy, etc.)
     executor: @executor,
+    # The column that scopes all models to a tenant (e.g. organization_id). The SDK uses this to
+    # isolate test data and ensure teardown only removes records belonging to the test run.
     scope_field: "organization_id",
-    # Shared secret — both you and Autonoma know this.
+    # Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
     shared_secret: System.get_env("AUTONOMA_SHARED_SECRET") || "my-shared-secret",
-    # Signing secret — only you know this.
+    # Private to your server only. Used to sign the refs token that tracks created records,
+    # so teardown can only delete what was created.
     signing_secret: System.get_env("AUTONOMA_SIGNING_SECRET") || "my-signing-secret",
 
-    # ---------------------------------------------------------------------------
-    # Factories — register models that have business logic
-    # ---------------------------------------------------------------------------
-    # Models with factories use your repository code for creation/teardown.
-    # Models without factories (Project, Task) use raw SQL — zero setup needed.
+    # Custom create/teardown logic for models with business logic (password hashing, slug
+    # generation, etc.). Models without a factory fall back to raw SQL INSERT.
     factories: %{
       # Organization: uses the repository which handles slug generation,
       # default settings, external service setup, etc.
@@ -69,7 +70,8 @@ defmodule AutonomaExample.Router do
       # This is fine because they are simple tables with no business logic.
     },
 
-    # Auth callback — called after entity creation during `up`.
+    # Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
+    # so Autonoma can make authenticated requests as the test user.
     auth: fn _user, _context ->
       %{"headers" => %{"Authorization" => "Bearer test-token"}}
     end
