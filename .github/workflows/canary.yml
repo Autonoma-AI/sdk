@@ -1,0 +1,113 @@
+name: Canary Publish
+
+# Publishes the TypeScript SDK packages to npm with the `canary` dist-tag.
+# Version format: <next-patch>-canary.<short-sha>, derived from the current
+# .release-please-manifest.json value. Never touches the manifest/tags — stable
+# releases (main branch, @latest tag) are untouched.
+#
+# Triggers:
+#   - push to `canary` branch  → auto-publish every pushed commit
+#   - workflow_dispatch        → manual publish from any branch
+
+on:
+  push:
+    branches: [canary]
+  workflow_dispatch:
+
+concurrency:
+  group: canary-publish
+  cancel-in-progress: true
+
+jobs:
+  npm:
+    name: Publish canary to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: sdks/typescript/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Derive canary version
+        id: version
+        working-directory: ${{ github.workspace }}
+        run: |
+          BASE=$(python3 -c "import json; print(json.load(open('.release-please-manifest.json'))['.'])")
+          SHORT_SHA=$(git rev-parse --short=7 "$GITHUB_SHA")
+          # Bump the patch so the canary is always newer than the last stable release.
+          BUMPED=$(python3 -c "v='$BASE'.split('.'); v[-1]=str(int(v[-1])+1); print('.'.join(v))")
+          CANARY="${BUMPED}-canary.${SHORT_SHA}"
+          echo "version=$CANARY" >> "$GITHUB_OUTPUT"
+          echo "Canary version: $CANARY"
+
+      - name: Write canary version into every publishable package.json
+        run: |
+          python3 <<'PY'
+          import json, os
+          version = os.environ["CANARY_VERSION"]
+          for pkg_dir in sorted(os.listdir("packages")):
+              pkg_json = os.path.join("packages", pkg_dir, "package.json")
+              if not os.path.exists(pkg_json):
+                  continue
+              with open(pkg_json) as f:
+                  data = json.load(f)
+              if data.get("private"):
+                  continue
+              data["version"] = version
+              with open(pkg_json, "w") as f:
+                  json.dump(data, f, indent=2)
+                  f.write("\n")
+              print(f"  bumped {data['name']} → {version}")
+          PY
+        env:
+          CANARY_VERSION: ${{ steps.version.outputs.version }}
+
+      - run: pnpm build
+
+      - name: Publish @autonoma-ai/sdk with canary tag
+        run: pnpm --filter @autonoma-ai/sdk publish --access public --no-git-checks --tag canary
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Wait for registry propagation
+        run: sleep 10
+
+      - name: Publish remaining packages with canary tag
+        run: pnpm -r --filter '!@autonoma-ai/sdk' publish --access public --no-git-checks --tag canary
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Job summary
+        run: |
+          {
+            echo "## Canary published"
+            echo ""
+            echo "Version: \`${{ steps.version.outputs.version }}\`"
+            echo ""
+            echo "Install in a test project:"
+            echo ""
+            echo '```bash'
+            echo "pnpm add @autonoma-ai/sdk@canary"
+            echo "pnpm add @autonoma-ai/sdk-prisma@canary   # or sdk-drizzle / sdk-pg / sdk-mysql2"
+            echo "pnpm add @autonoma-ai/server-web@canary   # or server-express / server-hono / server-node"
+            echo '```'
+            echo ""
+            echo "Stable \`@latest\` tag is untouched."
+          } >> "$GITHUB_STEP_SUMMARY"
