@@ -14,27 +14,19 @@ interface DrizzleDBLike {
 
 /**
  * Convert a raw parameterized SQL string (as emitted by the SDK — `$1`/`$2`
- * for Postgres, `?` for MySQL) into a Drizzle `SQL` object. We split the
- * string on placeholders and interleave `sql.raw(...)` chunks with the
- * corresponding parameter values; Drizzle re-emits them using the target
- * driver's placeholder style when it serializes the query.
+ * for Postgres, `?` for MySQL) into a Drizzle `SQL` object. Splitting with a
+ * capturing group interleaves literal fragments and placeholders in order;
+ * we map each piece to either `sql.raw(literal)` or `` sql`${value}` `` and
+ * let Drizzle re-emit the params using the target driver's style.
  */
 function buildSql(raw: string, params: readonly unknown[]): SQL {
-  if (params.length === 0) return sqlTag.raw(raw)
-
-  const chunks: SQL[] = []
-  const re = /\$(\d+)|\?/g
-  let last = 0
   let positional = 0
-  let m: RegExpExecArray | null
-  while ((m = re.exec(raw)) !== null) {
-    if (m.index > last) chunks.push(sqlTag.raw(raw.slice(last, m.index)))
-    const idx = m[1] !== undefined ? Number(m[1]) - 1 : positional++
-    chunks.push(sqlTag`${params[idx]}`)
-    last = m.index + m[0].length
-  }
-  if (last < raw.length) chunks.push(sqlTag.raw(raw.slice(last)))
-  return sqlTag.join(chunks) as SQL
+  const chunks = raw.split(/(\$\d+|\?)/).map((part) => {
+    if (part === '?') return sqlTag`${params[positional++]}`
+    const m = /^\$(\d+)$/.exec(part)
+    return m ? sqlTag`${params[Number(m[1]) - 1]}` : sqlTag.raw(part)
+  })
+  return sqlTag.join(chunks)
 }
 
 /**
