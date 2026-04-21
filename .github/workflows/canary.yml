@@ -1,17 +1,25 @@
 name: Canary Publish
 
-# Publishes the TypeScript SDK packages to npm with the `canary` dist-tag.
-# Version format: <next-patch>-canary.<short-sha>, derived from the current
-# .release-please-manifest.json value. Never touches the manifest/tags — stable
-# releases (main branch, @latest tag) are untouched.
+# Publishes SDK packages under a pre-release channel. Never touches the
+# release-please manifest/tags — stable releases (main branch, @latest /
+# production PyPI index) are untouched.
+#
+# Channels:
+#   - TypeScript → npm with dist-tag `canary`
+#     Version format: <next-patch>-canary.<short-sha>
+#   - Python → PyPI as a PEP 440 dev release (pip ignores without --pre)
+#     Version format: <next-patch>.dev<unix-epoch>
 #
 # Triggers:
 #   - push to `canary` branch  → auto-publish every pushed commit
-#   - workflow_dispatch        → manual publish from any branch
+#   - schedule (daily 07:00 UTC) → nightly from `canary` branch
+#   - workflow_dispatch         → manual publish from any branch
 
 on:
   push:
     branches: [canary]
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -110,4 +118,73 @@ jobs:
             echo '```'
             echo ""
             echo "Stable \`@latest\` tag is untouched."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Python → PyPI (Trusted Publishing via OIDC — reuses the `pypi` environment
+  # used by the stable publish workflow; no tokens to rotate).
+  # ---------------------------------------------------------------------------
+  pypi:
+    name: Publish canary to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Derive canary version
+        id: version
+        working-directory: ${{ github.workspace }}
+        run: |
+          BASE=$(python3 -c "import json; print(json.load(open('.release-please-manifest.json'))['.'])")
+          # Bump patch so the canary sorts after the last stable release.
+          BUMPED=$(python3 -c "v='$BASE'.split('.'); v[-1]=str(int(v[-1])+1); print('.'.join(v))")
+          # PEP 440 dev release: .devN where N is monotonic (unix epoch seconds).
+          # pip ignores pre-releases unless --pre is passed, so stable installs are untouched.
+          EPOCH=$(date -u +%s)
+          CANARY="${BUMPED}.dev${EPOCH}"
+          echo "version=$CANARY" >> "$GITHUB_OUTPUT"
+          echo "Canary version: $CANARY"
+
+      - name: Write canary version into pyproject.toml
+        run: poetry version "${{ steps.version.outputs.version }}"
+
+      - name: Build package
+        run: poetry build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdks/python/dist/
+
+      - name: Job summary
+        run: |
+          {
+            echo "## Python canary published"
+            echo ""
+            echo "Version: \`${{ steps.version.outputs.version }}\`"
+            echo ""
+            echo "Install in a test project (note the \`--pre\` flag — required for dev releases):"
+            echo ""
+            echo '```bash'
+            echo "pip install --pre autonoma-ai==${{ steps.version.outputs.version }}"
+            echo "# or, in pyproject.toml:"
+            echo "# autonoma-ai = \"${{ steps.version.outputs.version }}\""
+            echo '```'
+            echo ""
+            echo "Stable PyPI releases (no \`--pre\`) are untouched."
           } >> "$GITHUB_STEP_SUMMARY"
