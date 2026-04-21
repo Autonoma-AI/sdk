@@ -17,6 +17,40 @@ import { introspectDatabase, type IntrospectionResult } from './introspect'
 import { createEntities, updateEntity } from './create'
 import { computeTeardownOrder, teardown } from './teardown'
 
+const TOKEN_RE = /\{\{\s*([^{}]+?)\s*\}\}/g
+const CYCLE_RE = /^cycle\((.*)\)$/
+
+/**
+ * Substitute built-in tokens in field values: {{testRunId}}, {{index}},
+ * {{cycle(a,b,c)}}. Defense-in-depth: the test runner should substitute
+ * recipe variables before calling /up, but if a literal {{…}} slips through
+ * we fail loudly with UNRESOLVED_TOKEN rather than INSERT the raw string.
+ */
+export function resolveTokens(value: unknown, testRunId: string, index: number): unknown {
+  if (typeof value === 'string') {
+    return value.replace(TOKEN_RE, (_match, rawToken: string) => {
+      const token = rawToken.trim()
+      if (token === 'testRunId') return testRunId
+      if (token === 'index') return String(index)
+      const cycle = CYCLE_RE.exec(token)
+      if (cycle) {
+        const parts = cycle[1]!.split(',').map((p) => p.trim().replace(/^['"]|['"]$/g, ''))
+        return parts.length ? parts[index % parts.length]! : ''
+      }
+      throw new AutonomaError(`Unresolved token: {{${token}}}`, 'UNRESOLVED_TOKEN', 400)
+    })
+  }
+  if (Array.isArray(value)) return value.map((v) => resolveTokens(v, testRunId, index))
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = resolveTokens(v, testRunId, index)
+    }
+    return out
+  }
+  return value
+}
+
 /** Cache introspection results per config to avoid re-querying on every request */
 const introspectionCache = new WeakMap<HandlerConfig, IntrospectionResult>()
 
@@ -138,8 +172,9 @@ async function handleUp(
       const idFields = modelInfo?.fields.filter((f) => f.isId) ?? []
       const pkField = idFields.find((f) => f.name.toLowerCase() === 'id') ?? idFields[0]
       const pkFieldName = pkField?.name ?? 'id'
-      const resolvedFields = batch.map((b) => {
-        const fields = { ...b.fields }
+      const resolvedFields = batch.map((b, batchIndex) => {
+        // Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+        const fields = resolveTokens({ ...b.fields }, testRunId, batchIndex) as Record<string, unknown>
         for (const [key, value] of Object.entries(fields)) {
           if (typeof value === 'string' && value.startsWith('__temp_')) {
             const realId = idMap.get(value)

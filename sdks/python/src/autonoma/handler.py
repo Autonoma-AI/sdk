@@ -5,9 +5,49 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+_TOKEN_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+_CYCLE_RE = re.compile(r"^cycle\((.*)\)$")
+
+
+def _resolve_tokens(value: Any, test_run_id: str, index: int) -> Any:
+    """Substitute built-in tokens in field values: {{testRunId}}, {{index}}, {{cycle(a,b,c)}}.
+
+    Raises AutonomaError(UNRESOLVED_TOKEN) for any other {{token}} that reaches
+    the SDK. Token resolution is defense-in-depth: the test runner should
+    substitute recipe variables before calling /up, but if a literal {{…}}
+    slips through we would otherwise insert it verbatim into the DB.
+    """
+    if isinstance(value, str):
+        def replace(match: re.Match) -> str:
+            token = match.group(1).strip()
+            if token == "testRunId":
+                return test_run_id
+            if token == "index":
+                return str(index)
+            cycle = _CYCLE_RE.match(token)
+            if cycle:
+                parts = [
+                    p.strip().strip('"').strip("'")
+                    for p in cycle.group(1).split(",")
+                ]
+                return parts[index % len(parts)] if parts else ""
+            raise AutonomaError(
+                f'Unresolved token: {{{{{token}}}}}',
+                "UNRESOLVED_TOKEN",
+                400,
+            )
+
+        return _TOKEN_RE.sub(replace, value)
+    if isinstance(value, list):
+        return [_resolve_tokens(v, test_run_id, index) for v in value]
+    if isinstance(value, dict):
+        return {k: _resolve_tokens(v, test_run_id, index) for k, v in value.items()}
+    return value
 
 from .hmac_util import verify_signature
 from .refs import sign_refs, verify_refs
@@ -162,8 +202,11 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
             pk_field_name = pk_field.name if pk_field else "id"
 
             resolved_fields: list[dict[str, Any]] = []
-            for b in batch:
+            for batch_index, b in enumerate(batch):
                 fields = dict(b.fields)
+
+                # Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+                fields = _resolve_tokens(fields, test_run_id, batch_index)
 
                 # Replace temp IDs with real IDs
                 for key, value in list(fields.items()):
