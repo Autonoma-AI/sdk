@@ -210,8 +210,11 @@ class Handler
                 $pkFieldName = $pkField !== null ? $pkField->name : 'id';
 
                 $resolvedFields = [];
-                foreach ($batch as $b) {
+                foreach ($batch as $batchIndex => $b) {
                     $fields = $b->fields;
+
+                    // Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+                    $fields = self::resolveTokens($fields, $testRunId, $batchIndex);
 
                     // Replace temp IDs with real IDs
                     foreach ($fields as $key => &$value) {
@@ -442,6 +445,53 @@ class Handler
             status: 200,
             body: array_merge(self::buildSdkMeta($config), ['ok' => true]),
         );
+    }
+
+    /**
+     * Substitute built-in tokens in field values: {{testRunId}}, {{index}},
+     * {{cycle(a,b,c)}}. Raises AutonomaError(UNRESOLVED_TOKEN) for any other
+     * {{token}}. Defense-in-depth against recipe tokens bypassing preflight.
+     */
+    public static function resolveTokens(mixed $value, string $testRunId, int $index): mixed
+    {
+        if (is_string($value)) {
+            return preg_replace_callback(
+                '/\{\{\s*([^{}]+?)\s*\}\}/',
+                function (array $m) use ($testRunId, $index): string {
+                    $token = trim($m[1]);
+                    if ($token === 'testRunId') {
+                        return $testRunId;
+                    }
+                    if ($token === 'index') {
+                        return (string) $index;
+                    }
+                    if (preg_match('/^cycle\((.*)\)$/', $token, $cm) === 1) {
+                        $parts = array_map(
+                            fn(string $p): string => trim(trim(trim($p), '"'), "'"),
+                            explode(',', $cm[1])
+                        );
+                        if (count($parts) === 0) {
+                            return '';
+                        }
+                        return $parts[$index % count($parts)];
+                    }
+                    throw new AutonomaError(
+                        "Unresolved token: {{{$token}}}",
+                        'UNRESOLVED_TOKEN',
+                        400
+                    );
+                },
+                $value
+            );
+        }
+        if (is_array($value)) {
+            $out = [];
+            foreach ($value as $k => $v) {
+                $out[$k] = self::resolveTokens($v, $testRunId, $index);
+            }
+            return $out;
+        }
+        return $value;
     }
 
     private static function findFirstUser(array $refs): ?array

@@ -162,8 +162,9 @@ module Autonoma
           pk_field = id_fields.find { |f| f.name.downcase == "id" } || id_fields.first
           pk_field_name = pk_field&.name || "id"
 
-          resolved_fields = batch.map do |b|
-            fields = b.fields.dup
+          resolved_fields = batch.each_with_index.map do |b, batch_index|
+            # Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+            fields = resolve_tokens(b.fields, test_run_id, batch_index)
 
             # Replace temp IDs with real IDs
             fields.each do |key, value|
@@ -337,6 +338,41 @@ module Autonoma
       )
 
       HandlerResponse.new(status: 200, body: build_sdk_meta(config).merge("ok" => true))
+    end
+
+    TOKEN_RE = /\{\{\s*([^{}]+?)\s*\}\}/
+    CYCLE_RE = /\Acycle\((.*)\)\z/
+
+    # Substitute built-in tokens in field values: {{testRunId}}, {{index}},
+    # {{cycle(a,b,c)}}. Raises AutonomaError(UNRESOLVED_TOKEN) for any other
+    # {{token}}. Defense-in-depth against recipe tokens bypassing preflight.
+    def self.resolve_tokens(value, test_run_id, index)
+      case value
+      when String
+        value.gsub(TOKEN_RE) do
+          token = Regexp.last_match(1).strip
+          if token == "testRunId"
+            test_run_id
+          elsif token == "index"
+            index.to_s
+          elsif (m = CYCLE_RE.match(token))
+            parts = m[1].split(",").map { |p| p.strip.gsub(/\A['"]|['"]\z/, "") }
+            parts.empty? ? "" : parts[index % parts.length]
+          else
+            raise AutonomaError.new(
+              "Unresolved token: {{#{token}}}",
+              "UNRESOLVED_TOKEN",
+              400
+            )
+          end
+        end
+      when Array
+        value.map { |v| resolve_tokens(v, test_run_id, index) }
+      when Hash
+        value.each_with_object({}) { |(k, v), out| out[k] = resolve_tokens(v, test_run_id, index) }
+      else
+        value
+      end
     end
 
     def self.find_first_user(refs)

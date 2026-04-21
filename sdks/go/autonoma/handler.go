@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -231,9 +233,14 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 
 			resolvedFields := make([]map[string]any, len(batch))
 			for j, b := range batch {
+				// Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
 				fields := make(map[string]any, len(b.Fields))
 				for k, v := range b.Fields {
-					fields[k] = v
+					resolved, rerr := ResolveTokens(v, testRunID, j)
+					if rerr != nil {
+						return rerr
+					}
+					fields[k] = resolved
 				}
 
 				// Replace temp IDs with real IDs
@@ -509,6 +516,92 @@ func handleDown(ctx context.Context, config *HandlerConfig, body map[string]any)
 	resp["ok"] = true
 
 	return &HandlerResponse{Status: 200, Body: resp}, nil
+}
+
+var (
+	tokenRe = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
+	cycleRe = regexp.MustCompile(`^cycle\((.*)\)$`)
+)
+
+// ResolveTokens substitutes built-in tokens in field values: {{testRunId}},
+// {{index}}, {{cycle(a,b,c)}}. Returns an UNRESOLVED_TOKEN AutonomaError for
+// any other {{token}}. Defense-in-depth against recipe tokens bypassing
+// preflight.
+func ResolveTokens(value any, testRunID string, index int) (any, error) {
+	switch v := value.(type) {
+	case string:
+		return resolveTokensString(v, testRunID, index)
+	case []any:
+		out := make([]any, len(v))
+		for i, el := range v {
+			resolved, err := ResolveTokens(el, testRunID, index)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = resolved
+		}
+		return out, nil
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, el := range v {
+			resolved, err := ResolveTokens(el, testRunID, index)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = resolved
+		}
+		return out, nil
+	default:
+		return value, nil
+	}
+}
+
+func resolveTokensString(s, testRunID string, index int) (string, error) {
+	var resolveErr error
+	result := tokenRe.ReplaceAllStringFunc(s, func(match string) string {
+		if resolveErr != nil {
+			return ""
+		}
+		sub := tokenRe.FindStringSubmatch(match)
+		token := strings.TrimSpace(sub[1])
+		switch token {
+		case "testRunId":
+			return testRunID
+		case "index":
+			return strconv.Itoa(index)
+		}
+		if cm := cycleRe.FindStringSubmatch(token); cm != nil {
+			rawParts := strings.Split(cm[1], ",")
+			parts := make([]string, 0, len(rawParts))
+			for _, p := range rawParts {
+				t := strings.TrimSpace(p)
+				if len(t) >= 2 {
+					if (t[0] == '\'' && t[len(t)-1] == '\'') || (t[0] == '"' && t[len(t)-1] == '"') {
+						t = t[1 : len(t)-1]
+					}
+				}
+				parts = append(parts, t)
+			}
+			if len(parts) == 0 {
+				return ""
+			}
+			idx := index % len(parts)
+			if idx < 0 {
+				idx += len(parts)
+			}
+			return parts[idx]
+		}
+		resolveErr = &AutonomaError{
+			Message: fmt.Sprintf("Unresolved token: {{%s}}", token),
+			Code:    "UNRESOLVED_TOKEN",
+			Status:  400,
+		}
+		return ""
+	})
+	if resolveErr != nil {
+		return "", resolveErr
+	}
+	return result, nil
 }
 
 // Bug 8: match both "user" and "users" (case-insensitive)

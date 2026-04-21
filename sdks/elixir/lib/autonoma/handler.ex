@@ -218,8 +218,11 @@ defmodule Autonoma.Handler do
     pk_field_name = if pk_field, do: pk_field["name"], else: "id"
 
     resolved_fields =
-      Enum.map(batch, fn b ->
-        fields = b.fields
+      batch
+      |> Enum.with_index()
+      |> Enum.map(fn {b, batch_index} ->
+        # Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+        fields = resolve_tokens(b.fields, test_run_id, batch_index)
 
         # Replace temp IDs with real IDs
         fields =
@@ -395,6 +398,69 @@ defmodule Autonoma.Handler do
 
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"ok" => true})}
   end
+
+  # ---------------------------------------------------------------------------
+  # Token resolution (defense-in-depth)
+  # ---------------------------------------------------------------------------
+
+  @token_re ~r/\{\{\s*([^{}]+?)\s*\}\}/
+  @cycle_re ~r/^cycle\((.*)\)$/
+
+  @doc """
+  Substitute built-in tokens in field values: {{testRunId}}, {{index}},
+  {{cycle(a,b,c)}}. Raises Autonoma.Error with code `UNRESOLVED_TOKEN` for any
+  other `{{token}}` that reaches the SDK.
+  """
+  def resolve_tokens(value, test_run_id, index) when is_binary(value) do
+    Regex.replace(@token_re, value, fn _full, token ->
+      token = String.trim(token)
+
+      cond do
+        token == "testRunId" ->
+          test_run_id
+
+        token == "index" ->
+          Integer.to_string(index)
+
+        match = Regex.run(@cycle_re, token) ->
+          [_, inner] = match
+
+          parts =
+            inner
+            |> String.split(",")
+            |> Enum.map(fn p ->
+              p
+              |> String.trim()
+              |> String.trim(~s("))
+              |> String.trim(~s('))
+            end)
+
+          case parts do
+            [] -> ""
+            _ -> Enum.at(parts, rem(index, length(parts)))
+          end
+
+        true ->
+          raise %Autonoma.Error{
+            message: "Unresolved token: {{#{token}}}",
+            code: "UNRESOLVED_TOKEN",
+            status: 400
+          }
+      end
+    end)
+  end
+
+  def resolve_tokens(value, test_run_id, index) when is_list(value) do
+    Enum.map(value, &resolve_tokens(&1, test_run_id, index))
+  end
+
+  def resolve_tokens(value, test_run_id, index) when is_map(value) do
+    Enum.reduce(value, %{}, fn {k, v}, acc ->
+      Map.put(acc, k, resolve_tokens(v, test_run_id, index))
+    end)
+  end
+
+  def resolve_tokens(value, _test_run_id, _index), do: value
 
   # ---------------------------------------------------------------------------
   # Helpers

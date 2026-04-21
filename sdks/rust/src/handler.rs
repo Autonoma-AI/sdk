@@ -1,8 +1,10 @@
 //! Request routing for discover/up/down protocol actions.
 
 use chrono::{DateTime, Utc};
+use regex::{Captures, Regex};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 use std::collections::HashSet;
@@ -218,8 +220,12 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
         let pk_field_name = pk_field.map(|f| f.name.as_str()).unwrap_or("id");
 
         let mut resolved_fields: Vec<HashMap<String, Value>> = Vec::new();
-        for b in &batch_ops {
-            let mut fields: HashMap<String, Value> = b.fields.clone();
+        for (batch_index, b) in batch_ops.iter().enumerate() {
+            // Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+            let mut fields: HashMap<String, Value> = HashMap::new();
+            for (k, v) in &b.fields {
+                fields.insert(k.clone(), resolve_tokens(v, &test_run_id, batch_index)?);
+            }
 
             // Replace temp IDs with real IDs (Bug 3: use Value, not just String)
             for (key, value) in fields.clone() {
@@ -584,6 +590,87 @@ async fn handle_down(config: &HandlerConfig, body: &Value) -> Result<HandlerResp
         status: 200,
         body: Value::Object(response),
     })
+}
+
+fn token_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\{\{\s*([^{}]+?)\s*\}\}").unwrap())
+}
+
+fn cycle_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^cycle\((.*)\)$").unwrap())
+}
+
+fn resolve_tokens_str(input: &str, test_run_id: &str, index: usize) -> Result<String, AutonomaError> {
+    let mut err: Option<AutonomaError> = None;
+    let result = token_re().replace_all(input, |caps: &Captures| {
+        if err.is_some() {
+            return String::new();
+        }
+        let token = caps[1].trim();
+        if token == "testRunId" {
+            return test_run_id.to_string();
+        }
+        if token == "index" {
+            return index.to_string();
+        }
+        if let Some(cycle_caps) = cycle_re().captures(token) {
+            let inner = &cycle_caps[1];
+            let parts: Vec<String> = inner
+                .split(',')
+                .map(|p| {
+                    let t = p.trim();
+                    let bytes = t.as_bytes();
+                    if bytes.len() >= 2
+                        && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
+                            || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"'))
+                    {
+                        t[1..t.len() - 1].to_string()
+                    } else {
+                        t.to_string()
+                    }
+                })
+                .collect();
+            if parts.is_empty() {
+                return String::new();
+            }
+            return parts[index % parts.len()].clone();
+        }
+        err = Some(AutonomaError {
+            message: format!("Unresolved token: {{{{{}}}}}", token),
+            code: "UNRESOLVED_TOKEN".to_string(),
+            status: 400,
+        });
+        String::new()
+    });
+    if let Some(e) = err {
+        return Err(e);
+    }
+    Ok(result.into_owned())
+}
+
+/// Substitute built-in tokens in field values: {{testRunId}}, {{index}},
+/// {{cycle(a,b,c)}}. Returns UNRESOLVED_TOKEN error for any other {{token}}.
+pub fn resolve_tokens(value: &Value, test_run_id: &str, index: usize) -> Result<Value, AutonomaError> {
+    match value {
+        Value::String(s) => Ok(Value::String(resolve_tokens_str(s, test_run_id, index)?)),
+        Value::Array(arr) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for v in arr {
+                out.push(resolve_tokens(v, test_run_id, index)?);
+            }
+            Ok(Value::Array(out))
+        }
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k.clone(), resolve_tokens(v, test_run_id, index)?);
+            }
+            Ok(Value::Object(out))
+        }
+        _ => Ok(value.clone()),
+    }
 }
 
 fn find_first_user(refs: &HashMap<String, Vec<HashMap<String, Value>>>) -> Option<HashMap<String, Value>> {
