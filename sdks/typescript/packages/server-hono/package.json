@@ -1,6 +1,6 @@
 {
   "name": "@autonoma-ai/server-hono",
-  "version": "0.1.12",
+  "version": "0.2.0",
   "description": "Hono server adapter for Autonoma SDK",
   "type": "module",
   "exports": {

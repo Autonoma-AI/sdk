@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/Autonoma-AI/sdk/compare/v0.1.13...v0.2.0) (2026-04-23)
+
+
+### Features
+
+* hybrid factory + SQL fallback for entity creation ([#44](https://github.com/Autonoma-AI/sdk/issues/44)) ([d91782f](https://github.com/Autonoma-AI/sdk/commit/d91782f879f6299534c605a05745a39ae3c63ca5))
+
+
+### Miscellaneous Chores
+
+* release 0.2.0 ([4c64507](https://github.com/Autonoma-AI/sdk/commit/4c64507c0fc764c0f6991680a7d3e8727ac9a710))
+
 ## [0.1.13](https://github.com/Autonoma-AI/sdk/compare/v0.1.12...v0.1.13) (2026-04-14)
 
 
