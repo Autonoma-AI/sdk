@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { drizzleExecutor } from '../src/index'
 import { introspectDatabase, getDialect, createEntities, teardown } from '@autonoma-ai/sdk'
 import type { SQLExecutor, ResolvedEntitySpec } from '@autonoma-ai/sdk'
@@ -40,36 +41,9 @@ describe('Drizzle executor + PostgreSQL (testcontainers)', { timeout: 120_000 },
       )
     `)
 
-    // Create a raw pg-based executor to test drizzleExecutor
-    // drizzleExecutor expects a Drizzle DB, but for testing we use a pg.Pool wrapper
-    // that mimics the Drizzle execute interface
-    const drizzleDb = {
-      execute(query: { sql: string; params: unknown[] }) {
-        return pool.query(query.sql, query.params).then((r) => ({ rows: r.rows }))
-      },
-      async transaction<T>(fn: (tx: typeof drizzleDb) => Promise<T>): Promise<T> {
-        const client = await pool.connect()
-        try {
-          await client.query('BEGIN')
-          const txDb = {
-            execute(query: { sql: string; params: unknown[] }) {
-              return client.query(query.sql, query.params).then((r) => ({ rows: r.rows }))
-            },
-            transaction: (innerFn: any) => innerFn(txDb),
-          }
-          const result = await fn(txDb as any)
-          await client.query('COMMIT')
-          return result
-        } catch (err) {
-          await client.query('ROLLBACK')
-          throw err
-        } finally {
-          client.release()
-        }
-      },
-    }
-
-    executor = drizzleExecutor(drizzleDb as any)
+    // Wire the adapter to a real Drizzle instance backed by the test container.
+    const db = drizzle(pool)
+    executor = drizzleExecutor(db)
   })
 
   afterAll(async () => {
