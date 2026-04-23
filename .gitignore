@@ -44,3 +44,4 @@ __pycache__/
 
 # Rust build artifacts
 sdks/rust/target/
+examples/rust/*/target/
