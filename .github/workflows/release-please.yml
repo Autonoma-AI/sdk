@@ -25,5 +25,9 @@ jobs:
   publish:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
-    uses: ./.github/workflows/publish.yml
-    secrets: inherit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch publish.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main

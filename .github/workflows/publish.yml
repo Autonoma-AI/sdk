@@ -71,15 +71,30 @@ jobs:
 
       - run: pnpm build
 
+      - name: Check if version already on npm
+        id: npm_check
+        run: |
+          VERSION=$(node -p "require('./packages/sdk/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "@autonoma-ai/sdk@$VERSION" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::@autonoma-ai/sdk@$VERSION already on npm — skipping npm publish."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish @autonoma-ai/sdk
+        if: steps.npm_check.outputs.already_published == 'false'
         run: pnpm --filter @autonoma-ai/sdk publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Wait for registry propagation
+        if: steps.npm_check.outputs.already_published == 'false'
         run: sleep 10
 
       - name: Publish remaining packages
+        if: steps.npm_check.outputs.already_published == 'false'
         run: pnpm -r --filter '!@autonoma-ai/sdk' publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -109,10 +124,24 @@ jobs:
       - name: Install Poetry
         run: pip install poetry
 
+      - name: Check if version already on PyPI
+        id: pypi_check
+        run: |
+          VERSION=$(poetry version -s)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if curl -sSf "https://pypi.org/pypi/autonoma-ai/$VERSION/json" >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::autonoma-ai $VERSION already on PyPI — skipping PyPI publish."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build package
+        if: steps.pypi_check.outputs.already_published == 'false'
         run: poetry build
 
       - name: Publish to PyPI
+        if: steps.pypi_check.outputs.already_published == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: sdks/python/dist/
@@ -142,7 +171,20 @@ jobs:
       - run: mix local.rebar --force
       - run: mix deps.get
 
+      - name: Check if version already on Hex
+        id: hex_check
+        run: |
+          VERSION=$(grep -oE '@version "[^"]+"' mix.exs | head -1 | sed 's/@version "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if curl -sSf "https://hex.pm/api/packages/autonoma/releases/$VERSION" >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::autonoma $VERSION already on Hex — skipping Hex publish."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and publish to Hex
+        if: steps.hex_check.outputs.already_published == 'false'
         run: mix hex.publish --yes
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
