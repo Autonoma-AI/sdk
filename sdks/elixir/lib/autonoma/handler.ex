@@ -146,7 +146,7 @@ defmodule Autonoma.Handler do
 
     {refs, _id_map} =
       config.executor.(:transaction, fn tx ->
-        {refs, id_map, _i} = process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, 0)
+        {refs, id_map, _i} = process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, 0, config, test_run_id)
 
         # Resolve deferred FK updates
         Enum.each(tree.deferred_updates, fn du ->
@@ -195,15 +195,15 @@ defmodule Autonoma.Handler do
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"auth" => auth, "refs" => refs, "refsToken" => refs_token})}
   end
 
-  defp process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i) do
+  defp process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id) do
     if i >= length(tree.ops) do
       {refs, id_map, i}
     else
-      do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i)
+      do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id)
     end
   end
 
-  defp do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i) do
+  defp do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id) do
     op = Enum.at(tree.ops, i)
     model = op.model
 
@@ -218,8 +218,11 @@ defmodule Autonoma.Handler do
     pk_field_name = if pk_field, do: pk_field["name"], else: "id"
 
     resolved_fields =
-      Enum.map(batch, fn b ->
-        fields = b.fields
+      batch
+      |> Enum.with_index()
+      |> Enum.map(fn {b, batch_index} ->
+        # Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+        fields = resolve_tokens(b.fields, test_run_id, batch_index)
 
         # Replace temp IDs with real IDs
         fields =
@@ -271,11 +274,36 @@ defmodule Autonoma.Handler do
         fields
       end)
 
-    is_batch = op.batch
-    spec = %{model => %{"count" => length(resolved_fields), "fields" => resolved_fields, "batch" => is_batch}}
+    factories = Map.get(config, :factories, %{}) || %{}
+    factory = Map.get(factories, model)
 
-    created = Create.create_entities(tx, dialect, table_map, column_maps, spec, enum_type_maps, schema["models"] || [])
-    records = Map.get(created, model, [])
+    records =
+      if factory do
+        # Factory path: call user-defined create() for each record
+        Enum.map(resolved_fields, fn fields ->
+          factory_ctx = %{
+            refs: refs,
+            executor: tx,
+            scenario_name: test_run_id,
+            test_run_id: test_run_id
+          }
+
+          record = factory.create.(fields, factory_ctx)
+
+          if Map.get(record, pk_field_name) == nil do
+            raise Error.factory_missing_pk(model, pk_field_name)
+          end
+
+          record
+        end)
+      else
+        # SQL fallback path (existing behavior)
+        is_batch = op.batch
+        spec = %{model => %{"count" => length(resolved_fields), "fields" => resolved_fields, "batch" => is_batch}}
+
+        created = Create.create_entities(tx, dialect, table_map, column_maps, spec, enum_type_maps, schema["models"] || [])
+        Map.get(created, model, [])
+      end
 
     refs =
       Map.update(refs, model, records, fn existing -> existing ++ records end)
@@ -295,7 +323,7 @@ defmodule Autonoma.Handler do
         end
       end)
 
-    process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i + 1)
+    process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i + 1, config, test_run_id)
   end
 
   defp collect_batch(ops, i, model, batch_flag, acc) do
@@ -331,10 +359,108 @@ defmodule Autonoma.Handler do
       hook -> hook.(%{scenario_name: payload["testRunId"], refs: payload["refs"] || %{}})
     end
 
-    TeardownSQL.teardown(config.executor, dialect, table_map, column_maps, schema, payload["testRunId"], payload["refs"])
+    # Determine which models have factory teardown
+    factories = Map.get(config, :factories, %{}) || %{}
+    factory_teardown_models =
+      factories
+      |> Enum.filter(fn {_model, factory} -> factory[:teardown] != nil end)
+      |> Enum.map(fn {model, _} -> model end)
+      |> MapSet.new()
+
+    # Run factory teardowns in reverse topo order
+    if MapSet.size(factory_teardown_models) > 0 do
+      %{order: order, scope_root: scope_root} = TeardownSQL.compute_teardown_order(schema)
+      full_order = if scope_root, do: order ++ [scope_root], else: order
+      td_refs = payload["refs"] || %{}
+
+      full_order
+      |> Enum.reverse()
+      |> Enum.filter(fn model -> MapSet.member?(factory_teardown_models, model) end)
+      |> Enum.each(fn model ->
+        records = Map.get(td_refs, model, [])
+        factory_ctx = %{
+          refs: td_refs,
+          executor: config.executor,
+          scenario_name: payload["testRunId"],
+          test_run_id: payload["testRunId"]
+        }
+
+        records
+        |> Enum.reverse()
+        |> Enum.each(fn record ->
+          factories[model].teardown.(record, factory_ctx)
+        end)
+      end)
+    end
+
+    # SQL teardown for remaining models (skipping factory-teardown ones)
+    TeardownSQL.teardown(config.executor, dialect, table_map, column_maps, schema, payload["testRunId"], payload["refs"], factory_teardown_models)
 
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"ok" => true})}
   end
+
+  # ---------------------------------------------------------------------------
+  # Token resolution (defense-in-depth)
+  # ---------------------------------------------------------------------------
+
+  @token_re ~r/\{\{\s*([^{}]+?)\s*\}\}/
+  @cycle_re ~r/^cycle\((.*)\)$/
+
+  @doc """
+  Substitute built-in tokens in field values: {{testRunId}}, {{index}},
+  {{cycle(a,b,c)}}. Raises Autonoma.Error with code `UNRESOLVED_TOKEN` for any
+  other `{{token}}` that reaches the SDK.
+  """
+  def resolve_tokens(value, test_run_id, index) when is_binary(value) do
+    Regex.replace(@token_re, value, fn _full, token ->
+      token = String.trim(token)
+
+      cond do
+        token == "testRunId" ->
+          test_run_id
+
+        token == "index" ->
+          Integer.to_string(index)
+
+        match = Regex.run(@cycle_re, token) ->
+          [_, inner] = match
+
+          parts =
+            inner
+            |> String.split(",")
+            |> Enum.map(fn p ->
+              p
+              |> String.trim()
+              |> String.trim(~s("))
+              |> String.trim(~s('))
+            end)
+
+          case parts do
+            [] -> ""
+            _ -> Enum.at(parts, rem(index, length(parts)))
+          end
+
+        true ->
+          raise %Autonoma.Error{
+            message: "Unresolved token: {{#{token}}}",
+            code: "UNRESOLVED_TOKEN",
+            status: 400
+          }
+      end
+    end)
+  end
+
+  def resolve_tokens(value, test_run_id, index) when is_list(value) do
+    Enum.map(value, &resolve_tokens(&1, test_run_id, index))
+  end
+
+  def resolve_tokens(value, test_run_id, index) when is_map(value) do
+    Enum.reduce(value, %{}, fn {k, v}, acc ->
+      Map.put(acc, k, resolve_tokens(v, test_run_id, index))
+    end)
+  end
+
+  def resolve_tokens(value, _test_run_id, _index), do: value
 
   # ---------------------------------------------------------------------------
   # Helpers

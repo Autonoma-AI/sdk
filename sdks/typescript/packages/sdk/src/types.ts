@@ -77,6 +77,26 @@ export interface SdkInfo {
   server: string
 }
 
+export interface FactoryContext {
+  /** All refs created so far, keyed by model name */
+  refs: Record<string, Record<string, unknown>[]>
+  /** The SQL executor (for factories that need direct DB access) */
+  executor: SQLExecutor
+  /** The detected or fallback scope value */
+  scenarioName: string
+  /** Unique ID for this test run */
+  testRunId: string
+}
+
+export interface FactoryDefinition {
+  /** Create a single entity. Receives pre-resolved fields (temp IDs already replaced). Must return at least { id }. */
+  create: (data: Record<string, unknown>, ctx: FactoryContext) => Promise<Record<string, unknown>>
+  /** Optional teardown per record. If omitted, falls back to SQL DELETE. */
+  teardown?: (record: Record<string, unknown>, ctx: FactoryContext) => Promise<void>
+}
+
+export type FactoryRegistry = Record<string, FactoryDefinition>
+
 export interface HandlerConfig {
   /** SQL executor wrapping your database connection */
   executor: SQLExecutor
@@ -98,6 +118,8 @@ export interface HandlerConfig {
   sharedSecret: string
   /** Internal secret — only you know this. Used to sign the refs JWT token. Autonoma never sees it. */
   signingSecret: string
+  /** Factory definitions per model. If a factory exists for a model, it is used instead of raw SQL INSERT. */
+  factories?: FactoryRegistry
   allowProduction?: boolean
   /**
    * Auth callback — called after entity creation during `up`.

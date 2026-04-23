@@ -1,39 +1,83 @@
 // =============================================================================
-// Autonoma SDK — Next.js App Router Route Handler
+// Autonoma SDK — Next.js App Router Route Handler (Hybrid Factories + SQL)
 // =============================================================================
-// This file defines the Autonoma Environment Factory endpoint as a Next.js
-// App Router route handler. It uses the Web standard Request/Response API.
+// This example shows how to use factories for models with business logic
+// (Organization, User) while letting the SDK handle simpler models (Project,
+// Task) via raw SQL. This "hybrid" approach gives you the best of both worlds:
+// correct business logic where it matters, zero setup where it doesn't.
 //
 // Route: POST /api/autonoma
 
 import { createHandler } from '@autonoma-ai/server-web'
 import { drizzleExecutor } from '@autonoma-ai/sdk-drizzle'
+import { defineFactory } from '@autonoma-ai/sdk'
 import { db } from '@/db'
+import { OrganizationRepository } from '@/repositories/organization'
+import { UserRepository } from '@/repositories/user'
 
 // ---------------------------------------------------------------------------
-// Create the Autonoma handler
+// Initialize Repositories
 // ---------------------------------------------------------------------------
-// The `server-web` package creates a handler that works with the Web standard
-// Request/Response API — which is exactly what Next.js App Router uses.
+const organizationRepo = new OrganizationRepository()
+const userRepo = new UserRepository()
+
+// ---------------------------------------------------------------------------
+// Create the Autonoma handler with Factories
+// ---------------------------------------------------------------------------
+// Factories let you use your own repositories/services to create test data.
+// The SDK still handles scenario resolution, FK ordering, and teardown —
+// but delegates actual creation to your code for models that need it.
 //
-// In Next.js, exporting a named function like `POST` from a route.ts file
-// makes it handle POST requests to that path. So this single export sets up
-// the entire Autonoma endpoint.
+// Models WITHOUT a factory (Project, Task) fall back to raw SQL INSERT,
+// which works fine for simple tables without business logic.
 
 export const POST = createHandler({
-  // The Drizzle executor wraps the db instance into a SQL executor.
+  // Connects the SDK to your database through your ORM (Prisma, Drizzle, SQLAlchemy, etc.)
   executor: drizzleExecutor(db),
-
-  // The scope field tells the SDK which field to use for data isolation.
+  // The column that scopes all models to a tenant (e.g. organizationId). The SDK uses this to
+  // isolate test data and ensure teardown only removes records belonging to the test run.
   scopeField: 'organizationId',
-
-  // Shared secret — both you and Autonoma know this.
+  // Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET ?? 'my-shared-secret',
-
-  // Signing secret — only you know this.
+  // Private to your server only. Used to sign the refs token that tracks created records,
+  // so teardown can only delete what was created.
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET ?? 'my-signing-secret',
 
-  // Auth callback — called after entity creation during `up`.
+  // Custom create/teardown logic for models with business logic (password hashing, slug
+  // generation, etc.). Models without a factory fall back to raw SQL INSERT.
+  factories: {
+    // Organization: uses the repository which handles slug generation,
+    // default settings, external service setup, etc.
+    organizations: defineFactory({
+      create: async (data, ctx) => {
+        return organizationRepo.create({
+          name: data.name as string,
+        })
+      },
+      teardown: async (record, ctx) => {
+        await organizationRepo.delete(record.id as string)
+      },
+    }),
+
+    // User: uses the repository which handles password hashing,
+    // email normalization, and other business logic.
+    // No teardown defined — the SDK falls back to SQL DELETE.
+    users: defineFactory({
+      create: async (data, ctx) => {
+        return userRepo.create({
+          email: data.email as string,
+          name: data.name as string,
+          organizationId: data.organization_id as string,
+        })
+      },
+    }),
+
+    // projects and tasks have no factories — they use raw SQL INSERT.
+    // This is fine because they're simple tables with no business logic.
+  },
+
+  // Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
+  // so Autonoma can make authenticated requests as the test user.
   auth: async (user, context) => {
     return { headers: { Authorization: `Bearer test-token` } }
   },

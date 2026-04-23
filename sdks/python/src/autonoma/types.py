@@ -71,6 +71,25 @@ class AuthContext:
 
 
 @dataclass
+class FactoryContext:
+    """Context passed to factory create/teardown functions."""
+    refs: dict[str, list[dict[str, Any]]]
+    executor: SQLExecutor
+    scenario_name: str
+    test_run_id: str
+
+
+@dataclass
+class FactoryDefinition:
+    """A factory for creating entities via user code instead of raw SQL."""
+    create: Callable[..., Any]
+    teardown: Callable[..., Any] | None = None
+
+
+FactoryRegistry = dict[str, FactoryDefinition]
+
+
+@dataclass
 class HandlerConfig:
     """Configuration for the Autonoma request handler."""
     executor: SQLExecutor
@@ -86,6 +105,7 @@ class HandlerConfig:
     table_name_map: dict[str, str] | None = None
     exclude_tables: list[str] | None = None
     allow_production: bool = False
+    factories: FactoryRegistry | None = None
     sdk: dict[str, str] | None = None
     before_down: Callable[[HookContext], Any] | None = None
     after_up: Callable[[HookContext, dict[str, Any]], dict[str, Any]] | None = None

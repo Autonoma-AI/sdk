@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::errors::AutonomaError;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldInfo {
     pub name: String,
@@ -107,6 +109,8 @@ pub struct HandlerConfig {
     pub before_down: Option<Box<dyn Fn(&HookContext) + Send + Sync>>,
     /// Optional hook called after entity creation and auth in `up`.
     pub after_up: Option<Box<dyn Fn(&HookContext, HashMap<String, Value>) -> HashMap<String, Value> + Send + Sync>>,
+    /// Factory definitions per model. If a factory exists for a model, it is used instead of raw SQL INSERT.
+    pub factories: Option<FactoryRegistry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,3 +157,48 @@ pub struct IntrospectionResult {
     pub column_maps: HashMap<String, HashMap<String, String>>,
     pub enum_type_maps: HashMap<String, HashMap<String, String>>,
 }
+
+/// Context passed to factory create/teardown functions.
+pub struct FactoryContext<'a> {
+    pub refs: &'a HashMap<String, Vec<HashMap<String, Value>>>,
+    pub executor: &'a dyn SqlExecutor,
+    pub scenario_name: String,
+    pub test_run_id: String,
+}
+
+/// User-defined factory for creating entities via custom code instead of raw SQL.
+///
+/// Implement this trait to register a factory for a model. The SDK will call
+/// `create()` instead of raw SQL INSERT for models with registered factories.
+#[async_trait]
+pub trait Factory: Send + Sync {
+    /// Create a single entity. Receives pre-resolved fields (temp IDs already replaced).
+    /// Must return at least the primary key field.
+    async fn create(
+        &self,
+        data: HashMap<String, Value>,
+        ctx: &FactoryContext<'_>,
+    ) -> Result<HashMap<String, Value>, AutonomaError>;
+
+    /// Optional teardown per record. Return `Err` with code `NO_FACTORY_TEARDOWN`
+    /// to signal that SQL DELETE should be used instead.
+    async fn teardown(
+        &self,
+        _record: &HashMap<String, Value>,
+        _ctx: &FactoryContext<'_>,
+    ) -> Result<(), AutonomaError> {
+        Err(AutonomaError {
+            message: "no factory teardown".to_string(),
+            code: "NO_FACTORY_TEARDOWN".to_string(),
+            status: 500,
+        })
+    }
+
+    /// Whether this factory has a custom teardown. If false, SQL DELETE is used.
+    fn has_teardown(&self) -> bool {
+        false
+    }
+}
+
+/// Registry mapping model names to their factory implementations.
+pub type FactoryRegistry = HashMap<String, Box<dyn Factory>>;

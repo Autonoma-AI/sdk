@@ -72,6 +72,26 @@ type AuthContext struct {
 	Refs       map[string][]map[string]any
 }
 
+// FactoryContext is passed to factory create and teardown functions.
+type FactoryContext struct {
+	Refs         map[string][]map[string]any
+	Executor     SQLExecutor
+	ScenarioName string
+	TestRunID    string
+}
+
+// FactoryDefinition defines how to create and optionally teardown entities for a model.
+type FactoryDefinition struct {
+	// Create builds a single entity from pre-resolved fields (temp IDs already replaced).
+	// Must return at least the PK field.
+	Create func(data map[string]any, ctx FactoryContext) (map[string]any, error)
+	// Teardown is an optional per-record cleanup function. If nil, SQL DELETE is used.
+	Teardown func(record map[string]any, ctx FactoryContext) error
+}
+
+// FactoryRegistry maps model names to their factory definitions.
+type FactoryRegistry map[string]FactoryDefinition
+
 type HandlerConfig struct {
 	Executor        SQLExecutor
 	ScopeField      string
@@ -86,6 +106,7 @@ type HandlerConfig struct {
 	SDK             *SdkInfo
 	BeforeDown      func(ctx HookContext) error
 	AfterUp         func(ctx HookContext, auth map[string]any) (map[string]any, error)
+	Factories       FactoryRegistry
 }
 
 type HandlerRequest struct {

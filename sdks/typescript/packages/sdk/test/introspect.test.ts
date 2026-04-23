@@ -220,3 +220,42 @@ describe('introspectDatabase — mysql', () => {
     })
   })
 })
+
+/**
+ * Contract tests: auto-derivation of model names from SQL tables must NOT
+ * pluralize. Users and agent prompts rely on this documented rule when
+ * deciding whether to populate `tableNameMap` (see README "Model name ↔
+ * table name" section). Changing this behavior would silently invalidate
+ * that guidance.
+ */
+describe('introspectDatabase — snakeToPascal does not pluralize', () => {
+  const dialect = getDialect('postgres')
+
+  async function derivedModelFor(tableName: string): Promise<string> {
+    const exec = createMockExecutor(
+      [{ table_name: tableName }],
+      [{ table_name: tableName, column_name: 'id', data_type: 'uuid', udt_name: 'uuid', is_nullable: 'NO', column_default: 'gen_random_uuid()' }],
+      [{ table_name: tableName, column_name: 'id' }],
+      [],
+    )
+    const result = await introspectDatabase(exec, dialect, { scopeField: 'organizationId' })
+    return result.schema.models[0]!.name
+  }
+
+  it('keeps plural table names plural', async () => {
+    expect(await derivedModelFor('organizations')).toBe('Organizations')
+    expect(await derivedModelFor('api_keys')).toBe('ApiKeys')
+    expect(await derivedModelFor('branch_deployments')).toBe('BranchDeployments')
+  })
+
+  it('keeps singular table names singular', async () => {
+    expect(await derivedModelFor('user')).toBe('User')
+    expect(await derivedModelFor('api_key')).toBe('ApiKey')
+    expect(await derivedModelFor('branch_deployment')).toBe('BranchDeployment')
+  })
+
+  it('preserves multi-segment PascalCase', async () => {
+    expect(await derivedModelFor('application_setup')).toBe('ApplicationSetup')
+    expect(await derivedModelFor('web_application_data')).toBe('WebApplicationData')
+  })
+})

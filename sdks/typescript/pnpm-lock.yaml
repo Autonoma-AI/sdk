@@ -176,8 +176,8 @@ importers:
   packages/server-hono:
     dependencies:
       '@autonoma-ai/sdk':
-        specifier: ^0.1.12
-        version: 0.1.12
+        specifier: workspace:*
+        version: link:../sdk
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -231,9 +231,6 @@ importers:
         version: 3.2.4(@types/node@22.19.15)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3)
 
 packages:
-
-  '@autonoma-ai/sdk@0.1.12':
-    resolution: {integrity: sha512-sYeiU+lN20lmns9FkjiOYunKP8OUozjxOyC31wTrx7/GgoXbocP/mMjve5SBeRP6619T5q1K/kuhU2QyBSjSHQ==}
 
   '@balena/dockerignore@1.0.2':
     resolution: {integrity: sha512-wMue2Sy4GAVTk6Ic4tJVcnfdau+gx2EnG7S+uAEe+TWJFqE4YoWN4/H8MSLj4eYJKxGg26lZwboEniNiNwZQ6Q==}
@@ -2015,8 +2012,6 @@ packages:
     engines: {node: '>= 14'}
 
 snapshots:
-
-  '@autonoma-ai/sdk@0.1.12': {}
 
   '@balena/dockerignore@1.0.2': {}
 

@@ -1,9 +1,13 @@
 //! Request routing for discover/up/down protocol actions.
 
 use chrono::{DateTime, Utc};
+use regex::{Captures, Regex};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use uuid::Uuid;
+
+use std::collections::HashSet;
 
 use crate::create::{create_entities, update_entity};
 use crate::dialect::get_dialect;
@@ -11,9 +15,9 @@ use crate::errors::*;
 use crate::hmac::verify_signature;
 use crate::introspect::introspect_database;
 use crate::refs::{sign_refs, verify_refs};
-use crate::teardown::teardown;
+use crate::teardown::{compute_teardown_order, teardown};
 use crate::tree::resolve_tree;
-use crate::types::{AuthContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult};
+use crate::types::{AuthContext, FactoryContext, HandlerConfig, HandlerRequest, HandlerResponse, HookContext, IntrospectionResult};
 
 pub const PROTOCOL_VERSION: &str = include_str!("../../../protocol/version.txt").trim_ascii();
 
@@ -216,8 +220,12 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
         let pk_field_name = pk_field.map(|f| f.name.as_str()).unwrap_or("id");
 
         let mut resolved_fields: Vec<HashMap<String, Value>> = Vec::new();
-        for b in &batch_ops {
-            let mut fields: HashMap<String, Value> = b.fields.clone();
+        for (batch_index, b) in batch_ops.iter().enumerate() {
+            // Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+            let mut fields: HashMap<String, Value> = HashMap::new();
+            for (k, v) in &b.fields {
+                fields.insert(k.clone(), resolve_tokens(v, &test_run_id, batch_index)?);
+            }
 
             // Replace temp IDs with real IDs (Bug 3: use Value, not just String)
             for (key, value) in fields.clone() {
@@ -266,40 +274,75 @@ async fn handle_up(config: &HandlerConfig, body: &Value) -> Result<HandlerRespon
             resolved_fields.push(fields);
         }
 
-        let fields_json: Vec<Value> = resolved_fields
-            .iter()
-            .map(|f| {
-                Value::Object(f.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            })
-            .collect();
+        // Check if a factory is registered for this model
+        let has_factory = config
+            .factories
+            .as_ref()
+            .map(|f| f.contains_key(model))
+            .unwrap_or(false);
 
-        let spec: HashMap<String, Value> = [(
-            model.clone(),
-            json!({
-                "count": resolved_fields.len(),
-                "fields": fields_json,
-                "batch": op.batch
-            }),
-        )]
-        .into();
+        let records: Vec<HashMap<String, Value>> = if has_factory {
+            // Factory path: call user-defined create() for each record
+            let factory = config.factories.as_ref().unwrap().get(model).unwrap();
+            let mut factory_records = Vec::new();
+            for fields in &resolved_fields {
+                let factory_ctx = FactoryContext {
+                    refs: &refs,
+                    executor: config.executor.as_ref(),
+                    scenario_name: test_run_id.clone(),
+                    test_run_id: test_run_id.clone(),
+                };
+                let record = factory.create(fields.clone(), &factory_ctx).await?;
+                if record.get(pk_field_name).map_or(true, |v| v.is_null()) {
+                    return Err(AutonomaError {
+                        message: format!(
+                            "Factory for \"{}\" must return a record with \"{}\"",
+                            model, pk_field_name
+                        ),
+                        code: "FACTORY_MISSING_PK".to_string(),
+                        status: 500,
+                    });
+                }
+                factory_records.push(record);
+            }
+            factory_records
+        } else {
+            // SQL fallback path (existing behavior)
+            let fields_json: Vec<Value> = resolved_fields
+                .iter()
+                .map(|f| {
+                    Value::Object(f.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                })
+                .collect();
 
-        let created = create_entities(
-            config.executor.as_ref(),
-            dialect.as_ref(),
-            &introspection.table_map,
-            &introspection.column_maps,
-            &spec,
-            &introspection.enum_type_maps,
-            &schema.models,
-        )
-        .await
-        .map_err(|e| AutonomaError {
-            message: e,
-            code: "CREATE_ERROR".to_string(),
-            status: 500,
-        })?;
+            let spec: HashMap<String, Value> = [(
+                model.clone(),
+                json!({
+                    "count": resolved_fields.len(),
+                    "fields": fields_json,
+                    "batch": op.batch
+                }),
+            )]
+            .into();
 
-        let records = created.get(model).cloned().unwrap_or_default();
+            let created = create_entities(
+                config.executor.as_ref(),
+                dialect.as_ref(),
+                &introspection.table_map,
+                &introspection.column_maps,
+                &spec,
+                &introspection.enum_type_maps,
+                &schema.models,
+            )
+            .await
+            .map_err(|e| AutonomaError {
+                message: e,
+                code: "CREATE_ERROR".to_string(),
+                status: 500,
+            })?;
+
+            created.get(model).cloned().unwrap_or_default()
+        };
 
         refs.entry(model.clone()).or_default().extend(records.clone());
 
@@ -464,6 +507,62 @@ async fn handle_down(config: &HandlerConfig, body: &Value) -> Result<HandlerResp
         before_down(&hook_ctx);
     }
 
+    // Determine which models have factory teardown
+    let mut factory_teardown_models: HashSet<String> = HashSet::new();
+    if let Some(ref factories) = config.factories {
+        for (model, factory) in factories {
+            if factory.has_teardown() {
+                factory_teardown_models.insert(model.clone());
+            }
+        }
+    }
+
+    // Run factory teardowns in reverse topo order
+    if !factory_teardown_models.is_empty() {
+        let teardown_info = compute_teardown_order(&introspection.schema);
+        // Include scope root in the order for factory teardown
+        let mut full_order = teardown_info.order.clone();
+        if let Some(ref root) = teardown_info.scope_root_model {
+            full_order.push(root.clone());
+        }
+
+        let refs_for_factory: HashMap<String, Vec<HashMap<String, Value>>> =
+            if let Some(refs_val) = payload.get("refs") {
+                serde_json::from_value(refs_val.clone()).unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
+
+        // Process in reverse order
+        for model in full_order.iter().rev() {
+            if !factory_teardown_models.contains(model) {
+                continue;
+            }
+            let records = refs_for_factory.get(model).cloned().unwrap_or_default();
+            let factory = config.factories.as_ref().unwrap().get(model).unwrap();
+            let factory_ctx = FactoryContext {
+                refs: &refs_for_factory,
+                executor: config.executor.as_ref(),
+                scenario_name: test_run_id.to_string(),
+                test_run_id: test_run_id.to_string(),
+            };
+            // Teardown records in reverse order
+            for record in records.iter().rev() {
+                factory.teardown(record, &factory_ctx).await.map_err(|e| AutonomaError {
+                    message: e.message,
+                    code: "FACTORY_TEARDOWN_ERROR".to_string(),
+                    status: 500,
+                })?;
+            }
+        }
+    }
+
+    let skip_models = if factory_teardown_models.is_empty() {
+        None
+    } else {
+        Some(&factory_teardown_models)
+    };
+
     teardown(
         config.executor.as_ref(),
         dialect.as_ref(),
@@ -472,6 +571,7 @@ async fn handle_down(config: &HandlerConfig, body: &Value) -> Result<HandlerResp
         &introspection.schema,
         test_run_id,
         payload.get("refs"),
+        skip_models,
     )
     .await
     .map_err(|e| AutonomaError {
@@ -490,6 +590,87 @@ async fn handle_down(config: &HandlerConfig, body: &Value) -> Result<HandlerResp
         status: 200,
         body: Value::Object(response),
     })
+}
+
+fn token_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\{\{\s*([^{}]+?)\s*\}\}").unwrap())
+}
+
+fn cycle_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^cycle\((.*)\)$").unwrap())
+}
+
+fn resolve_tokens_str(input: &str, test_run_id: &str, index: usize) -> Result<String, AutonomaError> {
+    let mut err: Option<AutonomaError> = None;
+    let result = token_re().replace_all(input, |caps: &Captures| {
+        if err.is_some() {
+            return String::new();
+        }
+        let token = caps[1].trim();
+        if token == "testRunId" {
+            return test_run_id.to_string();
+        }
+        if token == "index" {
+            return index.to_string();
+        }
+        if let Some(cycle_caps) = cycle_re().captures(token) {
+            let inner = &cycle_caps[1];
+            let parts: Vec<String> = inner
+                .split(',')
+                .map(|p| {
+                    let t = p.trim();
+                    let bytes = t.as_bytes();
+                    if bytes.len() >= 2
+                        && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
+                            || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"'))
+                    {
+                        t[1..t.len() - 1].to_string()
+                    } else {
+                        t.to_string()
+                    }
+                })
+                .collect();
+            if parts.is_empty() {
+                return String::new();
+            }
+            return parts[index % parts.len()].clone();
+        }
+        err = Some(AutonomaError {
+            message: format!("Unresolved token: {{{{{}}}}}", token),
+            code: "UNRESOLVED_TOKEN".to_string(),
+            status: 400,
+        });
+        String::new()
+    });
+    if let Some(e) = err {
+        return Err(e);
+    }
+    Ok(result.into_owned())
+}
+
+/// Substitute built-in tokens in field values: {{testRunId}}, {{index}},
+/// {{cycle(a,b,c)}}. Returns UNRESOLVED_TOKEN error for any other {{token}}.
+pub fn resolve_tokens(value: &Value, test_run_id: &str, index: usize) -> Result<Value, AutonomaError> {
+    match value {
+        Value::String(s) => Ok(Value::String(resolve_tokens_str(s, test_run_id, index)?)),
+        Value::Array(arr) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for v in arr {
+                out.push(resolve_tokens(v, test_run_id, index)?);
+            }
+            Ok(Value::Array(out))
+        }
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k.clone(), resolve_tokens(v, test_run_id, index)?);
+            }
+            Ok(Value::Object(out))
+        }
+        _ => Ok(value.clone()),
+    }
 }
 
 fn find_first_user(refs: &HashMap<String, Vec<HashMap<String, Value>>>) -> Option<HashMap<String, Value>> {

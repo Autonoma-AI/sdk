@@ -1,5 +1,6 @@
 import type {
   AuthResult,
+  FactoryContext,
   HandlerConfig,
   HandlerRequest,
   HandlerResponse,
@@ -14,7 +15,41 @@ import { AutonomaError, Errors } from './errors'
 import { getDialect } from './dialect'
 import { introspectDatabase, type IntrospectionResult } from './introspect'
 import { createEntities, updateEntity } from './create'
-import { teardown } from './teardown'
+import { computeTeardownOrder, teardown } from './teardown'
+
+const TOKEN_RE = /\{\{\s*([^{}]+?)\s*\}\}/g
+const CYCLE_RE = /^cycle\((.*)\)$/
+
+/**
+ * Substitute built-in tokens in field values: {{testRunId}}, {{index}},
+ * {{cycle(a,b,c)}}. Defense-in-depth: the test runner should substitute
+ * recipe variables before calling /up, but if a literal {{…}} slips through
+ * we fail loudly with UNRESOLVED_TOKEN rather than INSERT the raw string.
+ */
+export function resolveTokens(value: unknown, testRunId: string, index: number): unknown {
+  if (typeof value === 'string') {
+    return value.replace(TOKEN_RE, (_match, rawToken: string) => {
+      const token = rawToken.trim()
+      if (token === 'testRunId') return testRunId
+      if (token === 'index') return String(index)
+      const cycle = CYCLE_RE.exec(token)
+      if (cycle) {
+        const parts = cycle[1]!.split(',').map((p) => p.trim().replace(/^['"]|['"]$/g, ''))
+        return parts.length ? parts[index % parts.length]! : ''
+      }
+      throw new AutonomaError(`Unresolved token: {{${token}}}`, 'UNRESOLVED_TOKEN', 400)
+    })
+  }
+  if (Array.isArray(value)) return value.map((v) => resolveTokens(v, testRunId, index))
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = resolveTokens(v, testRunId, index)
+    }
+    return out
+  }
+  return value
+}
 
 /** Cache introspection results per config to avoid re-querying on every request */
 const introspectionCache = new WeakMap<HandlerConfig, IntrospectionResult>()
@@ -137,8 +172,9 @@ async function handleUp(
       const idFields = modelInfo?.fields.filter((f) => f.isId) ?? []
       const pkField = idFields.find((f) => f.name.toLowerCase() === 'id') ?? idFields[0]
       const pkFieldName = pkField?.name ?? 'id'
-      const resolvedFields = batch.map((b) => {
-        const fields = { ...b.fields }
+      const resolvedFields = batch.map((b, batchIndex) => {
+        // Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
+        const fields = resolveTokens({ ...b.fields }, testRunId, batchIndex) as Record<string, unknown>
         for (const [key, value] of Object.entries(fields)) {
           if (typeof value === 'string' && value.startsWith('__temp_')) {
             const realId = idMap.get(value)
@@ -166,13 +202,38 @@ async function handleUp(
         return fields
       })
 
-      const spec: Record<string, ResolvedEntitySpec> = {
-        [model]: { count: resolvedFields.length, fields: resolvedFields, batch: op.batch },
-      }
+      let records: Record<string, unknown>[]
+      const factory = config.factories?.[model]
 
-      const context = { testRunId, refs }
-      const created = await createEntities(tx, dialect, tableMap, columnMaps, spec, context, enumTypeMaps, schema.models)
-      const records = created[model] ?? []
+      if (factory) {
+        // Factory path: call user-defined create() for each record
+        records = []
+        for (const fields of resolvedFields) {
+          const factoryCtx: FactoryContext = {
+            refs,
+            executor: tx,
+            scenarioName: testRunId,
+            testRunId,
+          }
+          const record = await factory.create(fields, factoryCtx)
+          if (record[pkFieldName] == null) {
+            throw new AutonomaError(
+              `Factory for "${model}" must return a record with "${pkFieldName}"`,
+              'FACTORY_MISSING_PK',
+              500,
+            )
+          }
+          records.push(record)
+        }
+      } else {
+        // SQL fallback path (existing behavior)
+        const spec: Record<string, ResolvedEntitySpec> = {
+          [model]: { count: resolvedFields.length, fields: resolvedFields, batch: op.batch },
+        }
+        const context = { testRunId, refs }
+        const created = await createEntities(tx, dialect, tableMap, columnMaps, spec, context, enumTypeMaps, schema.models)
+        records = created[model] ?? []
+      }
 
       if (!refs[model]) refs[model] = []
       refs[model].push(...records)
@@ -250,7 +311,40 @@ async function handleDown(
     await config.beforeDown(hookCtx)
   }
 
-  await teardown(config.executor, dialect, tableMap, columnMaps, schema, payload.testRunId, payload.refs)
+  // Determine which models have factory teardown
+  const factoryTeardownModels = new Set<string>()
+  if (config.factories) {
+    for (const [model, factory] of Object.entries(config.factories)) {
+      if (factory.teardown) {
+        factoryTeardownModels.add(model)
+      }
+    }
+  }
+
+  // Run factory teardowns in reverse topo order
+  if (factoryTeardownModels.size > 0) {
+    const { order, scopeRootModel } = computeTeardownOrder(schema)
+    // Include scope root in the order for factory teardown
+    const fullOrder = scopeRootModel ? [...order, scopeRootModel] : order
+    const refs = payload.refs ?? {}
+
+    for (const model of [...fullOrder].reverse()) {
+      if (!factoryTeardownModels.has(model)) continue
+      const records = refs[model] ?? []
+      const factoryCtx: FactoryContext = {
+        refs,
+        executor: config.executor,
+        scenarioName: payload.testRunId,
+        testRunId: payload.testRunId,
+      }
+      for (const record of [...records].reverse()) {
+        await config.factories![model]!.teardown!(record, factoryCtx)
+      }
+    }
+  }
+
+  // SQL teardown for remaining models (skipping factory-teardown ones)
+  await teardown(config.executor, dialect, tableMap, columnMaps, schema, payload.testRunId, payload.refs, factoryTeardownModels)
 
   return { status: 200, body: { ...buildSdkMeta(config), ok: true } }
 }

@@ -1,61 +1,90 @@
 // =============================================================================
-// Autonoma SDK — Express + Prisma Example
+// Autonoma SDK — Express + Prisma Example (Hybrid Factories + SQL)
 // =============================================================================
-// This file sets up a minimal Express server with the Autonoma Environment
-// Factory endpoint. The endpoint allows Autonoma to discover your schema,
-// create test data, and tear it down — all automatically.
+// This example shows how to use factories for models with business logic
+// (Organization, User) while letting the SDK handle simpler models (Project,
+// Task) via raw SQL. This "hybrid" approach gives you the best of both worlds:
+// correct business logic where it matters, zero setup where it doesn't.
 
 import express from 'express'
 import { PrismaClient } from '@prisma/client'
 import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { createExpressHandler } from '@autonoma-ai/server-express'
+import { defineFactory } from '@autonoma-ai/sdk'
+import { OrganizationRepository } from './repositories/organization'
+import { UserRepository } from './repositories/user'
 
 // ---------------------------------------------------------------------------
-// 1. Initialize Prisma
+// 1. Initialize Prisma & Repositories
 // ---------------------------------------------------------------------------
-// PrismaClient connects to your PostgreSQL database. It also contains the
-// metadata about your schema that the Autonoma SDK will introspect.
 const prisma = new PrismaClient()
+const organizationRepo = new OrganizationRepository(prisma)
+const userRepo = new UserRepository(prisma)
 
 // ---------------------------------------------------------------------------
 // 2. Create the Express app
 // ---------------------------------------------------------------------------
 const app = express()
-
-// Express needs to parse JSON request bodies for most routes. However, the
-// Autonoma handler reads the raw body itself (for HMAC signature verification),
-// so we use express.json() here for any other routes you might add.
 app.use(express.json())
 
 // ---------------------------------------------------------------------------
-// 3. Mount the Autonoma endpoint
+// 3. Mount the Autonoma endpoint with Factories
 // ---------------------------------------------------------------------------
-// This single line is the entire integration. The SDK handles:
-//   - HMAC signature verification (using sharedSecret)
-//   - Schema introspection (via Prisma's metadata)
-//   - Entity creation with FK ordering (topological sort)
-//   - Scoped teardown (deletes all data matching the scope field value)
-//   - Ref token signing (using signingSecret, so Autonoma can't forge refs)
+// Factories let you use your own repositories/services to create test data.
+// The SDK still handles scenario resolution, FK ordering, and teardown —
+// but delegates actual creation to your code for models that need it.
+//
+// Models WITHOUT a factory (Project, Task) fall back to raw SQL INSERT,
+// which works fine for simple tables without business logic.
 app.post(
   '/api/autonoma',
   createExpressHandler({
-    // The Prisma executor wraps PrismaClient into a SQL executor.
+    // Connects the SDK to your database through your ORM (Prisma, Drizzle, SQLAlchemy, etc.)
     executor: prismaExecutor(prisma),
-
-    // The scope field tells the SDK which field to use for data isolation.
+    // The column that scopes all models to a tenant (e.g. organizationId). The SDK uses this to
+    // isolate test data and ensure teardown only removes records belonging to the test run.
     scopeField: 'organizationId',
-
-    // Shared secret — both you and Autonoma know this.
-    // Used to verify that incoming requests are genuinely from Autonoma.
+    // Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
     sharedSecret: process.env.AUTONOMA_SHARED_SECRET ?? 'my-shared-secret',
-
-    // Signing secret — only you know this. Autonoma never sees it.
-    // Used to sign ref tokens so they can't be tampered with.
+    // Private to your server only. Used to sign the refs token that tracks created records,
+    // so teardown can only delete what was created.
     signingSecret: process.env.AUTONOMA_SIGNING_SECRET ?? 'my-signing-secret',
 
-    // Auth callback — called after entity creation during `up`.
-    // Receives the first User record (or null) and a context with scopeValue and refs.
-    // Must return auth credentials for the test runner.
+    // Custom create/teardown logic for models with business logic (password hashing, slug
+    // generation, etc.). Models without a factory fall back to raw SQL INSERT.
+    factories: {
+      // Organization: uses the repository which handles slug generation,
+      // default settings, external service setup, etc.
+      Organization: defineFactory({
+        create: async (data, ctx) => {
+          return organizationRepo.create({
+            name: data.name as string,
+          })
+        },
+        teardown: async (record, ctx) => {
+          await organizationRepo.delete(record.id as string)
+        },
+      }),
+
+      // User: uses the repository which handles password hashing,
+      // email normalization, and other business logic.
+      // No teardown defined — the SDK falls back to SQL DELETE.
+      User: defineFactory({
+        create: async (data, ctx) => {
+          return userRepo.create({
+            email: data.email as string,
+            name: data.name as string,
+            organizationId: data.organizationId as string,
+          })
+        },
+      }),
+
+      // Project and Task have no factories — they use raw SQL INSERT.
+      // This is fine because they're simple tables with no business logic.
+    },
+
+    // Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
+    // so Autonoma can make authenticated requests as the test user.
     auth: async (user, context) => {
       return { headers: { Authorization: `Bearer test-token` } }
     },

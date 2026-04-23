@@ -9,7 +9,8 @@ export { checkScenario, checkAllScenarios } from './check'
 export { introspectDatabase } from './introspect'
 export { getDialect } from './dialect'
 export { createEntities } from './create'
-export { teardown } from './teardown'
+export { teardown, computeTeardownOrder } from './teardown'
+export { defineFactory } from './factory'
 
 // Types
 export type {
@@ -33,6 +34,9 @@ export type {
   SchemaRelation,
   SdkInfo,
   HookContext,
+  FactoryContext,
+  FactoryDefinition,
+  FactoryRegistry,
 } from './types'
 
 export type { Dialect } from './dialect'

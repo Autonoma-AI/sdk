@@ -15,6 +15,7 @@ pub mod axum;
 pub mod create;
 pub mod dialect;
 pub mod errors;
+pub mod factory;
 pub mod fingerprint;
 mod generated;
 pub mod graph;

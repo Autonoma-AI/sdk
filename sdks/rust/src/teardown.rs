@@ -7,30 +7,22 @@ use crate::dialect::Dialect;
 use crate::graph::{find_deferrable_edge, topo_sort};
 use crate::types::{SchemaInfo, SqlExecutor};
 
-pub async fn teardown(
-    executor: &dyn SqlExecutor,
-    dialect: &dyn Dialect,
-    table_map: &HashMap<String, String>,
-    column_maps: &HashMap<String, HashMap<String, String>>,
-    schema: &SchemaInfo,
-    scope_value: &str,
-    refs: Option<&Value>,
-) -> Result<(), String> {
-    // Convert edges to Value format for graph module
-    let edge_dicts: Vec<Value> = schema
-        .edges
-        .iter()
-        .map(|e| {
-            serde_json::json!({
-                "from": e.from_model,
-                "to": e.to_model,
-                "localField": e.local_field,
-                "foreignField": e.foreign_field,
-                "nullable": e.nullable
-            })
-        })
-        .collect();
+/// Result of computing the teardown order for models.
+pub struct TeardownOrder {
+    /// Models in the order they should be deleted (reverse topo), excluding scope root.
+    pub order: Vec<String>,
+    /// The scope root model (deleted last), if any.
+    pub scope_root_model: Option<String>,
+    /// Detected cycles in the FK graph.
+    pub cycles: Vec<Vec<String>>,
+    /// Map of model name -> FK field name pointing to the scope root.
+    pub scope_field_by_model: HashMap<String, String>,
+}
 
+/// Compute the teardown order for models (reverse topological order).
+/// Returns model names in the order they should be deleted,
+/// plus the scope root model name (deleted last) and cycle info for FK nullification.
+pub fn compute_teardown_order(schema: &SchemaInfo) -> TeardownOrder {
     // Find scope root model
     let scope_root_model: Option<String> = schema.edges.iter().find_map(|edge| {
         if edge.local_field.to_lowercase() == schema.scope_field.to_lowercase()
@@ -51,6 +43,21 @@ pub async fn teardown(
             }
         }
     }
+
+    // Convert edges to Value format for graph module
+    let edge_dicts: Vec<Value> = schema
+        .edges
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "from": e.from_model,
+                "to": e.to_model,
+                "localField": e.local_field,
+                "foreignField": e.foreign_field,
+                "nullable": e.nullable
+            })
+        })
+        .collect();
 
     let model_names: Vec<String> = schema.models.iter().map(|m| m.name.clone()).collect();
     let sort_result = topo_sort(&model_names, &edge_dicts);
@@ -80,50 +87,8 @@ pub async fn teardown(
         })
         .unwrap_or_default();
 
-    // Transaction wrapper — use the executor's transaction method
-    // Break cycles by nullifying deferrable FKs
-    for cycle in &cycles {
-        let cycle_strs: Vec<String> = cycle.clone();
-        let edge = find_deferrable_edge(&cycle_strs, &edge_dicts);
-        if let Some(edge_obj) = edge.as_object() {
-            let from = edge_obj
-                .get("from")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let local_field = edge_obj
-                .get("localField")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            if let Some(scope_fk) = scope_field_by_model.get(from) {
-                if let Some(db_table) = table_map.get(from) {
-                    let col_map = column_maps.get(from).cloned().unwrap_or_default();
-                    let db_fk_col = col_map
-                        .get(local_field)
-                        .cloned()
-                        .unwrap_or_else(|| local_field.to_string());
-                    let db_scope_col = col_map
-                        .get(scope_fk)
-                        .cloned()
-                        .unwrap_or_else(|| scope_fk.clone());
-                    let sql = format!(
-                        "UPDATE {} SET {} = NULL WHERE {} = {}",
-                        dialect.quote_id(db_table),
-                        dialect.quote_id(&db_fk_col),
-                        dialect.quote_id(&db_scope_col),
-                        dialect.param(1)
-                    );
-                    executor
-                        .query(&sql, Some(&[Value::String(scope_value.to_string())]))
-                        .await?;
-                }
-            }
-        }
-    }
-
     // Build condensation graph: each SCC is a super-node, each sorted node
-    // is its own node. Topo-sort the condensation DAG and delete in reverse
-    // order so that dependents of cycles are deleted before the cycle itself.
+    // is its own node.
     let mut components: Vec<Vec<String>> = Vec::new();
     let mut node_to_comp: HashMap<String, usize> = HashMap::new();
 
@@ -139,7 +104,7 @@ pub async fn teardown(
         components.push(vec![node.clone()]);
     }
 
-    // Build condensation DAG edges (dependency → dependent)
+    // Build condensation DAG edges (dependency -> dependent)
     let comp_count = components.len();
     let mut cond_adj: Vec<HashSet<usize>> = vec![HashSet::new(); comp_count];
     let mut cond_in_deg: Vec<usize> = vec![0; comp_count];
@@ -172,19 +137,109 @@ pub async fn teardown(
         }
     }
 
-    // Delete in reverse condensation order (dependents first)
+    // Flatten in reverse condensation order, excluding scope root
+    let mut order: Vec<String> = Vec::new();
     for &comp_idx in cond_order.iter().rev() {
         for model in &components[comp_idx] {
-            if scope_root_model.as_deref() == Some(model.as_str()) {
-                continue;
+            if scope_root_model.as_deref() != Some(model.as_str()) {
+                order.push(model.clone());
             }
-            delete_model(executor, dialect, table_map, column_maps, model,
-                scope_value, &scope_field_by_model, refs, schema).await?;
         }
     }
 
-    // Delete scope root last
-    if let Some(ref root) = scope_root_model {
+    TeardownOrder {
+        order,
+        scope_root_model,
+        cycles,
+        scope_field_by_model,
+    }
+}
+
+pub async fn teardown(
+    executor: &dyn SqlExecutor,
+    dialect: &dyn Dialect,
+    table_map: &HashMap<String, String>,
+    column_maps: &HashMap<String, HashMap<String, String>>,
+    schema: &SchemaInfo,
+    scope_value: &str,
+    refs: Option<&Value>,
+    skip_models: Option<&HashSet<String>>,
+) -> Result<(), String> {
+    let teardown_order = compute_teardown_order(schema);
+
+    // Convert edges to Value format for find_deferrable_edge
+    let edge_dicts: Vec<Value> = schema
+        .edges
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "from": e.from_model,
+                "to": e.to_model,
+                "localField": e.local_field,
+                "foreignField": e.foreign_field,
+                "nullable": e.nullable
+            })
+        })
+        .collect();
+
+    // Break cycles by nullifying deferrable FKs
+    for cycle in &teardown_order.cycles {
+        let cycle_strs: Vec<String> = cycle.clone();
+        let edge = find_deferrable_edge(&cycle_strs, &edge_dicts);
+        if let Some(edge_obj) = edge.as_object() {
+            let from = edge_obj
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let local_field = edge_obj
+                .get("localField")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if let Some(scope_fk) = teardown_order.scope_field_by_model.get(from) {
+                if let Some(db_table) = table_map.get(from) {
+                    let col_map = column_maps.get(from).cloned().unwrap_or_default();
+                    let db_fk_col = col_map
+                        .get(local_field)
+                        .cloned()
+                        .unwrap_or_else(|| local_field.to_string());
+                    let db_scope_col = col_map
+                        .get(scope_fk)
+                        .cloned()
+                        .unwrap_or_else(|| scope_fk.clone());
+                    let sql = format!(
+                        "UPDATE {} SET {} = NULL WHERE {} = {}",
+                        dialect.quote_id(db_table),
+                        dialect.quote_id(&db_fk_col),
+                        dialect.quote_id(&db_scope_col),
+                        dialect.param(1)
+                    );
+                    executor
+                        .query(&sql, Some(&[Value::String(scope_value.to_string())]))
+                        .await?;
+                }
+            }
+        }
+    }
+
+    // Delete in reverse condensation order (dependents first), skipping factory-teardown models
+    for model in &teardown_order.order {
+        if let Some(skip) = skip_models {
+            if skip.contains(model) {
+                continue;
+            }
+        }
+        delete_model(executor, dialect, table_map, column_maps, model,
+            scope_value, &teardown_order.scope_field_by_model, refs, schema).await?;
+    }
+
+    // Delete scope root last (unless skipped by factory teardown)
+    if let Some(ref root) = teardown_order.scope_root_model {
+        if let Some(skip) = skip_models {
+            if skip.contains(root) {
+                return Ok(());
+            }
+        }
         if let Some(db_table) = table_map.get(root) {
             let col_map = column_maps.get(root).cloned().unwrap_or_default();
             // Bug 4: use dynamic PK field from schema (composite PK: prefer "id")

@@ -9,17 +9,13 @@ use Autonoma\Sdk\Types\SchemaInfo;
 class Teardown
 {
     /**
-     * Delete all data scoped to scopeValue in reverse topological order.
+     * Compute the teardown order for models (reverse topological order).
+     * Returns the order, scope root model, cycles, and scope field map.
+     *
+     * @return array{order: string[], scopeRootModel: string|null, cycles: array[], scopeFieldByModel: array<string, string>}
      */
-    public static function teardown(
-        SQLExecutorInterface $executor,
-        DialectInterface $dialect,
-        array $tableMap,
-        array $columnMaps,
-        SchemaInfo $schema,
-        string $scopeValue,
-        ?array $refs = null,
-    ): void {
+    public static function computeTeardownOrder(SchemaInfo $schema): array
+    {
         // Convert edges to dict format for graph module
         $edgeDicts = [];
         foreach ($schema->edges as $e) {
@@ -42,7 +38,7 @@ class Teardown
             }
         }
 
-        // Build map: model → FK field pointing to scope root
+        // Build map: model -> FK field pointing to scope root
         $scopeFieldByModel = [];
         if ($scopeRootModel !== null) {
             foreach ($schema->edges as $edge) {
@@ -57,10 +53,113 @@ class Teardown
         $sortedModels = $result['sorted'];
         $cycles = $result['cycles'];
 
+        // Build condensation graph
+        $components = [];
+        $nodeToComp = [];
+
+        foreach ($cycles as $cycle) {
+            $idx = count($components);
+            $components[] = $cycle;
+            foreach ($cycle as $node) {
+                $nodeToComp[$node] = $idx;
+            }
+        }
+        foreach ($sortedModels as $node) {
+            $nodeToComp[$node] = count($components);
+            $components[] = [$node];
+        }
+
+        // Build condensation DAG edges
+        $condAdj = [];
+        $condInDeg = [];
+        for ($i = 0; $i < count($components); $i++) {
+            $condAdj[$i] = [];
+            $condInDeg[$i] = 0;
+        }
+        foreach ($schema->edges as $edge) {
+            if ($edge->fromModel === $edge->toModel) continue;
+            $fc = $nodeToComp[$edge->fromModel] ?? null;
+            $tc = $nodeToComp[$edge->toModel] ?? null;
+            if ($fc !== null && $tc !== null && $fc !== $tc && !isset($condAdj[$tc][$fc])) {
+                $condAdj[$tc][$fc] = true;
+                $condInDeg[$fc]++;
+            }
+        }
+
+        // Kahn's algorithm on the condensation DAG
+        $condQueue = [];
+        foreach ($condInDeg as $idx => $deg) {
+            if ($deg === 0) $condQueue[] = $idx;
+        }
+        sort($condQueue);
+        $condOrder = [];
+        while (!empty($condQueue)) {
+            sort($condQueue);
+            $idx = array_shift($condQueue);
+            $condOrder[] = $idx;
+            foreach (array_keys($condAdj[$idx]) as $neighbor) {
+                $condInDeg[$neighbor]--;
+                if ($condInDeg[$neighbor] === 0) {
+                    $condQueue[] = $neighbor;
+                }
+            }
+        }
+
+        // Flatten in reverse condensation order, excluding scope root
+        $order = [];
+        foreach (array_reverse($condOrder) as $compIdx) {
+            foreach ($components[$compIdx] as $model) {
+                if ($model !== $scopeRootModel) {
+                    $order[] = $model;
+                }
+            }
+        }
+
+        return [
+            'order' => $order,
+            'scopeRootModel' => $scopeRootModel,
+            'cycles' => $cycles,
+            'scopeFieldByModel' => $scopeFieldByModel,
+        ];
+    }
+
+    /**
+     * Delete all data scoped to scopeValue in reverse topological order.
+     *
+     * @param string[] $skipModels Models to skip (handled by factory teardown)
+     */
+    public static function teardown(
+        SQLExecutorInterface $executor,
+        DialectInterface $dialect,
+        array $tableMap,
+        array $columnMaps,
+        SchemaInfo $schema,
+        string $scopeValue,
+        ?array $refs = null,
+        array $skipModels = [],
+    ): void {
+        $teardownInfo = self::computeTeardownOrder($schema);
+        $order = $teardownInfo['order'];
+        $scopeRootModel = $teardownInfo['scopeRootModel'];
+        $cycles = $teardownInfo['cycles'];
+        $scopeFieldByModel = $teardownInfo['scopeFieldByModel'];
+
+        // Convert edges to dict format for findDeferrableEdge
+        $edgeDicts = [];
+        foreach ($schema->edges as $e) {
+            $edgeDicts[] = [
+                'from' => $e->fromModel,
+                'to' => $e->toModel,
+                'localField' => $e->localField,
+                'foreignField' => $e->foreignField,
+                'nullable' => $e->nullable,
+            ];
+        }
+
         $executor->transaction(function (SQLExecutorInterface $tx) use (
             $dialect, $tableMap, $columnMaps, $scopeRootModel,
-            $scopeFieldByModel, $sortedModels, $cycles, $edgeDicts,
-            $scopeValue, $refs, $schema,
+            $scopeFieldByModel, $order, $cycles, $edgeDicts,
+            $scopeValue, $refs, $schema, $skipModels,
         ) {
             // Break cycles by nullifying deferrable FKs
             foreach ($cycles as $cycle) {
@@ -88,115 +187,61 @@ class Teardown
                 }
             }
 
-            // Build condensation graph: each SCC is a super-node, each sorted node
-            // is its own node. Topo-sort the condensation DAG and delete in reverse
-            // order so that dependents of cycles are deleted before the cycle itself.
-            $components = [];
-            $nodeToComp = [];
-
-            foreach ($cycles as $cycle) {
-                $idx = count($components);
-                $components[] = $cycle;
-                foreach ($cycle as $node) {
-                    $nodeToComp[$node] = $idx;
-                }
-            }
-            foreach ($sortedModels as $node) {
-                $nodeToComp[$node] = count($components);
-                $components[] = [$node];
+            // Delete in reverse condensation order (dependents first), skipping factory-teardown models
+            foreach ($order as $model) {
+                if (in_array($model, $skipModels, true)) continue;
+                self::deleteModel(
+                    $tx, $dialect, $tableMap, $columnMaps, $model,
+                    $scopeValue, $scopeFieldByModel, $refs, $schema,
+                );
             }
 
-            // Build condensation DAG edges (dependency → dependent)
-            $condAdj = [];
-            $condInDeg = [];
-            for ($i = 0; $i < count($components); $i++) {
-                $condAdj[$i] = [];
-                $condInDeg[$i] = 0;
-            }
-            foreach ($schema->edges as $edge) {
-                if ($edge->fromModel === $edge->toModel) continue;
-                $fc = $nodeToComp[$edge->fromModel] ?? null;
-                $tc = $nodeToComp[$edge->toModel] ?? null;
-                if ($fc !== null && $tc !== null && $fc !== $tc && !isset($condAdj[$tc][$fc])) {
-                    $condAdj[$tc][$fc] = true;
-                    $condInDeg[$fc]++;
-                }
+            // Delete scope root last (unless skipped by factory teardown)
+            if ($scopeRootModel === null || in_array($scopeRootModel, $skipModels, true)) {
+                return;
             }
 
-            // Kahn's algorithm on the condensation DAG
-            $condQueue = [];
-            foreach ($condInDeg as $idx => $deg) {
-                if ($deg === 0) $condQueue[] = $idx;
-            }
-            sort($condQueue);
-            $condOrder = [];
-            while (!empty($condQueue)) {
-                sort($condQueue);
-                $idx = array_shift($condQueue);
-                $condOrder[] = $idx;
-                foreach (array_keys($condAdj[$idx]) as $neighbor) {
-                    $condInDeg[$neighbor]--;
-                    if ($condInDeg[$neighbor] === 0) {
-                        $condQueue[] = $neighbor;
+            $dbTable = $tableMap[$scopeRootModel] ?? null;
+            $colMap = $columnMaps[$scopeRootModel] ?? [];
+            if ($dbTable !== null) {
+                // Find PK field name for scope root model
+                $rootModelInfo = null;
+                foreach ($schema->models as $m) {
+                    if ($m->name === $scopeRootModel) {
+                        $rootModelInfo = $m;
+                        break;
                     }
                 }
-            }
-
-            // Delete in reverse condensation order (dependents first)
-            foreach (array_reverse($condOrder) as $compIdx) {
-                foreach ($components[$compIdx] as $model) {
-                    if ($model === $scopeRootModel) continue;
-                    self::deleteModel(
-                        $tx, $dialect, $tableMap, $columnMaps, $model,
-                        $scopeValue, $scopeFieldByModel, $refs, $schema,
-                    );
-                }
-            }
-
-            // Delete scope root last
-            if ($scopeRootModel !== null) {
-                $dbTable = $tableMap[$scopeRootModel] ?? null;
-                $colMap = $columnMaps[$scopeRootModel] ?? [];
-                if ($dbTable !== null) {
-                    // Find PK field name for scope root model
-                    $rootModelInfo = null;
-                    foreach ($schema->models as $m) {
-                        if ($m->name === $scopeRootModel) {
-                            $rootModelInfo = $m;
-                            break;
+                // Composite PK: prefer field named "id"
+                $rootIdFields = [];
+                if ($rootModelInfo !== null) {
+                    foreach ($rootModelInfo->fields as $f) {
+                        if ($f->isId) {
+                            $rootIdFields[] = $f;
                         }
                     }
-                    // Composite PK: prefer field named "id"
-                    $rootIdFields = [];
-                    if ($rootModelInfo !== null) {
-                        foreach ($rootModelInfo->fields as $f) {
-                            if ($f->isId) {
-                                $rootIdFields[] = $f;
-                            }
-                        }
-                    }
-                    $rootPkField = null;
-                    foreach ($rootIdFields as $f) {
-                        if (strtolower($f->name) === 'id') {
-                            $rootPkField = $f;
-                            break;
-                        }
-                    }
-                    if ($rootPkField === null) {
-                        $rootPkField = $rootIdFields[0] ?? null;
-                    }
-                    $rootPkFieldName = $rootPkField !== null ? $rootPkField->name : 'id';
-                    $idCol = $colMap[$rootPkFieldName] ?? $rootPkFieldName;
-                    $tx->query(
-                        sprintf(
-                            'DELETE FROM %s WHERE %s = %s',
-                            $dialect->quoteId($dbTable),
-                            $dialect->quoteId($idCol),
-                            $dialect->param(1),
-                        ),
-                        [$scopeValue],
-                    );
                 }
+                $rootPkField = null;
+                foreach ($rootIdFields as $f) {
+                    if (strtolower($f->name) === 'id') {
+                        $rootPkField = $f;
+                        break;
+                    }
+                }
+                if ($rootPkField === null) {
+                    $rootPkField = $rootIdFields[0] ?? null;
+                }
+                $rootPkFieldName = $rootPkField !== null ? $rootPkField->name : 'id';
+                $idCol = $colMap[$rootPkFieldName] ?? $rootPkFieldName;
+                $tx->query(
+                    sprintf(
+                        'DELETE FROM %s WHERE %s = %s',
+                        $dialect->quoteId($dbTable),
+                        $dialect->quoteId($idCol),
+                        $dialect->param(1),
+                    ),
+                    [$scopeValue],
+                );
             }
         });
     }

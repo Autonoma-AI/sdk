@@ -108,8 +108,47 @@ All language SDKs implement the same protocol with the same core modules:
 - **refs** — JWT-like token (header.payload.signature) for signing/verifying created entity refs
 - **graph** — Kahn's topo sort + Tarjan's SCC for FK ordering and cycle detection
 - **fingerprint** — deterministic sha256-based hash of scenario definitions
+- **factory** — optional user-defined entity factories (`defineFactory`) for models with business logic; SDK falls back to raw SQL for models without factories (hybrid mode)
 - **ORM adapter** — implements getSchema(), createEntities(), teardown() for a specific ORM
 - **Server adapter** — converts framework-specific request/response to internal types
+
+### Entity Factories (Hybrid Mode)
+
+The SDK supports a **hybrid** approach to entity creation. Users can register factories for models that have business logic (password hashing, external service calls, state machines, etc.) while letting the SDK handle simpler models via raw SQL.
+
+**Key types** (reference implementation in TypeScript):
+- `FactoryDefinition` — `{ create(data, ctx), teardown?(record, ctx) }`. `create` receives pre-resolved fields (temp IDs already replaced with real FK IDs). Must return at least the PK field.
+- `FactoryContext` — `{ refs, executor, scenarioName, testRunId }`. Passed to both `create` and `teardown`.
+- `FactoryRegistry` — `Record<string, FactoryDefinition>`. Passed as `factories` on `HandlerConfig`.
+
+**How it works:**
+1. Tree resolution and topological sorting happen as before
+2. For each model in topo order: if a factory is registered, call `factory.create()` per record; otherwise use raw SQL INSERT
+3. FK fields are pre-resolved before reaching the factory (Option A — factories never see `__temp_*` IDs)
+4. On teardown: if a factory defines `teardown`, call it per record in reverse order; otherwise fall back to SQL DELETE
+5. Deferred updates (circular FK cycles) always use raw SQL `updateEntity`
+
+**Factory return contract:** Must return at least `{ id }` (or whatever the PK field is named). All returned fields are stored in refs and passed to the test runner. Fields don't need to match DB column names — only the PK matters for FK wiring.
+
+**Language-native patterns:**
+- TypeScript/Python/Ruby: closures/lambdas
+- Java: interfaces (`FactoryDefinition`)
+- Go: struct with function fields
+- Rust: traits with `async_trait`
+- Elixir: 2-arity functions
+- PHP: callables
+
+**Troubleshooting factory errors:**
+
+| Error Code | Cause | Fix |
+|------------|-------|-----|
+| `FACTORY_MISSING_PK` | Factory `create` returned a record without the primary key field | Ensure your factory returns at least `{ id: "..." }` (or whatever the PK is named in the schema). The SDK needs the PK to wire FK references between models. |
+| `SAME_SECRETS` | `sharedSecret` and `signingSecret` are identical | Use two distinct secrets — the shared secret authenticates requests, the signing secret signs refs tokens. Reusing one for both is a security risk. |
+| `INVALID_SIGNATURE` | HMAC verification failed on the incoming request | Check that the `sharedSecret` in your SDK config matches the one configured in the Autonoma dashboard. |
+| `INVALID_REFS_TOKEN` | The `refsToken` in a `down` request could not be verified | The token was signed with a different `signingSecret` or was tampered with. Ensure the same config is used for `up` and `down`. |
+| `UNKNOWN_ACTION` | Request body has an unrecognized `action` value | Valid actions are `discover`, `up`, and `down`. |
+| `INVALID_BODY` | Request body is not valid JSON or is missing required fields | Check that the request body is valid JSON and includes `action`. For `up`, include `create`; for `down`, include `refsToken`. |
+| `PRODUCTION_BLOCKED` | SDK detected a production environment | Set `allowProduction: true` in config if you intentionally want to run in production, or ensure `NODE_ENV`/`PYTHON_ENV`/`ENV` is not set to `"production"`. |
 
 ### Available Adapters
 

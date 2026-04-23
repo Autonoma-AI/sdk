@@ -67,6 +67,47 @@ app.post('/api/autonoma', createExpressHandler({
 app.listen(3000)
 ```
 
+## Model name ↔ table name
+
+By default, the SDK derives a model name from each SQL table by splitting on `_` and PascalCasing each part — **no pluralization**. Examples:
+
+| SQL table | Auto-derived model name |
+|-----------|-------------------------|
+| `user` | `User` |
+| `api_key` | `ApiKey` |
+| `branch_deployment` | `BranchDeployment` |
+| `organizations` | `Organizations` (stays plural) |
+| `api_keys` | `ApiKeys` (stays plural) |
+
+If every factory you register is keyed under the auto-derived name, **omit `tableNameMap` entirely**. The SDK handles the mapping.
+
+You only need `tableNameMap` when a factory key disagrees with the auto-derived name. Common reasons:
+
+- Your tables are plural but you want singular factory keys: `organizations` table ↔ `Organization` key.
+- Legacy short names: `usr` table ↔ `User` key, `acl` table ↔ `AccessControl` key.
+
+The map is **sparse, not exhaustive**: only list entries that actually differ. Auto-derivation covers the rest.
+
+```ts
+// Tables in DB: organization, user, api_key, deal   (singular)
+// Factories keyed: Organization, User, ApiKey, Deal
+// tableNameMap: undefined  // auto-derive is exact; omit the field
+
+// Tables in DB: organizations, users, api_keys
+// Factories keyed singular → every entry disagrees:
+createHandler({
+  // ...
+  tableNameMap: {
+    Organization: 'organizations',
+    User: 'users',
+    ApiKey: 'api_keys',
+  },
+  factories: { Organization: ..., User: ..., ApiKey: ... },
+})
+```
+
+**Red flag:** if your `tableNameMap` has one entry per factory and every entry is just a plural↔singular rename, consider keeping factory keys plural (`Organizations`) and dropping the map entirely. Plural keys are valid — pick whichever convention your scenarios use.
+
 ## Commands
 
 ```bash

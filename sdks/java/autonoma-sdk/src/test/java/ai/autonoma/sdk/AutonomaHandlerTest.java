@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -148,6 +149,267 @@ class AutonomaHandlerTest {
 
         assertEquals(200, resp.status());
         assertTrue(hookCalled.get(), "beforeDown hook should have been called");
+    }
+
+    // ── Factory tests ──
+
+    @Test
+    void factoryCreateUsedInsteadOfSQL() {
+        String secret = "shared-secret";
+        String signingSecret = "signing-secret";
+        AtomicBoolean factoryCalled = new AtomicBoolean(false);
+
+        SQLExecutor executor = mockExecutor();
+        HandlerConfig config = new HandlerConfig(
+            executor, "organizationId", secret, signingSecret, dummyAuth()
+        );
+        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
+            (data, ctx) -> {
+                factoryCalled.set(true);
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("id", "factory-org-1");
+                result.put("name", data.get("name"));
+                return result;
+            }
+        )));
+
+        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"FactoryOrg\"}]},\"testRunId\":\"run-factory\"}";
+        String sig = HmacUtil.signBody(body, secret);
+        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+
+        assertEquals(200, resp.status());
+        assertTrue(factoryCalled.get(), "Factory create should have been called");
+
+        @SuppressWarnings("unchecked")
+        Map<String, List<Map<String, Object>>> refs = (Map<String, List<Map<String, Object>>>) resp.body().get("refs");
+        assertEquals("factory-org-1", refs.get("Organization").get(0).get("id"));
+    }
+
+    @Test
+    void hybridModeFactoryForSomeModelsSQLForOthers() {
+        String secret = "shared-secret";
+        String signingSecret = "signing-secret";
+        AtomicBoolean factoryCalled = new AtomicBoolean(false);
+
+        SQLExecutor executor = mockExecutor();
+        HandlerConfig config = new HandlerConfig(
+            executor, "organizationId", secret, signingSecret, dummyAuth()
+        );
+        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
+            (data, ctx) -> {
+                factoryCalled.set(true);
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("id", "factory-org-1");
+                result.put("name", data.get("name"));
+                return result;
+            }
+        )));
+
+        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"HybridOrg\"}],\"User\":[{\"email\":\"test@example.com\",\"name\":\"Test\"}]},\"testRunId\":\"run-hybrid\"}";
+        String sig = HmacUtil.signBody(body, secret);
+        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+
+        assertEquals(200, resp.status());
+        assertTrue(factoryCalled.get(), "Factory should have been called for Organization");
+
+        @SuppressWarnings("unchecked")
+        Map<String, List<Map<String, Object>>> refs = (Map<String, List<Map<String, Object>>>) resp.body().get("refs");
+        assertNotNull(refs.get("User"), "User should have been created via SQL");
+        assertFalse(refs.get("User").isEmpty());
+    }
+
+    @Test
+    void factoryReceivesPreResolvedFKIDs() {
+        String secret = "shared-secret";
+        String signingSecret = "signing-secret";
+        AtomicReference<Map<String, Object>> receivedData = new AtomicReference<>();
+
+        SQLExecutor executor = mockExecutor();
+        HandlerConfig config = new HandlerConfig(
+            executor, "organizationId", secret, signingSecret, dummyAuth()
+        );
+        config.setFactories(Map.of(
+            "Organization", FactoryUtil.defineFactory(
+                (data, ctx) -> {
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("id", "resolved-org-id");
+                    r.put("name", data.get("name"));
+                    return r;
+                }
+            ),
+            "User", FactoryUtil.defineFactory(
+                (data, ctx) -> {
+                    receivedData.set(new LinkedHashMap<>(data));
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("id", "user-1");
+                    r.put("email", data.get("email"));
+                    r.put("organizationId", data.get("organization_id"));
+                    return r;
+                }
+            )
+        ));
+
+        // Nest User under Organization so tree resolver wires the FK
+        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"Org\",\"User\":[{\"email\":\"a@b.com\",\"name\":\"A\"}]}]},\"testRunId\":\"run-fk\"}";
+        String sig = HmacUtil.signBody(body, secret);
+        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+
+        assertEquals(200, resp.status());
+        assertNotNull(receivedData.get(), "User factory should have been called");
+        // The tree resolver uses the schema's relation field name (camelCase: organizationId)
+        // to wire the FK, so the factory receives it as "organizationId"
+        Object orgIdValue = receivedData.get().get("organizationId") != null
+            ? receivedData.get().get("organizationId")
+            : receivedData.get().get("organization_id");
+        assertEquals("resolved-org-id", orgIdValue,
+            "Factory should receive the resolved org ID, not a temp ID");
+    }
+
+    @Test
+    void factoryMissingPKFieldReturnsError() {
+        String secret = "shared-secret";
+        String signingSecret = "signing-secret";
+
+        HandlerConfig config = new HandlerConfig(
+            mockExecutor(), "organizationId", secret, signingSecret, dummyAuth()
+        );
+        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
+            (data, ctx) -> {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("name", data.get("name")); // missing "id"
+                return r;
+            }
+        )));
+
+        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"NoPK\"}]},\"testRunId\":\"run-nopk\"}";
+        String sig = HmacUtil.signBody(body, secret);
+        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+
+        assertEquals(500, resp.status());
+        assertEquals("FACTORY_MISSING_PK", resp.body().get("code"));
+    }
+
+    @Test
+    void factoryTeardownCalledPerRecordInReverseOrder() {
+        String secret = "shared-secret";
+        String signingSecret = "signing-secret";
+        List<String> teardownCalls = Collections.synchronizedList(new ArrayList<>());
+
+        HandlerConfig config = new HandlerConfig(
+            mockExecutor(), "organizationId", secret, signingSecret, dummyAuth()
+        );
+        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
+            (data, ctx) -> {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("id", "org-" + data.get("name"));
+                r.put("name", data.get("name"));
+                return r;
+            },
+            (record, ctx) -> {
+                teardownCalls.add((String) record.get("id"));
+            }
+        )));
+
+        // First create
+        String upBody = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"A\"},{\"name\":\"B\"}]},\"testRunId\":\"run-teardown\"}";
+        String upSig = HmacUtil.signBody(upBody, secret);
+        HandlerRequest upReq = new HandlerRequest(upBody, Map.of("x-signature", upSig));
+        HandlerResponse upResp = AutonomaHandler.handleRequest(config, upReq);
+        assertEquals(200, upResp.status());
+        String refsToken = (String) upResp.body().get("refsToken");
+
+        // Then teardown
+        String downBody = "{\"action\":\"down\",\"refsToken\":\"" + refsToken + "\"}";
+        String downSig = HmacUtil.signBody(downBody, secret);
+        HandlerRequest downReq = new HandlerRequest(downBody, Map.of("x-signature", downSig));
+        HandlerResponse downResp = AutonomaHandler.handleRequest(config, downReq);
+
+        assertEquals(200, downResp.status());
+        assertEquals(2, teardownCalls.size());
+        // Reverse order: B first, then A
+        assertEquals(List.of("org-B", "org-A"), teardownCalls);
+    }
+
+    @Test
+    void sqlTeardownUsedWhenFactoryHasNoTeardown() {
+        String secret = "shared-secret";
+        String signingSecret = "signing-secret";
+
+        SQLExecutor executor = mockExecutor();
+        HandlerConfig config = new HandlerConfig(
+            executor, "organizationId", secret, signingSecret, dummyAuth()
+        );
+        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
+            (data, ctx) -> {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("id", "org-1");
+                r.put("name", data.get("name"));
+                return r;
+            }
+            // No teardown — SQL DELETE should be used
+        )));
+
+        String upBody = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"Org\"}]},\"testRunId\":\"run-sql-td\"}";
+        String upSig = HmacUtil.signBody(upBody, secret);
+        HandlerRequest upReq = new HandlerRequest(upBody, Map.of("x-signature", upSig));
+        HandlerResponse upResp = AutonomaHandler.handleRequest(config, upReq);
+        assertEquals(200, upResp.status());
+
+        String refsToken = (String) upResp.body().get("refsToken");
+        String downBody = "{\"action\":\"down\",\"refsToken\":\"" + refsToken + "\"}";
+        String downSig = HmacUtil.signBody(downBody, secret);
+        HandlerRequest downReq = new HandlerRequest(downBody, Map.of("x-signature", downSig));
+        HandlerResponse downResp = AutonomaHandler.handleRequest(config, downReq);
+
+        assertEquals(200, downResp.status());
+        // SQL DELETE should have been used — no factory teardown was defined
+    }
+
+    @Test
+    void factoryContextContainsRefsOfPreviouslyCreatedModels() {
+        String secret = "shared-secret";
+        String signingSecret = "signing-secret";
+        AtomicReference<FactoryContext> userCtx = new AtomicReference<>();
+
+        HandlerConfig config = new HandlerConfig(
+            mockExecutor(), "organizationId", secret, signingSecret, dummyAuth()
+        );
+        config.setFactories(Map.of(
+            "Organization", FactoryUtil.defineFactory(
+                (data, ctx) -> {
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("id", "org-ctx");
+                    r.put("name", data.get("name"));
+                    return r;
+                }
+            ),
+            "User", FactoryUtil.defineFactory(
+                (data, ctx) -> {
+                    userCtx.set(ctx);
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("id", "user-ctx");
+                    r.put("email", data.get("email"));
+                    r.put("organizationId", data.get("organization_id"));
+                    return r;
+                }
+            )
+        ));
+
+        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"Org\"}],\"User\":[{\"email\":\"x@y.com\",\"name\":\"X\"}]},\"testRunId\":\"run-ctx\"}";
+        String sig = HmacUtil.signBody(body, secret);
+        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
+        AutonomaHandler.handleRequest(config, req);
+
+        assertNotNull(userCtx.get(), "User factory should have been called with context");
+        // By the time User factory runs, Organization should already be in refs
+        assertNotNull(userCtx.get().refs().get("Organization"));
+        assertEquals(1, userCtx.get().refs().get("Organization").size());
+        assertEquals("org-ctx", userCtx.get().refs().get("Organization").get(0).get("id"));
+        assertEquals("run-ctx", userCtx.get().testRunId());
     }
 
     private BiFunction<Map<String, Object>, AuthContext, AuthResult> dummyAuth() {
