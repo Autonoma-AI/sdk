@@ -114,6 +114,40 @@ class TestHandler < Minitest::Test
     assert_equal "UNKNOWN_ACTION", result.body["code"]
   end
 
+  def with_env(overrides)
+    previous = overrides.keys.each_with_object({}) { |k, h| h[k] = ENV[k] }
+    overrides.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+    yield
+  ensure
+    previous.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+  end
+
+  def test_blocks_production_when_not_allowed
+    with_env("RAILS_ENV" => "production", "AUTONOMA_ENABLED" => nil) do
+      req = make_request({ "action" => "discover" })
+      result = Autonoma::Handler.handle_request(@config, req)
+      assert_equal 404, result.status
+      assert_equal "PRODUCTION_BLOCKED", result.body["code"]
+    end
+  end
+
+  def test_autonoma_enabled_overrides_production_block
+    with_env("RAILS_ENV" => "production", "AUTONOMA_ENABLED" => "1") do
+      req = make_request({ "action" => "discover" })
+      result = Autonoma::Handler.handle_request(@config, req)
+      assert_equal 200, result.status
+    end
+  end
+
+  def test_autonoma_enabled_zero_does_not_override
+    with_env("RAILS_ENV" => "production", "AUTONOMA_ENABLED" => "0") do
+      req = make_request({ "action" => "discover" })
+      result = Autonoma::Handler.handle_request(@config, req)
+      assert_equal 404, result.status
+      assert_equal "PRODUCTION_BLOCKED", result.body["code"]
+    end
+  end
+
   def test_discover_returns_sdk_meta_with_ruby
     req = make_request({ "action" => "discover" })
     result = Autonoma::Handler.handle_request(@config, req)

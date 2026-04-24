@@ -9,6 +9,75 @@ import (
 	"testing"
 )
 
+func TestHandleRequest_ProductionBlocked(t *testing.T) {
+	t.Setenv("GO_ENV", "production")
+	t.Setenv("AUTONOMA_ENABLED", "")
+
+	config := &HandlerConfig{
+		SharedSecret:  "shared",
+		SigningSecret: "signing",
+	}
+	body := `{"action":"discover"}`
+	sig := SignBody(body, "shared")
+	req := HandlerRequest{
+		Body:    body,
+		Headers: map[string]string{"x-signature": sig},
+	}
+
+	resp := HandleRequest(context.Background(), config, req)
+	if resp.Status != 404 {
+		t.Errorf("expected 404, got %d", resp.Status)
+	}
+	if resp.Body["code"] != "PRODUCTION_BLOCKED" {
+		t.Errorf("expected PRODUCTION_BLOCKED, got %v", resp.Body["code"])
+	}
+}
+
+func TestHandleRequest_AutonomaEnabledOverride(t *testing.T) {
+	t.Setenv("GO_ENV", "production")
+	t.Setenv("AUTONOMA_ENABLED", "1")
+
+	config := &HandlerConfig{
+		SharedSecret:  "shared",
+		SigningSecret: "signing",
+	}
+	body := `{"action":"discover"}`
+	sig := SignBody(body, "shared")
+	req := HandlerRequest{
+		Body:    body,
+		Headers: map[string]string{"x-signature": sig},
+	}
+
+	resp := HandleRequest(context.Background(), config, req)
+	if resp.Body["code"] == "PRODUCTION_BLOCKED" {
+		t.Errorf("expected not blocked when AUTONOMA_ENABLED=1, got %v", resp.Body)
+	}
+}
+
+func TestHandleRequest_AutonomaEnabledZeroDoesNotOverride(t *testing.T) {
+	t.Setenv("GO_ENV", "production")
+	t.Setenv("AUTONOMA_ENABLED", "0")
+
+	config := &HandlerConfig{
+		SharedSecret:  "shared",
+		SigningSecret: "signing",
+	}
+	body := `{"action":"discover"}`
+	sig := SignBody(body, "shared")
+	req := HandlerRequest{
+		Body:    body,
+		Headers: map[string]string{"x-signature": sig},
+	}
+
+	resp := HandleRequest(context.Background(), config, req)
+	if resp.Status != 404 {
+		t.Errorf("expected 404, got %d", resp.Status)
+	}
+	if resp.Body["code"] != "PRODUCTION_BLOCKED" {
+		t.Errorf("expected PRODUCTION_BLOCKED, got %v", resp.Body["code"])
+	}
+}
+
 func TestHandleRequest_InvalidSignature(t *testing.T) {
 	config := &HandlerConfig{
 		SharedSecret:  "shared",

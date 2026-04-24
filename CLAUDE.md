@@ -148,7 +148,7 @@ The SDK supports a **hybrid** approach to entity creation. Users can register fa
 | `INVALID_REFS_TOKEN` | The `refsToken` in a `down` request could not be verified | The token was signed with a different `signingSecret` or was tampered with. Ensure the same config is used for `up` and `down`. |
 | `UNKNOWN_ACTION` | Request body has an unrecognized `action` value | Valid actions are `discover`, `up`, and `down`. |
 | `INVALID_BODY` | Request body is not valid JSON or is missing required fields | Check that the request body is valid JSON and includes `action`. For `up`, include `create`; for `down`, include `refsToken`. |
-| `PRODUCTION_BLOCKED` | SDK detected a production environment | Set `allowProduction: true` in config if you intentionally want to run in production, or ensure `NODE_ENV`/`PYTHON_ENV`/`ENV` is not set to `"production"`. |
+| `PRODUCTION_BLOCKED` | SDK detected a production environment | Set `allowProduction: true` in config, set `AUTONOMA_ENABLED=1` in the process environment to override at deploy time (accepts `1`/`true`/`yes`, case-insensitive), or ensure `NODE_ENV`/`PYTHON_ENV`/`ENV` is not set to `"production"`. |
 
 ### Available Adapters
 

@@ -72,6 +72,25 @@ class AutonomaHandlerTest {
     }
 
     @Test
+    void isAutonomaEnabled_parsesTruthyValues() {
+        assertTrue(AutonomaHandler.isAutonomaEnabled("1"));
+        assertTrue(AutonomaHandler.isAutonomaEnabled("true"));
+        assertTrue(AutonomaHandler.isAutonomaEnabled("TRUE"));
+        assertTrue(AutonomaHandler.isAutonomaEnabled("yes"));
+        assertTrue(AutonomaHandler.isAutonomaEnabled("  yes  "));
+    }
+
+    @Test
+    void isAutonomaEnabled_rejectsFalsyValues() {
+        assertFalse(AutonomaHandler.isAutonomaEnabled(null));
+        assertFalse(AutonomaHandler.isAutonomaEnabled(""));
+        assertFalse(AutonomaHandler.isAutonomaEnabled("0"));
+        assertFalse(AutonomaHandler.isAutonomaEnabled("false"));
+        assertFalse(AutonomaHandler.isAutonomaEnabled("no"));
+        assertFalse(AutonomaHandler.isAutonomaEnabled("something"));
+    }
+
+    @Test
     void handleRequest_invalidJson() {
         String body = "not json";
         String secret = "shared-secret";

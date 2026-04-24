@@ -75,6 +75,59 @@ class HandlerTest extends TestCase
         $this->assertSame('UNKNOWN_ACTION', $res->body['code']);
     }
 
+    public function testBlocksProductionWhenNotAllowed(): void
+    {
+        $previousAppEnv = getenv('APP_ENV');
+        $previousEnabled = getenv('AUTONOMA_ENABLED');
+        putenv('APP_ENV=production');
+        putenv('AUTONOMA_ENABLED');
+        try {
+            $config = $this->makeConfig();
+            $req = $this->makeRequest('{"action":"discover"}');
+            $res = Handler::handleRequest($config, $req);
+            $this->assertSame(404, $res->status);
+            $this->assertSame('PRODUCTION_BLOCKED', $res->body['code']);
+        } finally {
+            putenv($previousAppEnv === false ? 'APP_ENV' : 'APP_ENV=' . $previousAppEnv);
+            putenv($previousEnabled === false ? 'AUTONOMA_ENABLED' : 'AUTONOMA_ENABLED=' . $previousEnabled);
+        }
+    }
+
+    public function testAutonomaEnabledOverridesProductionBlock(): void
+    {
+        $previousAppEnv = getenv('APP_ENV');
+        $previousEnabled = getenv('AUTONOMA_ENABLED');
+        putenv('APP_ENV=production');
+        putenv('AUTONOMA_ENABLED=1');
+        try {
+            $config = $this->makeConfig();
+            $req = $this->makeRequest('{"action":"discover"}');
+            $res = Handler::handleRequest($config, $req);
+            $this->assertNotSame('PRODUCTION_BLOCKED', $res->body['code'] ?? null);
+        } finally {
+            putenv($previousAppEnv === false ? 'APP_ENV' : 'APP_ENV=' . $previousAppEnv);
+            putenv($previousEnabled === false ? 'AUTONOMA_ENABLED' : 'AUTONOMA_ENABLED=' . $previousEnabled);
+        }
+    }
+
+    public function testAutonomaEnabledZeroDoesNotOverride(): void
+    {
+        $previousAppEnv = getenv('APP_ENV');
+        $previousEnabled = getenv('AUTONOMA_ENABLED');
+        putenv('APP_ENV=production');
+        putenv('AUTONOMA_ENABLED=0');
+        try {
+            $config = $this->makeConfig();
+            $req = $this->makeRequest('{"action":"discover"}');
+            $res = Handler::handleRequest($config, $req);
+            $this->assertSame(404, $res->status);
+            $this->assertSame('PRODUCTION_BLOCKED', $res->body['code']);
+        } finally {
+            putenv($previousAppEnv === false ? 'APP_ENV' : 'APP_ENV=' . $previousAppEnv);
+            putenv($previousEnabled === false ? 'AUTONOMA_ENABLED' : 'AUTONOMA_ENABLED=' . $previousEnabled);
+        }
+    }
+
     public function testRejectsSameSecrets(): void
     {
         $config = new HandlerConfig(

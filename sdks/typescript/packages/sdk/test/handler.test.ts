@@ -121,6 +121,41 @@ describe('handleRequest', () => {
         process.env.NODE_ENV = original
       }
     })
+
+    it('allows production when AUTONOMA_ENABLED is truthy', async () => {
+      const originalNode = process.env.NODE_ENV
+      const originalEnabled = process.env.AUTONOMA_ENABLED
+      process.env.NODE_ENV = 'production'
+      process.env.AUTONOMA_ENABLED = '1'
+      try {
+        const config = createConfig()
+        const req = signedRequest({ action: 'discover' }, config.sharedSecret)
+        const res = await handleRequest(config, req)
+        expect(res.status).toBe(200)
+      } finally {
+        process.env.NODE_ENV = originalNode
+        if (originalEnabled === undefined) delete process.env.AUTONOMA_ENABLED
+        else process.env.AUTONOMA_ENABLED = originalEnabled
+      }
+    })
+
+    it('does not treat AUTONOMA_ENABLED=0 as enabled', async () => {
+      const originalNode = process.env.NODE_ENV
+      const originalEnabled = process.env.AUTONOMA_ENABLED
+      process.env.NODE_ENV = 'production'
+      process.env.AUTONOMA_ENABLED = '0'
+      try {
+        const config = createConfig()
+        const req = signedRequest({ action: 'discover' }, config.sharedSecret)
+        const res = await handleRequest(config, req)
+        expect(res.status).toBe(404)
+        expect(res.body.code).toBe('PRODUCTION_BLOCKED')
+      } finally {
+        process.env.NODE_ENV = originalNode
+        if (originalEnabled === undefined) delete process.env.AUTONOMA_ENABLED
+        else process.env.AUTONOMA_ENABLED = originalEnabled
+      }
+    })
   })
 
   describe('HMAC', () => {

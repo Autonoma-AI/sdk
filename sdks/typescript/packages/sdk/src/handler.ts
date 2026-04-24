@@ -72,6 +72,13 @@ async function getIntrospection(config: HandlerConfig): Promise<IntrospectionRes
 declare const __PROTOCOL_VERSION__: string
 export const PROTOCOL_VERSION = __PROTOCOL_VERSION__
 
+function isAutonomaEnabled(): boolean {
+  const raw = process.env.AUTONOMA_ENABLED
+  if (raw == null) return false
+  const v = raw.trim().toLowerCase()
+  return v === '1' || v === 'true' || v === 'yes'
+}
+
 function buildSdkMeta(config: HandlerConfig): { version: string; sdk: SdkInfo } {
   return {
     version: PROTOCOL_VERSION,
@@ -96,7 +103,7 @@ export async function handleRequest(
       )
     }
 
-    if (!config.allowProduction && process.env.NODE_ENV === 'production') {
+    if (!config.allowProduction && !isAutonomaEnabled() && process.env.NODE_ENV === 'production') {
       throw Errors.productionBlocked()
     }
 

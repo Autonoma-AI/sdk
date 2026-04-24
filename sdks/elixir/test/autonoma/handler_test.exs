@@ -1,5 +1,5 @@
 defmodule Autonoma.HandlerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Autonoma.{Handler, HMAC, Refs}
 
@@ -135,6 +135,50 @@ defmodule Autonoma.HandlerTest do
     result = Handler.handle(make_config(), signed_req(%{"foo" => "bar"}))
     assert result.status == 400
     assert result.body["code"] == "INVALID_BODY"
+  end
+
+  # --- Production gate tests ---
+
+  defp with_env(vars, fun) do
+    previous =
+      for {k, _v} <- vars, into: %{} do
+        {k, System.get_env(k)}
+      end
+
+    for {k, v} <- vars do
+      if is_nil(v), do: System.delete_env(k), else: System.put_env(k, v)
+    end
+
+    try do
+      fun.()
+    after
+      for {k, v} <- previous do
+        if is_nil(v), do: System.delete_env(k), else: System.put_env(k, v)
+      end
+    end
+  end
+
+  test "blocks production when not allowed" do
+    with_env(%{"MIX_ENV" => "prod", "AUTONOMA_ENABLED" => nil}, fn ->
+      result = Handler.handle(make_config(), signed_req(%{"action" => "discover"}))
+      assert result.status == 404
+      assert result.body["code"] == "PRODUCTION_BLOCKED"
+    end)
+  end
+
+  test "AUTONOMA_ENABLED=1 overrides production block" do
+    with_env(%{"MIX_ENV" => "prod", "AUTONOMA_ENABLED" => "1"}, fn ->
+      result = Handler.handle(make_config(), signed_req(%{"action" => "discover"}))
+      assert result.status == 200
+    end)
+  end
+
+  test "AUTONOMA_ENABLED=0 does not override production block" do
+    with_env(%{"MIX_ENV" => "prod", "AUTONOMA_ENABLED" => "0"}, fn ->
+      result = Handler.handle(make_config(), signed_req(%{"action" => "discover"}))
+      assert result.status == 404
+      assert result.body["code"] == "PRODUCTION_BLOCKED"
+    end)
   end
 
   # --- Handler hook tests ---

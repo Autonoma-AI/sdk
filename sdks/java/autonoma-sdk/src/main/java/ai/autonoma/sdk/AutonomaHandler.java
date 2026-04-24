@@ -61,13 +61,23 @@ public final class AutonomaHandler {
         return meta;
     }
 
+    private static boolean isAutonomaEnabled() {
+        return isAutonomaEnabled(System.getenv("AUTONOMA_ENABLED"));
+    }
+
+    static boolean isAutonomaEnabled(String raw) {
+        if (raw == null) return false;
+        String v = raw.trim().toLowerCase();
+        return v.equals("1") || v.equals("true") || v.equals("yes");
+    }
+
     public static HandlerResponse handleRequest(HandlerConfig config, HandlerRequest req) {
         try {
             if (config.getSharedSecret().equals(config.getSigningSecret())) {
                 throw AutonomaError.sameSecrets();
             }
 
-            if (!config.isAllowProduction()) {
+            if (!config.isAllowProduction() && !isAutonomaEnabled()) {
                 String env = System.getenv("JAVA_ENV");
                 String springProfile = System.getenv("SPRING_PROFILES_ACTIVE");
                 if ("production".equals(env) || "production".equals(springProfile) || "prod".equals(springProfile)) {

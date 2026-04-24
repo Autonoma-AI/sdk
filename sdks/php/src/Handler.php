@@ -30,6 +30,15 @@ class Handler
     /** @var array<int, IntrospectionResult> Cache introspection results per config */
     private static array $introspectionCache = [];
 
+    private static function isAutonomaEnabled(): bool
+    {
+        $raw = getenv('AUTONOMA_ENABLED');
+        if ($raw === false || $raw === '') {
+            return false;
+        }
+        return in_array(strtolower(trim($raw)), ['1', 'true', 'yes'], true);
+    }
+
     public static function handleRequest(HandlerConfig $config, HandlerRequest $req): HandlerResponse
     {
         try {
@@ -37,7 +46,7 @@ class Handler
                 throw AutonomaError::sameSecrets();
             }
 
-            if (!$config->allowProduction) {
+            if (!$config->allowProduction && !self::isAutonomaEnabled()) {
                 $env = getenv('APP_ENV') ?: getenv('ENV') ?: '';
                 if ($env === 'production') {
                     throw AutonomaError::productionBlocked();

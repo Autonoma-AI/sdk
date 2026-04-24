@@ -1,6 +1,8 @@
 """Tests for handler.py — handle_request."""
 
 import json
+import os
+
 import pytest
 
 from autonoma.handler import handle_request
@@ -88,6 +90,32 @@ class TestHandleRequest:
         result = await handle_request(config, req)
         assert result.status == 400
         assert result.body["code"] == "INVALID_BODY"
+
+    async def test_blocks_production_when_not_allowed(self, monkeypatch):
+        monkeypatch.setenv("PYTHON_ENV", "production")
+        monkeypatch.delenv("AUTONOMA_ENABLED", raising=False)
+        config = _make_config()
+        req = _make_request({"action": "discover"})
+        result = await handle_request(config, req)
+        assert result.status == 404
+        assert result.body["code"] == "PRODUCTION_BLOCKED"
+
+    async def test_autonoma_enabled_overrides_production_block(self, monkeypatch):
+        monkeypatch.setenv("PYTHON_ENV", "production")
+        monkeypatch.setenv("AUTONOMA_ENABLED", "1")
+        config = _make_config()
+        req = _make_request({"action": "discover"})
+        result = await handle_request(config, req)
+        assert result.status == 200
+
+    async def test_autonoma_enabled_zero_does_not_override(self, monkeypatch):
+        monkeypatch.setenv("PYTHON_ENV", "production")
+        monkeypatch.setenv("AUTONOMA_ENABLED", "0")
+        config = _make_config()
+        req = _make_request({"action": "discover"})
+        result = await handle_request(config, req)
+        assert result.status == 404
+        assert result.body["code"] == "PRODUCTION_BLOCKED"
 
 
 class MockExecutor:
