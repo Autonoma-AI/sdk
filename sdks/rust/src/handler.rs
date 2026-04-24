@@ -40,6 +40,20 @@ async fn get_introspection(config: &HandlerConfig) -> Result<IntrospectionResult
         .cloned()
 }
 
+fn is_autonoma_enabled() -> bool {
+    parse_autonoma_enabled(std::env::var("AUTONOMA_ENABLED").ok().as_deref())
+}
+
+pub(crate) fn parse_autonoma_enabled(raw: Option<&str>) -> bool {
+    match raw {
+        Some(s) => {
+            let v = s.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes"
+        }
+        None => false,
+    }
+}
+
 fn build_sdk_meta(config: &HandlerConfig) -> Value {
     let sdk = config.sdk.as_ref();
     json!({
@@ -71,7 +85,7 @@ async fn handle_request_inner(
         return Err(same_secrets());
     }
 
-    if !config.allow_production {
+    if !config.allow_production && !is_autonoma_enabled() {
         if std::env::var("RUST_ENV").as_deref() == Ok("production")
             || std::env::var("ENV").as_deref() == Ok("production")
         {
@@ -705,4 +719,24 @@ fn detect_scope_value(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_autonoma_enabled;
+
+    #[test]
+    fn parse_autonoma_enabled_truthy() {
+        for v in ["1", "true", "TRUE", "yes", "  yes  "] {
+            assert!(parse_autonoma_enabled(Some(v)), "expected truthy for {v:?}");
+        }
+    }
+
+    #[test]
+    fn parse_autonoma_enabled_falsy() {
+        assert!(!parse_autonoma_enabled(None));
+        for v in ["", "0", "false", "no", "something"] {
+            assert!(!parse_autonoma_enabled(Some(v)), "expected falsy for {v:?}");
+        }
+    }
 }

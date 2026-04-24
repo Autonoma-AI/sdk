@@ -74,6 +74,13 @@ defmodule Autonoma.Handler do
     }
   end
 
+  defp autonoma_enabled? do
+    case System.get_env("AUTONOMA_ENABLED") do
+      nil -> false
+      raw -> raw |> String.trim() |> String.downcase() |> Kernel.in(["1", "true", "yes"])
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Main entry point
   # ---------------------------------------------------------------------------
@@ -84,7 +91,8 @@ defmodule Autonoma.Handler do
         raise Error.same_secrets()
       end
 
-      if !Map.get(config, :allow_production, false) && System.get_env("MIX_ENV") == "prod" do
+      if !Map.get(config, :allow_production, false) && !autonoma_enabled?() &&
+           System.get_env("MIX_ENV") == "prod" do
         raise Error.production_blocked()
       end
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -12,6 +13,13 @@ from typing import Any
 
 _TOKEN_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 _CYCLE_RE = re.compile(r"^cycle\((.*)\)$")
+
+
+def _is_autonoma_enabled() -> bool:
+    raw = os.environ.get("AUTONOMA_ENABLED")
+    if raw is None:
+        return False
+    return raw.strip().lower() in ("1", "true", "yes")
 
 
 def _resolve_tokens(value: Any, test_run_id: str, index: int) -> Any:
@@ -104,8 +112,7 @@ async def handle_request(config: HandlerConfig, req: HandlerRequest) -> HandlerR
         if config.shared_secret == config.signing_secret:
             raise same_secrets()
 
-        if not config.allow_production:
-            import os
+        if not config.allow_production and not _is_autonoma_enabled():
             if os.environ.get("PYTHON_ENV") == "production" or os.environ.get("ENV") == "production":
                 raise production_blocked()
 

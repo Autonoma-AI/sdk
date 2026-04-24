@@ -23,12 +23,18 @@ module Autonoma
       "1.0"
     end
 
+    def self.autonoma_enabled?
+      raw = ENV["AUTONOMA_ENABLED"]
+      return false if raw.nil?
+      %w[1 true yes].include?(raw.strip.downcase)
+    end
+
     def self.handle_request(config, req)
       if config.shared_secret == config.signing_secret
         raise Errors.same_secrets
       end
 
-      unless config.allow_production
+      unless config.allow_production || autonoma_enabled?
         env = ENV["RAILS_ENV"] || ENV["RACK_ENV"] || ENV["RUBY_ENV"] || ENV["ENV"]
         raise Errors.production_blocked if env == "production"
       end

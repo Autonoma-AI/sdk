@@ -16,6 +16,18 @@ import (
 
 //go:generate sh -c "printf 'package autonoma\n\n// Code generated from protocol/version.txt. DO NOT EDIT.\nconst ProtocolVersion = \"%s\"\n' \"$(cat ../../../protocol/version.txt | tr -d '\\n')\" > protocol_version_gen.go"
 
+func isAutonomaEnabled() bool {
+	raw := os.Getenv("AUTONOMA_ENABLED")
+	if raw == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
 var (
 	introspectionCacheMu sync.Mutex
 	introspectionCache   = make(map[*HandlerConfig]*IntrospectionResult)
@@ -97,7 +109,7 @@ func handleRequestInner(ctx context.Context, config *HandlerConfig, req HandlerR
 		return nil, ErrSameSecrets()
 	}
 
-	if !config.AllowProduction {
+	if !config.AllowProduction && !isAutonomaEnabled() {
 		env := os.Getenv("GO_ENV")
 		if env == "" {
 			env = os.Getenv("APP_ENV")
