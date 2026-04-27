@@ -81,9 +81,23 @@ class FactoryContext:
 
 @dataclass
 class FactoryDefinition:
-    """A factory for creating entities via user code instead of raw SQL."""
+    """A factory for creating entities via user code instead of raw SQL.
+
+    When ``input_model`` is provided, the SDK validates the resolved field dict
+    through ``input_model.model_validate(fields)`` and passes the validated
+    instance to ``create`` (instead of the raw dict). When ``ref_model`` is
+    provided, the SDK validates the stored record through
+    ``ref_model.model_validate(record)`` and passes the validated instance to
+    ``teardown``. Both fields are opt-in; omitting them preserves the existing
+    dict-in/dict-out factory contract.
+
+    The SDK does not depend on Pydantic — any class exposing
+    ``model_validate`` / ``model_dump`` (Pydantic v2-style) works.
+    """
     create: Callable[..., Any]
     teardown: Callable[..., Any] | None = None
+    input_model: Any = None
+    ref_model: Any = None
 
 
 FactoryRegistry = dict[str, FactoryDefinition]

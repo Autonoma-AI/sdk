@@ -247,9 +247,19 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
                         scenario_name=test_run_id,
                         test_run_id=test_run_id,
                     )
-                    record = factory.create(fields, factory_ctx)
+                    # Opt-in typed input: validate the resolved field dict
+                    # through the factory's `input_model` before calling create.
+                    if factory.input_model is not None:
+                        call_input: Any = factory.input_model.model_validate(fields)
+                    else:
+                        call_input = fields
+                    record = factory.create(call_input, factory_ctx)
                     if inspect.isawaitable(record):
                         record = await record
+                    # Normalize Pydantic returns (or any object exposing
+                    # `model_dump`) to a dict so refs/PK lookup works uniformly.
+                    if hasattr(record, "model_dump") and not isinstance(record, dict):
+                        record = record.model_dump()
                     if record.get(pk_field_name) is None:
                         raise AutonomaError(
                             f'Factory for "{model}" must return a record with "{pk_field_name}"',
@@ -354,10 +364,17 @@ async def _handle_down(config: HandlerConfig, body: dict[str, Any]) -> HandlerRe
             if factory.teardown is not None:
                 factory_teardown_models.add(model)
 
-    # Run factory teardowns in reverse topo order
+    # Run factory teardowns in reverse topo order. Models that exist in the
+    # introspected schema are torn down in dependency order; factory-only
+    # models (no schema entry — e.g. when the host carries its own schema via
+    # `input_model`/`ref_model`) are appended to the end of the topo order so
+    # they tear down first under the reversed iteration below.
     if factory_teardown_models:
         td_info = compute_teardown_order(introspection.schema)
         full_order = td_info["order"] + ([td_info["scope_root_model"]] if td_info["scope_root_model"] else [])
+        for model in factory_teardown_models:
+            if model not in full_order:
+                full_order.append(model)
         td_refs = payload.get("refs") or {}
 
         for model in reversed(full_order):
@@ -370,8 +387,15 @@ async def _handle_down(config: HandlerConfig, body: dict[str, Any]) -> HandlerRe
                 scenario_name=payload["testRunId"],
                 test_run_id=payload["testRunId"],
             )
+            factory = config.factories[model]
             for record in reversed(records):
-                result = config.factories[model].teardown(record, factory_ctx)
+                # Opt-in typed teardown input: validate the stored record
+                # through the factory's `ref_model` before calling teardown.
+                if factory.ref_model is not None:
+                    td_input: Any = factory.ref_model.model_validate(record)
+                else:
+                    td_input = record
+                result = factory.teardown(td_input, factory_ctx)
                 if inspect.isawaitable(result):
                     await result
 
