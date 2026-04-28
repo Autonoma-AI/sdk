@@ -208,12 +208,19 @@ async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResp
                 # Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
                 fields = _resolve_tokens(fields, test_run_id, batch_index)
 
-                # Replace temp IDs with real IDs
-                for key, value in list(fields.items()):
+                # Replace temp IDs with real IDs (recursively, so nested
+                # references inside dict/list values are also rewritten).
+                def _swap_temp_ids(value: Any) -> Any:
                     if isinstance(value, str) and value.startswith("__temp_"):
-                        real_id = id_map.get(value)
-                        if real_id:
-                            fields[key] = real_id
+                        real = id_map.get(value)
+                        return real if real is not None else value
+                    if isinstance(value, dict):
+                        return {k: _swap_temp_ids(v) for k, v in value.items()}
+                    if isinstance(value, list):
+                        return [_swap_temp_ids(v) for v in value]
+                    return value
+
+                fields = _swap_temp_ids(fields)
 
                 # Inject scope field if applicable
                 scope_edge = None

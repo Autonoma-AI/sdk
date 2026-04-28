@@ -9,6 +9,26 @@ from .types import SchemaInfo, SchemaRelation, CreateOp, DeferredUpdate
 RESERVED_KEYS = {"_alias", "_ref"}
 
 
+def _deep_resolve_refs(value: Any, aliases: dict[str, str]) -> Any:
+    """Recursively replace `{"_ref": alias}` placeholders inside nested dicts
+    and lists with the resolved temp id, so factory inputs keep their nested
+    shape (e.g. ``{"data": {"capacity_provider_id": {"_ref": "cp"}}}``).
+
+    Refs whose alias is not yet known are left as-is — the caller decides
+    whether to defer or surface an error.
+    """
+    if isinstance(value, dict):
+        if "_ref" in value and isinstance(value["_ref"], str):
+            ref_temp_id = aliases.get(value["_ref"])
+            if ref_temp_id is not None:
+                return ref_temp_id
+            return value
+        return {k: _deep_resolve_refs(v, aliases) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_deep_resolve_refs(v, aliases) for v in value]
+    return value
+
+
 class ResolvedTree:
     __slots__ = ("ops", "deferred_updates", "aliases")
 
@@ -85,7 +105,7 @@ def resolve_tree(
                     post_children.append((relation, value, False))
                 continue
 
-            # Handle _ref
+            # Handle _ref at the top level
             if isinstance(value, dict) and "_ref" in value:
                 ref_alias = value["_ref"]
                 ref_temp_id = result.aliases.get(ref_alias)
@@ -100,7 +120,12 @@ def resolve_tree(
                 fields[key] = ref_temp_id
                 continue
 
-            fields[key] = value
+            # Handle _ref nested inside dicts/lists (e.g. inside a `data:` blob).
+            # Deep-resolve only when an alias is already known; if the alias has
+            # not yet been declared, the `_ref` placeholder is left in place
+            # because nested refs are not eligible for the deferred-update
+            # mechanism (it only patches top-level FK columns).
+            fields[key] = _deep_resolve_refs(value, result.aliases)
 
         # Wire FK to parent
         if parent_relation and parent_temp_id and not parent_fk_on_parent:
