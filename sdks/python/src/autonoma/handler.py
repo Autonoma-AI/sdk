@@ -374,14 +374,17 @@ async def _handle_down(config: HandlerConfig, body: dict[str, Any]) -> HandlerRe
     # Run factory teardowns in reverse topo order. Models that exist in the
     # introspected schema are torn down in dependency order; factory-only
     # models (no schema entry — e.g. when the host carries its own schema via
-    # `input_model`/`ref_model`) are appended to the end of the topo order so
-    # they tear down first under the reversed iteration below.
+    # `input_model`/`ref_model`) are appended to the end of the topo order in
+    # the host's factory-registration order. The reversed iteration below
+    # then tears them down children-before-parents, which means hosts must
+    # register factories in dependency order (parents before children).
     if factory_teardown_models:
         td_info = compute_teardown_order(introspection.schema)
         full_order = td_info["order"] + ([td_info["scope_root_model"]] if td_info["scope_root_model"] else [])
-        for model in factory_teardown_models:
-            if model not in full_order:
-                full_order.append(model)
+        if config.factories:
+            for model in config.factories.keys():
+                if model in factory_teardown_models and model not in full_order:
+                    full_order.append(model)
         td_refs = payload.get("refs") or {}
 
         for model in reversed(full_order):
