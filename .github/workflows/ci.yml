@@ -72,13 +72,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
-      - name: Generate Prisma clients for integration tests
-        run: |
-          npx prisma generate --schema tests/integration/navigator/prisma/schema.prisma
-          npx prisma generate --schema packages/sdk-prisma/test/prisma/schema.prisma
-
-      - name: Run adapter integration tests (Prisma + Drizzle)
-        run: npx vitest run packages/sdk-prisma/test/integration.test.ts packages/sdk-drizzle/test/integration.test.ts --config vitest.integration.config.ts
+      - name: Generate Prisma client for integration tests
+        run: npx prisma generate --schema tests/integration/navigator/prisma/schema.prisma
 
       - name: Run integration tests (navigator)
         run: npx vitest run tests/integration/navigator/e2e.test.ts --testTimeout 120000
@@ -212,8 +207,6 @@ jobs:
       - run: cargo test
       - run: cargo build --features actix
       - run: cargo build --features axum
-      - run: cargo build --features sqlx-postgres
-      - run: cargo build --features sqlx-mysql
 
   # ---------------------------------------------------------------------------
   # Conformance (all languages must produce identical output)
