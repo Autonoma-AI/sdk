@@ -8,11 +8,11 @@
   },
   "dependencies": {
     "@autonoma-ai/sdk": "latest",
-    "@autonoma-ai/sdk-prisma": "latest",
     "@autonoma-ai/server-hono": "latest",
     "@hono/node-server": "^1.13.0",
     "@prisma/client": "^5.22.0",
-    "hono": "^4.6.0"
+    "hono": "^4.6.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "prisma": "^5.22.0",

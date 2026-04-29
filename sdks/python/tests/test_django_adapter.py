@@ -37,31 +37,10 @@ SHARED_SECRET = "test-shared-secret-1234"
 SIGNING_SECRET = "test-signing-secret-5678"
 
 
-class FakeExecutor:
-    """Minimal SQL executor returning canned introspection results."""
-
-    async def query(self, sql, params=None):
-        sql_lower = sql.lower().strip()
-        if sql_lower.startswith("select table_name"):
-            return [{"table_name": "users"}]
-        if sql_lower.startswith("select\n  table_name,\n  column_name"):
-            return [
-                {"table_name": "users", "column_name": "id", "data_type": "uuid",
-                 "udt_name": "uuid", "is_nullable": "NO", "column_default": "gen_random_uuid()"},
-                {"table_name": "users", "column_name": "email", "data_type": "character varying",
-                 "udt_name": "varchar", "is_nullable": "NO", "column_default": None},
-            ]
-        return []
-
-    async def transaction(self, fn):
-        return await fn(self)
-
-
 @pytest.fixture
 def handler_view():
     from autonoma_django import create_django_handler
     config = HandlerConfig(
-        executor=FakeExecutor(),
         scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,

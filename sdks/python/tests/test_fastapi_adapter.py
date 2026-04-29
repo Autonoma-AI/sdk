@@ -8,16 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from autonoma.hmac_util import sign_body
-from autonoma.refs import sign_refs
-from autonoma.types import HandlerConfig, HandlerRequest
-
-
-class FakeExecutor:
-    """Minimal SQL executor for testing."""
-    async def query(self, sql, params=None):
-        return []
-    async def transaction(self, fn):
-        return await fn(self)
+from autonoma.types import HandlerConfig
 
 
 SHARED_SECRET = "test-shared-secret-1234"
@@ -26,7 +17,6 @@ SIGNING_SECRET = "test-signing-secret-5678"
 
 def _make_config() -> HandlerConfig:
     return HandlerConfig(
-        executor=FakeExecutor(),
         scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,

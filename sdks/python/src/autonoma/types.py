@@ -1,9 +1,26 @@
-"""Type definitions for Autonoma SDK."""
+"""Type definitions for Autonoma SDK.
+
+The SDK is factory-driven: every model is owned by a registered factory whose
+input is described by a Pydantic v2 model. There is no SQL introspection, no
+executor protocol, and no dialect machinery — those concepts belonged to an
+earlier design where the SDK reached into the host database directly.
+
+The types in this module fall into two groups:
+
+* **Wire-shape types** (``SchemaInfo``, ``ModelInfo``, ``FieldInfo``,
+  ``FKEdge``, ``SchemaRelation``) — the JSON the SDK emits in
+  ``discover``/``up``/``down`` responses. ``FKEdge`` and ``SchemaRelation``
+  are kept because the dashboard tolerates them as empty arrays; emitting
+  them keeps the wire format bit-identical to v1.
+
+* **Host-API types** (``HandlerConfig``, ``FactoryDefinition``,
+  ``FactoryContext``) — what host code touches when wiring up the SDK.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol, Union, runtime_checkable
+from typing import Any, Callable, Union
 
 
 @dataclass
@@ -24,6 +41,10 @@ class ModelInfo:
 
 @dataclass
 class FKEdge:
+    """Wire-shape only. Always emitted as an empty list in factory-driven
+    setups — the alias/_ref graph carried by the create payload is the
+    real dependency information."""
+
     from_model: str
     to_model: str
     local_field: str
@@ -33,6 +54,8 @@ class FKEdge:
 
 @dataclass
 class SchemaRelation:
+    """Wire-shape only — same rationale as ``FKEdge``."""
+
     parent_model: str
     child_model: str
     parent_field: str
@@ -47,18 +70,10 @@ class SchemaInfo:
     scope_field: str
 
 
-@runtime_checkable
-class SQLExecutor(Protocol):
-    """Minimal SQL executor — wrap your DB connection (pg Pool, SQLAlchemy, etc.) into this."""
-
-    async def query(self, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]: ...
-
-    async def transaction(self, fn: Callable[..., Any]) -> Any: ...
-
-
 @dataclass
 class HookContext:
     """Context passed to handler hooks."""
+
     scenario_name: str
     refs: dict[str, list[dict[str, Any]]]
 
@@ -66,37 +81,45 @@ class HookContext:
 @dataclass
 class AuthContext:
     """Context passed to the auth callback alongside the user record."""
+
     scope_value: str
     refs: dict[str, list[dict[str, Any]]]
 
 
 @dataclass
 class FactoryContext:
-    """Context passed to factory create/teardown functions."""
+    """Context passed to factory create/teardown functions.
+
+    Factories that need a database connection get it from the host (their
+    own SQLAlchemy session, Django ORM, etc.) — the SDK does not ship
+    one. ``refs`` and ``test_run_id`` are the only things the SDK can
+    legitimately add.
+    """
+
     refs: dict[str, list[dict[str, Any]]]
-    executor: SQLExecutor
     scenario_name: str
     test_run_id: str
 
 
 @dataclass
 class FactoryDefinition:
-    """A factory for creating entities via user code instead of raw SQL.
+    """A factory for creating entities via user code.
 
-    When ``input_model`` is provided, the SDK validates the resolved field dict
-    through ``input_model.model_validate(fields)`` and passes the validated
-    instance to ``create`` (instead of the raw dict). When ``ref_model`` is
-    provided, the SDK validates the stored record through
-    ``ref_model.model_validate(record)`` and passes the validated instance to
-    ``teardown``. Both fields are opt-in; omitting them preserves the existing
-    dict-in/dict-out factory contract.
+    ``input_model`` is **required**: the SDK validates the resolved field
+    dict through ``input_model.model_validate(fields)`` before invoking
+    ``create``, and uses the same model to build the discover schema.
+    ``ref_model`` is optional; when provided, the SDK validates the
+    stored record through ``ref_model.model_validate(record)`` before
+    invoking ``teardown``.
 
-    The SDK does not depend on Pydantic — any class exposing
-    ``model_validate`` / ``model_dump`` (Pydantic v2-style) works.
+    The SDK relies only on the Pydantic v2-style ``model_validate`` /
+    ``model_dump`` protocol — any class exposing those methods works,
+    though Pydantic v2 is the supported reference.
     """
+
     create: Callable[..., Any]
+    input_model: Any
     teardown: Callable[..., Any] | None = None
-    input_model: Any = None
     ref_model: Any = None
 
 
@@ -106,7 +129,7 @@ FactoryRegistry = dict[str, FactoryDefinition]
 @dataclass
 class HandlerConfig:
     """Configuration for the Autonoma request handler."""
-    executor: SQLExecutor
+
     scope_field: str
     shared_secret: str
     signing_secret: str
@@ -114,12 +137,8 @@ class HandlerConfig:
         Callable[[dict[str, Any] | None, AuthContext], dict[str, Any]],
         Callable[[dict[str, Any] | None, AuthContext], Any],  # async callables
     ]
-    dialect: str = "postgres"
-    db_schema: str | None = None
-    table_name_map: dict[str, str] | None = None
-    exclude_tables: list[str] | None = None
+    factories: FactoryRegistry = field(default_factory=dict)
     allow_production: bool = False
-    factories: FactoryRegistry | None = None
     sdk: dict[str, str] | None = None
     before_down: Callable[[HookContext], Any] | None = None
     after_up: Callable[[HookContext, dict[str, Any]], dict[str, Any]] | None = None
@@ -139,26 +158,8 @@ class HandlerResponse:
 
 @dataclass
 class CreateOp:
-    """A create operation produced by the tree resolver."""
+    """A create operation produced by the payload topo resolver."""
+
     model: str
     fields: dict[str, Any]
     temp_id: str
-    batch: bool
-
-
-@dataclass
-class DeferredUpdate:
-    """A deferred FK update for circular dependencies."""
-    target_temp_id: str
-    model: str
-    field: str
-    ref_alias: str
-
-
-@dataclass
-class IntrospectionResult:
-    """Result of database introspection."""
-    schema: SchemaInfo
-    table_map: dict[str, str]
-    column_maps: dict[str, dict[str, str]]
-    enum_type_maps: dict[str, dict[str, str]]

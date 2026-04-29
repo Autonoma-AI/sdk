@@ -9,13 +9,13 @@
   },
   "dependencies": {
     "@autonoma-ai/sdk": "latest",
-    "@autonoma-ai/sdk-drizzle": "latest",
     "@autonoma-ai/server-web": "latest",
     "drizzle-orm": "^0.45.1",
     "next": "^14.2.0",
     "pg": "^8.20.0",
     "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "react-dom": "^18.3.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/pg": "^8.20.0",

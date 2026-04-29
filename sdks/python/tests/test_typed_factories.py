@@ -11,25 +11,13 @@ from autonoma.refs import sign_refs
 from autonoma.types import HandlerConfig, HandlerRequest
 
 
-class FakeExecutor:
-    """Executor whose introspection returns no schema. Factories carry the
-    schema themselves via input_model/ref_model, so this is fine for tests."""
-
-    async def query(self, sql, params=None):
-        return []
-
-    async def transaction(self, fn):
-        return await fn(self)
-
-
 def _config(factories=None):
     return HandlerConfig(
-        executor=FakeExecutor(),
         scope_field="organizationId",
         shared_secret="shared",
         signing_secret="signing",
         auth=lambda user, ctx: {},
-        factories=factories,
+        factories=factories or {},
     )
 
 
@@ -114,29 +102,10 @@ class TestTypedFactories:
         record = result.body["refs"]["Project"][0]
         assert record == {"id": "proj-7", "name": "Gemini"}
 
-    async def test_dict_path_still_works_when_no_input_model(self):
-        captured: dict = {}
-
-        def create(data, ctx):
-            captured["type"] = type(data).__name__
-            captured["data"] = dict(data)
-            return {"id": "proj-2", "name": data["name"]}
-
-        config = _config(
-            factories={"Project": define_factory(create=create)},
-        )
-        req = _signed_request(
-            {
-                "action": "up",
-                "create": {"Project": [{"name": "Mercury"}]},
-                "testRunId": "run-3",
-            },
-        )
-        result = await handle_request(config, req)
-
-        assert result.status == 200, result.body
-        assert captured["type"] == "dict"
-        assert captured["data"]["name"] == "Mercury"
+    async def test_define_factory_requires_input_model(self):
+        # input_model is no longer optional — discover relies on it.
+        with pytest.raises(ValueError, match="input_model"):
+            define_factory(create=lambda d, c: {"id": "x"}, input_model=None)
 
     async def test_invalid_input_returns_500_with_validation_error(self):
         # priority must be int — passing "high" should fail validation
@@ -202,4 +171,8 @@ class TestTypedFactories:
         with pytest.raises(ValueError, match="model_validate"):
             define_factory(create=lambda d, c: {"id": "x"}, input_model=object)
         with pytest.raises(ValueError, match="model_validate"):
-            define_factory(create=lambda d, c: {"id": "x"}, ref_model=object)
+            define_factory(
+                create=lambda d, c: {"id": "x"},
+                input_model=ProjectInput,
+                ref_model=object,
+            )
