@@ -2,7 +2,6 @@
 
 namespace Autonoma\Sdk\Laravel;
 
-use Autonoma\Sdk\Executor\LaravelExecutor;
 use Autonoma\Sdk\Types\HandlerConfig;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
@@ -17,16 +16,12 @@ class AutonomaServiceProvider extends ServiceProvider
             $config = $app['config']['autonoma'];
 
             return new HandlerConfig(
-                executor: new LaravelExecutor($config['connection'] ?? null),
                 scopeField: $config['scope_field'],
                 sharedSecret: $config['shared_secret'],
                 signingSecret: $config['signing_secret'],
-                dialect: $config['dialect'] ?? 'postgres',
-                dbSchema: $config['db_schema'] ?? null,
-                tableNameMap: $config['table_name_map'] ?? null,
-                excludeTables: $config['exclude_tables'] ?? null,
-                allowProduction: $config['allow_production'] ?? false,
                 auth: $config['auth'] ?? throw new \RuntimeException('Autonoma SDK requires an "auth" callback in config/autonoma.php'),
+                factories: $config['factories'] ?? [],
+                allowProduction: $config['allow_production'] ?? false,
                 sdk: ['orm' => 'eloquent'],
             );
         });

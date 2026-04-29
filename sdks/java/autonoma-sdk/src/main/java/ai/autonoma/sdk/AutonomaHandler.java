@@ -6,14 +6,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Core request handler for the Autonoma Environment Factory protocol.
- * Routes discover/up/down actions, verifies HMAC signatures, and manages entity lifecycle.
+ *
+ * <p>Factory-driven design: every model in {@code body.create} must have a
+ * registered factory. The SDK uses the factory's {@code inputClass} both to
+ * validate inputs and to build the discover schema. Ordering for up and down
+ * comes from the create payload's {@code _alias}/{@code _ref} graph; there is
+ * no SQL introspection.
  */
 public final class AutonomaHandler {
 
@@ -29,24 +33,8 @@ public final class AutonomaHandler {
     }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Map<HandlerConfig, IntrospectionResult> introspectionCache =
-        Collections.synchronizedMap(new WeakHashMap<>());
 
     private AutonomaHandler() {}
-
-    private static IntrospectionResult getIntrospection(HandlerConfig config) {
-        return introspectionCache.computeIfAbsent(config, k -> {
-            Dialect dialect = Dialect.get(config.getDialect());
-            return DatabaseIntrospector.introspect(
-                config.getExecutor(),
-                dialect,
-                config.getScopeField(),
-                config.getDbSchema(),
-                config.getTableNameMap(),
-                config.getExcludeTables()
-            );
-        });
-    }
 
     private static Map<String, Object> buildSdkMeta(HandlerConfig config) {
         SdkInfo sdk = config.getSdk();
@@ -90,7 +78,7 @@ public final class AutonomaHandler {
             }
 
             String action = (String) body.get("action");
-            if (action == null) throw AutonomaError.invalidBody("missing action");
+            if (action == null) throw AutonomaError.invalidBody("missing action. expected one of 'discover', 'up' or 'down'");
 
             return switch (action) {
                 case "discover" -> handleDiscover(config);
@@ -106,205 +94,93 @@ public final class AutonomaHandler {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // discover
+    // -----------------------------------------------------------------------
+
     private static HandlerResponse handleDiscover(HandlerConfig config) {
-        IntrospectionResult introspection = getIntrospection(config);
-        SchemaInfo schema = introspection.schema();
-
-        Map<String, Object> schemaDict = serializeSchema(schema);
-
+        Map<String, FactoryDefinition> factories = config.getFactories();
+        if (factories == null) factories = Map.of();
+        SchemaInfo schema = SchemaBuilder.buildSchemaFromFactories(factories, config.getScopeField());
         Map<String, Object> responseBody = new LinkedHashMap<>(buildSdkMeta(config));
-        responseBody.put("schema", schemaDict);
+        responseBody.put("schema", SchemaBuilder.schemaToWire(schema));
         return new HandlerResponse(200, responseBody);
     }
 
+    // -----------------------------------------------------------------------
+    // up
+    // -----------------------------------------------------------------------
+
     @SuppressWarnings("unchecked")
     private static HandlerResponse handleUp(HandlerConfig config, Map<String, Object> body) {
-        Map<String, Object> createRaw = (Map<String, Object>) body.get("create");
-        if (createRaw == null) throw AutonomaError.invalidBody("missing \"create\" in request body");
-
-        // Convert raw create into typed structure
-        Map<String, List<Map<String, Object>>> create = new LinkedHashMap<>();
-        for (var entry : createRaw.entrySet()) {
-            List<Map<String, Object>> nodes = (List<Map<String, Object>>) entry.getValue();
-            create.put(entry.getKey(), nodes);
-        }
+        Map<String, Object> create = (Map<String, Object>) body.get("create");
+        if (create == null) throw AutonomaError.invalidBody("missing \"create\" in request body");
 
         String testRunId = body.containsKey("testRunId") ? (String) body.get("testRunId") : UUID.randomUUID().toString();
-        IntrospectionResult introspection = getIntrospection(config);
-        SchemaInfo schema = introspection.schema();
-        Dialect dialect = Dialect.get(config.getDialect());
 
-        ResolvedTree tree = TreeResolver.resolveTree(create, schema);
+        Map<String, FactoryDefinition> factories = config.getFactories();
+        if (factories == null || factories.isEmpty()) {
+            throw AutonomaError.invalidBody(
+                "no factories registered -- every model in `create` must have a factory.");
+        }
+
+        ResolvedTree tree = PayloadTopo.resolvePayloadTree(create);
+
         Map<String, List<Map<String, Object>>> refs = new LinkedHashMap<>();
         Map<String, Object> idMap = new LinkedHashMap<>();
+        Map<String, Integer> modelIndex = new LinkedHashMap<>();
 
-        config.getExecutor().transaction(tx -> {
-            int i = 0;
-            while (i < tree.ops().size()) {
-                CreateOp op = tree.ops().get(i);
-                String model = op.model();
-
-                // Collect consecutive ops for same model with same batch flag
-                List<CreateOp> batch = new ArrayList<>();
-                batch.add(op);
-                while (i + 1 < tree.ops().size()
-                    && tree.ops().get(i + 1).model().equals(model)
-                    && tree.ops().get(i + 1).batch() == op.batch()) {
-                    i++;
-                    batch.add(tree.ops().get(i));
-                }
-
-                // Find model info and dynamic PK field
-                ModelInfo modelInfo = schema.models().stream()
-                    .filter(m -> m.name().equals(model))
-                    .findFirst().orElse(null);
-                // When multiple isId fields exist (composite PK), prefer the one named "id"
-                List<FieldInfo> idFields = modelInfo != null
-                    ? modelInfo.fields().stream().filter(FieldInfo::isId).toList()
-                    : List.of();
-                FieldInfo pkField = idFields.stream().filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
-                    .orElse(idFields.isEmpty() ? null : idFields.get(0));
-                String pkFieldName = pkField != null ? pkField.name() : "id";
-
-                List<Map<String, Object>> resolvedFields = new ArrayList<>();
-                for (int bi = 0; bi < batch.size(); bi++) {
-                    CreateOp b = batch.get(bi);
-                    // Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> fields = (Map<String, Object>) resolveTokens(
-                        new LinkedHashMap<>(b.fields()), testRunId, bi);
-
-                    // Replace temp IDs with real IDs
-                    for (var fe : new ArrayList<>(fields.entrySet())) {
-                        if (fe.getValue() instanceof String s && s.startsWith("__temp_")) {
-                            Object realId = idMap.get(s);
-                            if (realId != null) fields.put(fe.getKey(), realId);
-                        }
-                    }
-
-                    // Inject scope field if applicable
-                    FKEdge scopeEdge = null;
-                    for (FKEdge e : schema.edges()) {
-                        if (e.from().equals(model)
-                            && normalizeField(e.localField()).equals(normalizeField(schema.scopeField()))
-                            && !e.from().equals(e.to())) {
-                            scopeEdge = e;
-                            break;
-                        }
-                    }
-                    if (scopeEdge != null && !fields.containsKey(scopeEdge.localField())) {
-                        String scopeVal = detectScopeValue(refs, schema.scopeField());
-                        if (scopeVal != null) fields.put(scopeEdge.localField(), scopeVal);
-                    }
-
-                    // Auto-populate required DateTime fields without defaults
-                    if (modelInfo != null) {
-                        for (FieldInfo field : modelInfo.fields()) {
-                            if (field.isRequired() && !field.hasDefault() && !field.isId()
-                                && !fields.containsKey(field.name())) {
-                                if ("DateTime".equals(field.type())) {
-                                    fields.put(field.name(), Instant.now());
-                                }
-                            }
-                        }
-                    }
-
-                    resolvedFields.add(fields);
-                }
-
-                List<Map<String, Object>> records;
-                FactoryDefinition factory = config.getFactories() != null
-                    ? config.getFactories().get(model) : null;
-
-                if (factory != null) {
-                    // Factory path: call user-defined create() for each record
-                    records = new ArrayList<>();
-                    for (Map<String, Object> fields : resolvedFields) {
-                        FactoryContext factoryCtx = new FactoryContext(
-                            refs, tx, testRunId, testRunId
-                        );
-                        Map<String, Object> record;
-                        try {
-                            record = factory.getCreate().create(fields, factoryCtx);
-                        } catch (Exception e) {
-                            throw new RuntimeException(e);
-                        }
-                        if (record.get(pkFieldName) == null) {
-                            throw new AutonomaError(
-                                "Factory for \"" + model + "\" must return a record with \"" + pkFieldName + "\"",
-                                "FACTORY_MISSING_PK", 500
-                            );
-                        }
-                        records.add(record);
-                    }
-                } else {
-                    // SQL fallback path (existing behavior)
-                    Map<String, Map<String, Object>> spec = Map.of(model, Map.of(
-                        "count", resolvedFields.size(),
-                        "fields", resolvedFields,
-                        "batch", op.batch()
-                    ));
-
-                    Map<String, List<Map<String, Object>>> created = EntityCreator.createEntities(
-                        tx, dialect, introspection.tableMap(), introspection.columnMaps(),
-                        spec, introspection.enumTypeMaps(), schema.models()
-                    );
-                    records = created.getOrDefault(model, List.of());
-                }
-
-                refs.computeIfAbsent(model, k -> new ArrayList<>()).addAll(records);
-
-                for (int j = 0; j < batch.size(); j++) {
-                    if (j < records.size()) {
-                        Object recordId = records.get(j).get(pkFieldName);
-                        if (recordId != null) {
-                            idMap.put(batch.get(j).tempId(), recordId);
-                        }
-                    }
-                }
-
-                i++;
+        for (CreateOp op : tree.ops()) {
+            String model = op.model();
+            FactoryDefinition factory = factories.get(model);
+            if (factory == null) {
+                throw AutonomaError.invalidBody(
+                    "no factory registered for model \"" + model + "\". " +
+                    "Register one with defineFactory(...) and add it to HandlerConfig.factories.");
             }
 
-            // Resolve deferred FK updates
-            for (DeferredUpdate deferred : tree.deferredUpdates()) {
-                Object realTargetId = idMap.get(deferred.targetTempId());
-                String refTempId = tree.aliases().get(deferred.refAlias());
-                Object realRefId = refTempId != null ? idMap.get(refTempId) : null;
+            int idx = modelIndex.getOrDefault(model, 0);
+            modelIndex.put(model, idx + 1);
 
-                if (realTargetId == null || realRefId == null) {
-                    throw new RuntimeException(
-                        "_ref \"" + deferred.refAlias() + "\" could not be resolved. "
-                        + "Ensure the referenced node has _alias defined in the scenario."
-                    );
-                }
+            // Substitute built-in tokens then swap temp ids for real ids.
+            Map<String, Object> resolved = (Map<String, Object>) resolveTokens(
+                new LinkedHashMap<>(op.fields()), testRunId, idx);
+            resolved = swapTempIds(resolved, idMap);
 
-                ModelInfo deferredModelInfo = schema.models().stream()
-                    .filter(m -> m.name().equals(deferred.model()))
-                    .findFirst().orElse(null);
-                // When multiple isId fields exist (composite PK), prefer the one named "id"
-                List<FieldInfo> deferredIdFields = deferredModelInfo != null
-                    ? deferredModelInfo.fields().stream().filter(FieldInfo::isId).toList()
-                    : List.of();
-                FieldInfo deferredPkField = deferredIdFields.stream()
-                    .filter(f -> f.name().equalsIgnoreCase("id")).findFirst()
-                    .orElse(deferredIdFields.isEmpty() ? null : deferredIdFields.get(0));
-                String deferredPkFieldName = deferredPkField != null ? deferredPkField.name() : "id";
-
-                EntityCreator.updateEntity(
-                    tx, dialect, introspection.tableMap(), introspection.columnMaps(),
-                    deferred.model(), String.valueOf(realTargetId), Map.of(deferred.field(), realRefId),
-                    introspection.enumTypeMaps(), deferredPkFieldName
-                );
+            // Validate through the factory's inputClass and call create.
+            Object callInput;
+            try {
+                callInput = MAPPER.convertValue(resolved, factory.getInputClass());
+            } catch (Exception e) {
+                throw AutonomaError.invalidBody(
+                    "Validation failed for model \"" + model + "\": " + e.getMessage());
             }
 
-            return null;
-        });
+            FactoryContext ctx = new FactoryContext(refs, testRunId, testRunId);
+            Map<String, Object> record;
+            try {
+                record = factory.getCreate().create(callInput, ctx);
+            } catch (AutonomaError ae) {
+                throw ae;
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
 
-        String scopeValue = detectScopeValue(refs, schema.scopeField());
+            if (record == null || record.get("id") == null) {
+                throw new AutonomaError(
+                    "Factory for \"" + model + "\" must return a record dict with \"id\"",
+                    "FACTORY_MISSING_PK", 500);
+            }
+
+            refs.computeIfAbsent(model, k -> new ArrayList<>()).add(record);
+            idMap.put(op.tempId(), record.get("id"));
+        }
+
+        // Auth callback gets the first User (case-insensitive).
+        Map<String, Object> firstUser = findFirstUser(refs);
+        String scopeValue = detectScopeValue(refs, config.getScopeField());
         if (scopeValue == null) scopeValue = testRunId;
 
-        Map<String, Object> firstUser = findFirstUser(refs);
         AuthContext authContext = new AuthContext(scopeValue, refs);
         AuthResult authResult = config.getAuth().apply(firstUser, authContext);
 
@@ -315,10 +191,15 @@ public final class AutonomaHandler {
 
         Map<String, Object> auth = serializeAuthResult(authResult);
 
-        String refsToken = RefsUtil.signRefs(
-            Map.of("refs", refs, "testRunId", scopeValue, "environment", ""),
-            config.getSigningSecret()
-        );
+        // Sign refs token with alias dependency info for ordered teardown.
+        Map<String, Object> refsPayload = new LinkedHashMap<>();
+        refsPayload.put("refs", refs);
+        refsPayload.put("testRunId", scopeValue);
+        refsPayload.put("environment", "");
+        refsPayload.put("aliasDependencies", tree.aliasDependencies());
+        refsPayload.put("aliasOwnerModel", tree.aliasOwnerModel());
+
+        String refsToken = RefsUtil.signRefs(refsPayload, config.getSigningSecret());
 
         Map<String, Object> responseBody = new LinkedHashMap<>(buildSdkMeta(config));
         responseBody.put("auth", auth);
@@ -326,6 +207,40 @@ public final class AutonomaHandler {
         responseBody.put("refsToken", refsToken);
         return new HandlerResponse(200, responseBody);
     }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> swapTempIds(Map<String, Object> fields, Map<String, Object> idMap) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : fields.entrySet()) {
+            result.put(entry.getKey(), swapTempIdValue(entry.getValue(), idMap));
+        }
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object swapTempIdValue(Object value, Map<String, Object> idMap) {
+        if (value instanceof String s && s.startsWith("__temp_")) {
+            Object real = idMap.get(s);
+            return real != null ? real : value;
+        }
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                result.put((String) e.getKey(), swapTempIdValue(e.getValue(), idMap));
+            }
+            return result;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> result = new ArrayList<>(list.size());
+            for (Object v : list) result.add(swapTempIdValue(v, idMap));
+            return result;
+        }
+        return value;
+    }
+
+    // -----------------------------------------------------------------------
+    // down
+    // -----------------------------------------------------------------------
 
     @SuppressWarnings("unchecked")
     private static HandlerResponse handleDown(HandlerConfig config, Map<String, Object> body) {
@@ -339,75 +254,68 @@ public final class AutonomaHandler {
             throw AutonomaError.invalidRefsToken(e.getMessage());
         }
 
-        IntrospectionResult introspection = getIntrospection(config);
-        Dialect dialect = Dialect.get(config.getDialect());
-
-        // Convert refs from payload
-        Map<String, List<Map<String, Object>>> refs = null;
-        if (payload.containsKey("refs")) {
-            refs = (Map<String, List<Map<String, Object>>>) payload.get("refs");
+        Map<String, List<Map<String, Object>>> refs = new LinkedHashMap<>();
+        Object refsRaw = payload.get("refs");
+        if (refsRaw instanceof Map<?, ?> refsMap) {
+            for (Map.Entry<?, ?> entry : refsMap.entrySet()) {
+                String model = (String) entry.getKey();
+                List<Map<String, Object>> records = (List<Map<String, Object>>) entry.getValue();
+                refs.put(model, records);
+            }
         }
 
+        String testRunId = (String) payload.getOrDefault("testRunId", "");
+        Map<String, Object> aliasDeps = (Map<String, Object>) payload.get("aliasDependencies");
+        Map<String, Object> aliasOwnerModel = (Map<String, Object>) payload.get("aliasOwnerModel");
+
         if (config.getBeforeDown() != null) {
-            HookContext hookCtx = new HookContext(
-                (String) payload.get("testRunId"),
-                refs != null ? refs : Map.of()
-            );
+            HookContext hookCtx = new HookContext(testRunId, refs);
             config.getBeforeDown().accept(hookCtx);
         }
 
-        // Determine which models have factory teardown
-        Set<String> factoryTeardownModels = new HashSet<>();
-        if (config.getFactories() != null) {
-            for (var entry : config.getFactories().entrySet()) {
-                if (entry.getValue().getTeardown() != null) {
-                    factoryTeardownModels.add(entry.getKey());
-                }
-            }
-        }
+        Map<String, FactoryDefinition> factories = config.getFactories();
+        if (factories == null) factories = Map.of();
 
-        // Run factory teardowns in reverse topo order
-        if (!factoryTeardownModels.isEmpty()) {
-            TeardownExecutor.TeardownOrder teardownOrder = TeardownExecutor.computeTeardownOrder(introspection.schema());
-            // Include scope root in the order for factory teardown
-            List<String> fullOrder = new ArrayList<>(teardownOrder.order());
-            if (teardownOrder.scopeRootModel() != null) {
-                fullOrder.add(teardownOrder.scopeRootModel());
-            }
-            Map<String, List<Map<String, Object>>> teardownRefs = refs != null ? refs : Map.of();
-            String testRunIdValue = (String) payload.get("testRunId");
+        List<String> teardownOrder = PayloadTopo.computeTeardownOrder(refs, aliasDeps, aliasOwnerModel);
 
-            List<String> reversedOrder = new ArrayList<>(fullOrder);
-            Collections.reverse(reversedOrder);
-            for (String model : reversedOrder) {
-                if (!factoryTeardownModels.contains(model)) continue;
-                List<Map<String, Object>> records = teardownRefs.getOrDefault(model, List.of());
-                FactoryContext factoryCtx = new FactoryContext(
-                    teardownRefs, config.getExecutor(), testRunIdValue, testRunIdValue
-                );
-                List<Map<String, Object>> reversedRecords = new ArrayList<>(records);
-                Collections.reverse(reversedRecords);
-                for (Map<String, Object> record : reversedRecords) {
+        for (String model : teardownOrder) {
+            FactoryDefinition factory = factories.get(model);
+            if (factory == null || factory.getTeardown() == null) {
+                continue;
+            }
+            List<Map<String, Object>> records = refs.getOrDefault(model, List.of());
+            FactoryContext ctx = new FactoryContext(refs, testRunId, testRunId);
+
+            List<Map<String, Object>> reversedRecords = new ArrayList<>(records);
+            Collections.reverse(reversedRecords);
+
+            for (Map<String, Object> record : reversedRecords) {
+                Object tdInput;
+                if (factory.getRefClass() != null) {
                     try {
-                        config.getFactories().get(model).getTeardown().teardown(record, factoryCtx);
+                        tdInput = MAPPER.convertValue(record, factory.getRefClass());
                     } catch (Exception e) {
-                        throw new RuntimeException(e);
+                        tdInput = record;
                     }
+                } else {
+                    tdInput = record;
+                }
+                try {
+                    factory.getTeardown().teardown(tdInput, ctx);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
                 }
             }
         }
-
-        // SQL teardown for remaining models (skipping factory-teardown ones)
-        TeardownExecutor.teardown(
-            config.getExecutor(), dialect,
-            introspection.tableMap(), introspection.columnMaps(),
-            introspection.schema(), (String) payload.get("testRunId"), refs, factoryTeardownModels
-        );
 
         Map<String, Object> responseBody = new LinkedHashMap<>(buildSdkMeta(config));
         responseBody.put("ok", true);
         return new HandlerResponse(200, responseBody);
     }
+
+    // -----------------------------------------------------------------------
+    // helpers
+    // -----------------------------------------------------------------------
 
     private static final Pattern TOKEN_RE = Pattern.compile("\\{\\{\\s*([^{}]+?)\\s*\\}\\}");
     private static final Pattern CYCLE_RE = Pattern.compile("^cycle\\((.*)\\)$");
@@ -415,7 +323,7 @@ public final class AutonomaHandler {
     /**
      * Substitute built-in tokens in field values: {{testRunId}}, {{index}},
      * {{cycle(a,b,c)}}. Throws AutonomaError with code UNRESOLVED_TOKEN for any
-     * other {{token}} that reaches the SDK (defense-in-depth).
+     * other {{token}} that reaches the SDK.
      */
     @SuppressWarnings("unchecked")
     public static Object resolveTokens(Object value, String testRunId, int index) {
@@ -499,51 +407,6 @@ public final class AutonomaHandler {
             }
         }
         return null;
-    }
-
-    private static Map<String, Object> serializeSchema(SchemaInfo schema) {
-        List<Map<String, Object>> modelsList = new ArrayList<>();
-        for (ModelInfo m : schema.models()) {
-            List<Map<String, Object>> fieldsList = new ArrayList<>();
-            for (FieldInfo f : m.fields()) {
-                Map<String, Object> fieldMap = new LinkedHashMap<>();
-                fieldMap.put("name", f.name());
-                fieldMap.put("type", f.type());
-                fieldMap.put("isRequired", f.isRequired());
-                fieldMap.put("isId", f.isId());
-                fieldMap.put("hasDefault", f.hasDefault());
-                fieldsList.add(fieldMap);
-            }
-            modelsList.add(Map.of("name", m.name(), "fields", fieldsList));
-        }
-
-        List<Map<String, Object>> edgesList = new ArrayList<>();
-        for (FKEdge e : schema.edges()) {
-            Map<String, Object> edgeMap = new LinkedHashMap<>();
-            edgeMap.put("from", e.from());
-            edgeMap.put("to", e.to());
-            edgeMap.put("localField", e.localField());
-            edgeMap.put("foreignField", e.foreignField());
-            edgeMap.put("nullable", e.nullable());
-            edgesList.add(edgeMap);
-        }
-
-        List<Map<String, Object>> relationsList = new ArrayList<>();
-        for (SchemaRelation r : schema.relations()) {
-            Map<String, Object> relMap = new LinkedHashMap<>();
-            relMap.put("parentModel", r.parentModel());
-            relMap.put("childModel", r.childModel());
-            relMap.put("parentField", r.parentField());
-            relMap.put("childField", r.childField());
-            relationsList.add(relMap);
-        }
-
-        Map<String, Object> schemaDict = new LinkedHashMap<>();
-        schemaDict.put("models", modelsList);
-        schemaDict.put("edges", edgesList);
-        schemaDict.put("relations", relationsList);
-        schemaDict.put("scopeField", schema.scopeField());
-        return schemaDict;
     }
 
     private static Map<String, Object> serializeAuthResult(AuthResult result) {

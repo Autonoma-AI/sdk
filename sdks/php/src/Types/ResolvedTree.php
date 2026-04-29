@@ -1,10 +1,18 @@
 <?php
+
 namespace Autonoma\Sdk\Types;
-class ResolvedTree {
+
+class ResolvedTree
+{
     /** @var CreateOp[] */
     public array $ops = [];
-    /** @var DeferredUpdate[] */
-    public array $deferredUpdates = [];
-    /** @var array<string, string> */
+
+    /** @var array<string, string> alias -> temp id */
     public array $aliases = [];
+
+    /** @var array<string, string> alias -> model name */
+    public array $aliasOwnerModel = [];
+
+    /** @var array<string, string[]> alias -> list of dependency aliases */
+    public array $aliasDependencies = [];
 }

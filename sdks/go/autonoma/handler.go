@@ -1,55 +1,18 @@
 package autonoma
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 )
 
 //go:generate sh -c "printf 'package autonoma\n\n// Code generated from protocol/version.txt. DO NOT EDIT.\nconst ProtocolVersion = \"%s\"\n' \"$(cat ../../../protocol/version.txt | tr -d '\\n')\" > protocol_version_gen.go"
-
-var (
-	introspectionCacheMu sync.Mutex
-	introspectionCache   = make(map[*HandlerConfig]*IntrospectionResult)
-)
-
-func getIntrospection(ctx context.Context, config *HandlerConfig) (*IntrospectionResult, error) {
-	introspectionCacheMu.Lock()
-	cached, ok := introspectionCache[config]
-	introspectionCacheMu.Unlock()
-	if ok {
-		return cached, nil
-	}
-
-	dialect, err := GetDialect(config.Dialect)
-	if err != nil {
-		return nil, err
-	}
-
-	result, err := IntrospectDatabase(ctx, config.Executor, dialect, introspectConfig{
-		ScopeField:    config.ScopeField,
-		Schema:        config.DBSchema,
-		TableNameMap:  config.TableNameMap,
-		ExcludeTables: config.ExcludeTables,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	introspectionCacheMu.Lock()
-	introspectionCache[config] = result
-	introspectionCacheMu.Unlock()
-
-	return result, nil
-}
 
 func buildSdkMeta(config *HandlerConfig) map[string]any {
 	sdk := config.SDK
@@ -75,8 +38,8 @@ func buildSdkMeta(config *HandlerConfig) map[string]any {
 }
 
 // HandleRequest is the main entry point for processing Autonoma protocol requests.
-func HandleRequest(ctx context.Context, config *HandlerConfig, req HandlerRequest) HandlerResponse {
-	resp, err := handleRequestInner(ctx, config, req)
+func HandleRequest(config *HandlerConfig, req HandlerRequest) HandlerResponse {
+	resp, err := handleRequestInner(config, req)
 	if err != nil {
 		if ae, ok := err.(*AutonomaError); ok {
 			return HandlerResponse{
@@ -92,7 +55,7 @@ func HandleRequest(ctx context.Context, config *HandlerConfig, req HandlerReques
 	return *resp
 }
 
-func handleRequestInner(ctx context.Context, config *HandlerConfig, req HandlerRequest) (*HandlerResponse, error) {
+func handleRequestInner(config *HandlerConfig, req HandlerRequest) (*HandlerResponse, error) {
 	if config.SharedSecret == config.SigningSecret {
 		return nil, ErrSameSecrets()
 	}
@@ -106,7 +69,7 @@ func handleRequestInner(ctx context.Context, config *HandlerConfig, req HandlerR
 			env = os.Getenv("ENV")
 		}
 		if env == "production" {
-			return nil, ErrProductionBlocked()
+			return nil, ErrProductionBlocked("Either GO_ENV, APP_ENV or ENV == 'production'. Set AllowProduction explicitly to change this.")
 		}
 	}
 
@@ -125,43 +88,54 @@ func handleRequestInner(ctx context.Context, config *HandlerConfig, req HandlerR
 
 	action, _ := body["action"].(string)
 	if action == "" {
-		return nil, ErrInvalidBody("missing action")
+		return nil, ErrInvalidBody("missing action. expected one of 'discover', 'up' or 'down'")
 	}
 
 	switch action {
 	case "discover":
-		return handleDiscover(ctx, config)
+		return handleDiscover(config)
 	case "up":
-		return handleUp(ctx, config, body)
+		return handleUp(config, body)
 	case "down":
-		return handleDown(ctx, config, body)
+		return handleDown(config, body)
 	default:
 		return nil, ErrUnknownAction(action)
 	}
 }
 
-func handleDiscover(ctx context.Context, config *HandlerConfig) (*HandlerResponse, error) {
-	introspection, err := getIntrospection(ctx, config)
+// ---------------------------------------------------------------------------
+// discover
+// ---------------------------------------------------------------------------
+
+func handleDiscover(config *HandlerConfig) (*HandlerResponse, error) {
+	factories := config.Factories
+	if factories == nil {
+		factories = FactoryRegistry{}
+	}
+	schema, err := BuildSchemaFromFactories(factories, config.ScopeField)
 	if err != nil {
 		return nil, err
 	}
 
-	schemaJSON := schemaToJSON(introspection.Schema)
 	resp := buildSdkMeta(config)
-	resp["schema"] = schemaJSON
+	resp["schema"] = SchemaToWire(schema)
 
 	return &HandlerResponse{Status: 200, Body: resp}, nil
 }
 
-func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (*HandlerResponse, error) {
+// ---------------------------------------------------------------------------
+// up
+// ---------------------------------------------------------------------------
+
+func handleUp(config *HandlerConfig, body map[string]any) (*HandlerResponse, error) {
 	createRaw, ok := body["create"]
 	if !ok {
 		return nil, ErrInvalidBody(`missing "create" in request body`)
 	}
 
-	create, err := normalizeCreate(createRaw)
-	if err != nil {
-		return nil, ErrInvalidBody("invalid create format")
+	create, ok := createRaw.(map[string]any)
+	if !ok {
+		return nil, ErrInvalidBody("`create` must be an object keyed by model name")
 	}
 
 	testRunID, _ := body["testRunId"].(string)
@@ -169,237 +143,97 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 		testRunID = uuid.New().String()
 	}
 
-	introspection, err := getIntrospection(ctx, config)
+	factories := config.Factories
+	if factories == nil || len(factories) == 0 {
+		return nil, ErrInvalidBody(
+			"no factories registered -- every model in `create` must have a factory.")
+	}
+
+	tree, err := ResolvePayloadTree(create)
 	if err != nil {
 		return nil, err
 	}
-	schema := introspection.Schema
 
-	dialect, err := GetDialect(config.Dialect)
-	if err != nil {
-		return nil, err
-	}
-
-	tree := ResolveTree(create, schema)
 	refs := make(map[string][]map[string]any)
 	idMap := make(map[string]any)
 
-	err = config.Executor.Transaction(ctx, func(tx SQLExecutor) error {
-		i := 0
-		for i < len(tree.Ops) {
-			op := tree.Ops[i]
-			model := op.Model
+	// Track per-model run index for {{index}} / {{cycle()}} substitution.
+	modelIndex := make(map[string]int)
 
-			// Collect consecutive ops for the same model
-			batch := []CreateOp{op}
-			for i+1 < len(tree.Ops) && tree.Ops[i+1].Model == model {
-				i++
-				batch = append(batch, tree.Ops[i])
-			}
+	// Track model insertion order for deterministic teardown in Go.
+	modelOrderSeen := make(map[string]bool)
+	var modelOrder []string
 
-			// Find model info for auto-populating fields
-			var modelInfo *ModelInfo
-			for idx := range schema.Models {
-				if schema.Models[idx].Name == model {
-					modelInfo = &schema.Models[idx]
-					break
-				}
-			}
-
-			// Bug 4: find actual PK field name from schema
-			// When multiple IsId fields exist (composite PK), prefer the one named "id"
-			pkFieldName := "id"
-			for _, mi := range schema.Models {
-				if mi.Name == model {
-					var firstId string
-					for _, f := range mi.Fields {
-						if f.IsId {
-							if firstId == "" {
-								firstId = f.Name
-							}
-							if strings.EqualFold(f.Name, "id") {
-								pkFieldName = f.Name
-								firstId = "" // signal we found "id"
-								break
-							}
-						}
-					}
-					if firstId != "" {
-						pkFieldName = firstId
-					}
-					break
-				}
-			}
-
-			resolvedFields := make([]map[string]any, len(batch))
-			for j, b := range batch {
-				// Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
-				fields := make(map[string]any, len(b.Fields))
-				for k, v := range b.Fields {
-					resolved, rerr := ResolveTokens(v, testRunID, j)
-					if rerr != nil {
-						return rerr
-					}
-					fields[k] = resolved
-				}
-
-				// Replace temp IDs with real IDs
-				for key, value := range fields {
-					if s, ok := value.(string); ok && strings.HasPrefix(s, "__temp_") {
-						if realID, found := idMap[s]; found {
-							fields[key] = realID
-						}
-					}
-				}
-
-				// Inject scope field if applicable
-				for _, edge := range schema.Edges {
-					if edge.From == model && normalizeField(edge.LocalField) == normalizeField(schema.ScopeField) && edge.From != edge.To {
-						if _, exists := fields[edge.LocalField]; !exists {
-							scopeVal := detectScopeValue(refs, schema.ScopeField)
-							if scopeVal != "" {
-								fields[edge.LocalField] = scopeVal
-							}
-						}
-						break
-					}
-				}
-
-				// Auto-populate required DateTime fields without defaults
-				if modelInfo != nil {
-					for _, field := range modelInfo.Fields {
-						if field.IsRequired && !field.HasDefault && !field.IsId {
-							if _, exists := fields[field.Name]; !exists {
-								if field.Type == "DateTime" {
-									fields[field.Name] = time.Now().UTC()
-								}
-							}
-						}
-					}
-				}
-
-				resolvedFields[j] = fields
-			}
-
-			var records []map[string]any
-			factory, hasFactory := config.Factories[model]
-
-			if hasFactory {
-				// Factory path: call user-defined Create() for each record
-				for _, fields := range resolvedFields {
-					factoryCtx := FactoryContext{
-						Refs:         refs,
-						Executor:     tx,
-						ScenarioName: testRunID,
-						TestRunID:    testRunID,
-					}
-					record, err := factory.Create(fields, factoryCtx)
-					if err != nil {
-						return err
-					}
-					if record[pkFieldName] == nil {
-						return ErrFactoryMissingPK(model, pkFieldName)
-					}
-					records = append(records, record)
-				}
-			} else {
-				// SQL fallback path (existing behavior)
-				spec := map[string]ResolvedEntitySpec{
-					model: {Count: len(resolvedFields), Fields: resolvedFields},
-				}
-
-				created, err := CreateEntities(ctx, tx, dialect, introspection.TableMap, introspection.ColumnMaps, spec, introspection.EnumTypeMaps, schema.Models)
-				if err != nil {
-					return err
-				}
-
-				records = created[model]
-			}
-			if refs[model] == nil {
-				refs[model] = nil
-			}
-			refs[model] = append(refs[model], records...)
-
-			// Bug 3: accept any non-nil value for idMap, not just strings
-			for j, b := range batch {
-				if j < len(records) {
-					record := records[j]
-					if id := record[pkFieldName]; id != nil {
-						idMap[b.TempID] = id
-					}
-				}
-			}
-
-			i++
+	for _, op := range tree.Ops {
+		model := op.Model
+		factory, hasFactory := factories[model]
+		if !hasFactory {
+			return nil, ErrInvalidBody(fmt.Sprintf(
+				`no factory registered for model "%s". Register one with DefineFactory(...) and add it to HandlerConfig.Factories.`,
+				model))
 		}
 
-		// Resolve deferred FK updates
-		for _, deferred := range tree.DeferredUpdates {
-			realTargetID := idMap[deferred.TargetTempID]
-			refTempID, aliasExists := tree.Aliases[deferred.RefAlias]
-			var realRefID any
-			if aliasExists {
-				realRefID = idMap[refTempID]
-			}
+		idx := modelIndex[model]
+		modelIndex[model] = idx + 1
 
-			if realTargetID == nil || realRefID == nil {
-				return fmt.Errorf(`_ref "%s" could not be resolved. Ensure the referenced node has _alias defined in the scenario`, deferred.RefAlias)
-			}
+		// Substitute built-in tokens then swap temp ids for real ids.
+		resolved, err := ResolveTokens(op.Fields, testRunID, idx)
+		if err != nil {
+			return nil, err
+		}
+		resolvedFields := swapTempIDs(resolved, idMap)
 
-			// Bug 4: find PK field name for deferred model
-			// When multiple IsId fields exist (composite PK), prefer the one named "id"
-			deferredPkFieldName := "id"
-			for _, mi := range schema.Models {
-				if mi.Name == deferred.Model {
-					var firstId string
-					for _, f := range mi.Fields {
-						if f.IsId {
-							if firstId == "" {
-								firstId = f.Name
-							}
-							if strings.EqualFold(f.Name, "id") {
-								deferredPkFieldName = f.Name
-								firstId = ""
-								break
-							}
-						}
-					}
-					if firstId != "" {
-						deferredPkFieldName = firstId
-					}
-					break
-				}
-			}
-
-			err := UpdateEntity(ctx, tx, dialect, introspection.TableMap, introspection.ColumnMaps,
-				deferred.Model, fmt.Sprintf("%v", realTargetID), map[string]any{deferred.Field: realRefID}, introspection.EnumTypeMaps, deferredPkFieldName)
-			if err != nil {
-				return err
-			}
+		// Validate through the factory's InputStruct.
+		fieldsMap, ok := resolvedFields.(map[string]any)
+		if !ok {
+			return nil, ErrInvalidBody(fmt.Sprintf("resolved fields for %q must be an object", model))
 		}
 
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		inputPtr := reflect.New(factory.InputStruct)
+		fieldsJSON, err := json.Marshal(fieldsMap)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(fieldsJSON, inputPtr.Interface()); err != nil {
+			return nil, ErrInvalidBody(fmt.Sprintf("validation failed for model %q: %s", model, err.Error()))
+		}
+
+		ctx := FactoryContext{
+			Refs:         refs,
+			ScenarioName: testRunID,
+			TestRunID:    testRunID,
+		}
+
+		record, err := factory.Create(inputPtr.Interface(), ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		if record == nil || record["id"] == nil {
+			return nil, ErrFactoryMissingPK(model, "id")
+		}
+
+		if !modelOrderSeen[model] {
+			modelOrderSeen[model] = true
+			modelOrder = append(modelOrder, model)
+		}
+		refs[model] = append(refs[model], record)
+		idMap[op.TempID] = record["id"]
 	}
 
-	scopeValue := detectScopeValue(refs, schema.ScopeField)
+	// Auth callback gets the first User (case-insensitive on model name).
+	firstUser := findFirstUser(refs)
+	scopeValue := detectScopeValue(refs, config.ScopeField)
 	if scopeValue == "" {
 		scopeValue = testRunID
 	}
 
-	firstUser := findFirstUser(refs)
 	authCtx := AuthContext{ScopeValue: scopeValue, Refs: refs}
-	auth := map[string]any{"token": ""}
+	auth := map[string]any{}
 	if config.Auth != nil {
-		authResult, err := config.Auth(firstUser, authCtx)
+		auth, err = config.Auth(firstUser, authCtx)
 		if err != nil {
 			return nil, err
-		}
-		auth = map[string]any{"token": authResult.Token}
-		for k, v := range authResult.Extra {
-			auth[k] = v
 		}
 	}
 
@@ -412,9 +246,12 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 	}
 
 	refsToken, err := SignRefs(RefsPayload{
-		Refs:        refs,
-		TestRunID:   scopeValue,
-		Environment: "",
+		Refs:              refs,
+		TestRunID:         scopeValue,
+		Environment:       "",
+		AliasDependencies: tree.AliasDependencies,
+		AliasOwnerModel:   tree.AliasOwnerModel,
+		ModelOrder:        modelOrder,
 	}, config.SigningSecret)
 	if err != nil {
 		return nil, err
@@ -428,7 +265,38 @@ func handleUp(ctx context.Context, config *HandlerConfig, body map[string]any) (
 	return &HandlerResponse{Status: 200, Body: resp}, nil
 }
 
-func handleDown(ctx context.Context, config *HandlerConfig, body map[string]any) (*HandlerResponse, error) {
+// swapTempIDs replaces any __temp_* placeholder string with its real id.
+func swapTempIDs(value any, idMap map[string]any) any {
+	switch v := value.(type) {
+	case string:
+		if strings.HasPrefix(v, "__temp_") {
+			if real, ok := idMap[v]; ok {
+				return real
+			}
+		}
+		return v
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, child := range v {
+			out[k] = swapTempIDs(child, idMap)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, child := range v {
+			out[i] = swapTempIDs(child, idMap)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+// ---------------------------------------------------------------------------
+// down
+// ---------------------------------------------------------------------------
+
+func handleDown(config *HandlerConfig, body map[string]any) (*HandlerResponse, error) {
 	refsToken, _ := body["refsToken"].(string)
 	if refsToken == "" {
 		return nil, ErrInvalidBody("missing refsToken")
@@ -439,77 +307,56 @@ func handleDown(ctx context.Context, config *HandlerConfig, body map[string]any)
 		return nil, ErrInvalidRefsToken(err.Error())
 	}
 
-	introspection, err := getIntrospection(ctx, config)
-	if err != nil {
-		return nil, err
+	refs := payload.Refs
+	if refs == nil {
+		refs = map[string][]map[string]any{}
 	}
-
-	dialect, err := GetDialect(config.Dialect)
-	if err != nil {
-		return nil, err
-	}
+	testRunID := payload.TestRunID
 
 	if config.BeforeDown != nil {
-		hookRefs := payload.Refs
-		if hookRefs == nil {
-			hookRefs = map[string][]map[string]any{}
-		}
-		hookCtx := HookContext{ScenarioName: payload.TestRunID, Refs: hookRefs}
+		hookCtx := HookContext{ScenarioName: testRunID, Refs: refs}
 		if err := config.BeforeDown(hookCtx); err != nil {
 			return nil, err
 		}
 	}
 
-	// Determine which models have factory teardown
-	factoryTeardownModels := make(map[string]bool)
-	if config.Factories != nil {
-		for model, factory := range config.Factories {
-			if factory.Teardown != nil {
-				factoryTeardownModels[model] = true
-			}
-		}
+	factories := config.Factories
+	if factories == nil {
+		factories = FactoryRegistry{}
 	}
 
-	// Run factory teardowns in reverse topo order
-	if len(factoryTeardownModels) > 0 {
-		tdInfo := ComputeTeardownOrder(introspection.Schema)
-		fullOrder := make([]string, len(tdInfo.Order))
-		copy(fullOrder, tdInfo.Order)
-		if tdInfo.ScopeRootModel != "" {
-			fullOrder = append(fullOrder, tdInfo.ScopeRootModel)
-		}
-		tdRefs := payload.Refs
-		if tdRefs == nil {
-			tdRefs = map[string][]map[string]any{}
-		}
+	teardownOrder := ComputeTeardownOrder(refs, payload.AliasDependencies, payload.AliasOwnerModel, payload.ModelOrder)
 
-		// Iterate in reverse
-		for i := len(fullOrder) - 1; i >= 0; i-- {
-			model := fullOrder[i]
-			if !factoryTeardownModels[model] {
-				continue
-			}
-			records := tdRefs[model]
-			factoryCtx := FactoryContext{
-				Refs:         tdRefs,
-				Executor:     config.Executor,
-				ScenarioName: payload.TestRunID,
-				TestRunID:    payload.TestRunID,
-			}
-			// Call teardown per record in reverse order
-			for j := len(records) - 1; j >= 0; j-- {
-				if err := config.Factories[model].Teardown(records[j], factoryCtx); err != nil {
+	for _, model := range teardownOrder {
+		factory, hasFactory := factories[model]
+		if !hasFactory || factory.Teardown == nil {
+			continue
+		}
+		records := refs[model]
+		ctx := FactoryContext{
+			Refs:         refs,
+			ScenarioName: testRunID,
+			TestRunID:    testRunID,
+		}
+		// Call teardown per record in reverse order.
+		for j := len(records) - 1; j >= 0; j-- {
+			record := records[j]
+			var tdInput interface{} = record
+			if factory.RefStruct != nil {
+				refPtr := reflect.New(factory.RefStruct)
+				recJSON, err := json.Marshal(record)
+				if err != nil {
 					return nil, err
 				}
+				if err := json.Unmarshal(recJSON, refPtr.Interface()); err != nil {
+					return nil, err
+				}
+				tdInput = refPtr.Interface()
+			}
+			if err := factory.Teardown(tdInput, ctx); err != nil {
+				return nil, err
 			}
 		}
-	}
-
-	// SQL teardown for remaining models (skipping factory-teardown ones)
-	err = Teardown(ctx, config.Executor, dialect, introspection.TableMap, introspection.ColumnMaps,
-		introspection.Schema, payload.TestRunID, payload.Refs, factoryTeardownModels)
-	if err != nil {
-		return nil, err
 	}
 
 	resp := buildSdkMeta(config)
@@ -518,6 +365,10 @@ func handleDown(ctx context.Context, config *HandlerConfig, body map[string]any)
 	return &HandlerResponse{Status: 200, Body: resp}, nil
 }
 
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
 var (
 	tokenRe = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
 	cycleRe = regexp.MustCompile(`^cycle\((.*)\)$`)
@@ -525,8 +376,7 @@ var (
 
 // ResolveTokens substitutes built-in tokens in field values: {{testRunId}},
 // {{index}}, {{cycle(a,b,c)}}. Returns an UNRESOLVED_TOKEN AutonomaError for
-// any other {{token}}. Defense-in-depth against recipe tokens bypassing
-// preflight.
+// any other {{token}}.
 func ResolveTokens(value any, testRunID string, index int) (any, error) {
 	switch v := value.(type) {
 	case string:
@@ -604,7 +454,6 @@ func resolveTokensString(s, testRunID string, index int) (string, error) {
 	return result, nil
 }
 
-// Bug 8: match both "user" and "users" (case-insensitive)
 func findFirstUser(refs map[string][]map[string]any) map[string]any {
 	for model, records := range refs {
 		normalized := strings.ToLower(model)
@@ -635,78 +484,32 @@ func detectScopeValue(refs map[string][]map[string]any, scopeField string) strin
 	return ""
 }
 
-// normalizeCreate converts the raw JSON "create" value into the typed Go map.
-func normalizeCreate(raw any) (map[string][]map[string]any, error) {
-	m, ok := raw.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("create must be an object")
+// DefineFactory creates a validated FactoryDefinition.
+func DefineFactory(
+	create func(input interface{}, ctx FactoryContext) (map[string]any, error),
+	inputStruct reflect.Type,
+	teardown func(record interface{}, ctx FactoryContext) error,
+	refStruct reflect.Type,
+) FactoryDefinition {
+	if create == nil {
+		panic("Factory definition must include a non-nil create function")
+	}
+	if inputStruct == nil {
+		panic("Factory must declare InputStruct. The SDK derives the discover schema from it.")
+	}
+	// Unwrap pointer to get struct type.
+	t := inputStruct
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		panic("Factory InputStruct must be a struct type (or pointer to struct)")
 	}
 
-	result := make(map[string][]map[string]any, len(m))
-	for model, v := range m {
-		arr, ok := v.([]any)
-		if !ok {
-			return nil, fmt.Errorf("create.%s must be an array", model)
-		}
-		nodes := make([]map[string]any, len(arr))
-		for i, item := range arr {
-			node, ok := item.(map[string]any)
-			if !ok {
-				return nil, fmt.Errorf("create.%s[%d] must be an object", model, i)
-			}
-			nodes[i] = node
-		}
-		result[model] = nodes
-	}
-	return result, nil
-}
-
-// schemaToJSON converts SchemaInfo to a JSON-friendly map.
-func schemaToJSON(schema SchemaInfo) map[string]any {
-	models := make([]map[string]any, len(schema.Models))
-	for i, m := range schema.Models {
-		fields := make([]map[string]any, len(m.Fields))
-		for j, f := range m.Fields {
-			fields[j] = map[string]any{
-				"name":       f.Name,
-				"type":       f.Type,
-				"isRequired": f.IsRequired,
-				"isId":       f.IsId,
-				"hasDefault": f.HasDefault,
-			}
-		}
-		models[i] = map[string]any{
-			"name":      m.Name,
-			"tableName": m.TableName,
-			"fields":    fields,
-		}
-	}
-
-	edges := make([]map[string]any, len(schema.Edges))
-	for i, e := range schema.Edges {
-		edges[i] = map[string]any{
-			"from":         e.From,
-			"to":           e.To,
-			"localField":   e.LocalField,
-			"foreignField": e.ForeignField,
-			"nullable":     e.Nullable,
-		}
-	}
-
-	relations := make([]map[string]any, len(schema.Relations))
-	for i, r := range schema.Relations {
-		relations[i] = map[string]any{
-			"parentModel": r.ParentModel,
-			"childModel":  r.ChildModel,
-			"parentField": r.ParentField,
-			"childField":  r.ChildField,
-		}
-	}
-
-	return map[string]any{
-		"models":     models,
-		"edges":      edges,
-		"relations":  relations,
-		"scopeField": schema.ScopeField,
+	return FactoryDefinition{
+		Create:      create,
+		InputStruct: inputStruct,
+		Teardown:    teardown,
+		RefStruct:   refStruct,
 	}
 }

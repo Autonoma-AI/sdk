@@ -1,13 +1,8 @@
 package autonoma
 
-import "context"
+import "reflect"
 
-// SQLExecutor abstracts database access. Wrap your *sql.DB or *sql.Tx into this.
-type SQLExecutor interface {
-	Query(ctx context.Context, sql string, params ...any) ([]map[string]any, error)
-	Transaction(ctx context.Context, fn func(tx SQLExecutor) error) error
-}
-
+// SchemaInfo is the wire-shape schema emitted in discover responses.
 type SchemaInfo struct {
 	Models     []ModelInfo      `json:"models"`
 	Edges      []FKEdge         `json:"edges"`
@@ -15,6 +10,8 @@ type SchemaInfo struct {
 	ScopeField string           `json:"scopeField"`
 }
 
+// SchemaRelation is wire-shape only. Always emitted as an empty list in
+// factory-driven setups.
 type SchemaRelation struct {
 	ParentModel string `json:"parentModel"`
 	ChildModel  string `json:"childModel"`
@@ -22,12 +19,14 @@ type SchemaRelation struct {
 	ChildField  string `json:"childField"`
 }
 
+// ModelInfo describes a single model in the discover schema.
 type ModelInfo struct {
 	Name      string      `json:"name"`
 	TableName string      `json:"tableName"`
 	Fields    []FieldInfo `json:"fields"`
 }
 
+// FieldInfo describes a single field within a model.
 type FieldInfo struct {
 	Name       string `json:"name"`
 	Type       string `json:"type"`
@@ -36,6 +35,8 @@ type FieldInfo struct {
 	HasDefault bool   `json:"hasDefault"`
 }
 
+// FKEdge is wire-shape only. Always emitted as an empty list in
+// factory-driven setups.
 type FKEdge struct {
 	From         string `json:"from"`
 	To           string `json:"to"`
@@ -44,23 +45,14 @@ type FKEdge struct {
 	Nullable     bool   `json:"nullable"`
 }
 
-type ResolvedEntitySpec struct {
-	Count  int
-	Fields []map[string]any
-	Batch  bool
-}
-
+// SdkInfo carries SDK metadata for wire responses.
 type SdkInfo struct {
 	Language string `json:"language"`
 	Orm      string `json:"orm"`
 	Server   string `json:"server"`
 }
 
-type AuthResult struct {
-	Token string         `json:"token"`
-	Extra map[string]any `json:"-"`
-}
-
+// HookContext is passed to handler hooks.
 type HookContext struct {
 	ScenarioName string
 	Refs         map[string][]map[string]any
@@ -73,61 +65,93 @@ type AuthContext struct {
 }
 
 // FactoryContext is passed to factory create and teardown functions.
+// Factories that need a database connection get it from the host (their
+// own GORM, sqlx, pgx, etc.) -- the SDK does not ship one.
 type FactoryContext struct {
 	Refs         map[string][]map[string]any
-	Executor     SQLExecutor
 	ScenarioName string
 	TestRunID    string
 }
 
 // FactoryDefinition defines how to create and optionally teardown entities for a model.
+//
+// InputStruct is required: the SDK validates the resolved field dict through
+// json.Unmarshal into a new instance of InputStruct before invoking Create,
+// and uses the same struct to build the discover schema.
+//
+// RefStruct is optional; when provided, the SDK validates the stored record
+// through json.Unmarshal into a new instance of RefStruct before invoking Teardown.
 type FactoryDefinition struct {
-	// Create builds a single entity from pre-resolved fields (temp IDs already replaced).
-	// Must return at least the PK field.
-	Create func(data map[string]any, ctx FactoryContext) (map[string]any, error)
-	// Teardown is an optional per-record cleanup function. If nil, SQL DELETE is used.
-	Teardown func(record map[string]any, ctx FactoryContext) error
+	// Create builds a single entity from a validated input struct and context.
+	// The input parameter is a pointer to an instance of InputStruct.
+	// Must return a map with at least an "id" key.
+	Create func(input interface{}, ctx FactoryContext) (map[string]any, error)
+
+	// InputStruct is the reflect.Type of the struct used for input validation
+	// and discover schema generation. Required.
+	InputStruct reflect.Type
+
+	// Teardown is an optional per-record cleanup function.
+	// If nil, the SDK has no way to remove rows the factory created.
+	Teardown func(record interface{}, ctx FactoryContext) error
+
+	// RefStruct is optional. If provided, the SDK validates the stored record
+	// through it before calling Teardown.
+	RefStruct reflect.Type
 }
 
 // FactoryRegistry maps model names to their factory definitions.
 type FactoryRegistry map[string]FactoryDefinition
 
+// HandlerConfig is the configuration for the Autonoma request handler.
 type HandlerConfig struct {
-	Executor        SQLExecutor
 	ScopeField      string
-	Dialect         string // "postgres" or "mysql"
-	DBSchema        string
-	TableNameMap    map[string]string
-	ExcludeTables   []string
 	SharedSecret    string
 	SigningSecret   string
 	AllowProduction bool
-	Auth            func(user map[string]any, ctx AuthContext) (*AuthResult, error)
+	Auth            func(user map[string]any, ctx AuthContext) (map[string]any, error)
 	SDK             *SdkInfo
 	BeforeDown      func(ctx HookContext) error
 	AfterUp         func(ctx HookContext, auth map[string]any) (map[string]any, error)
 	Factories       FactoryRegistry
 }
 
+// HandlerRequest represents an incoming HTTP request.
 type HandlerRequest struct {
 	Body    string
 	Headers map[string]string
 }
 
+// HandlerResponse represents the HTTP response to send back.
 type HandlerResponse struct {
 	Status int
 	Body   map[string]any
 }
 
-type IntrospectionResult struct {
-	Schema       SchemaInfo
-	TableMap     map[string]string            // model name → DB table name
-	ColumnMaps   map[string]map[string]string // model name → (field name → DB column name)
-	EnumTypeMaps map[string]map[string]string // model name → (field name → enum type name)
+// CreateOp represents a single create operation produced by the payload topo resolver.
+type CreateOp struct {
+	Model  string
+	Fields map[string]any
+	TempID string
 }
 
+// ResolvedTree is the output of ResolvePayloadTree.
+type ResolvedTree struct {
+	Ops               []CreateOp
+	Aliases           map[string]string   // alias -> temp id
+	AliasOwnerModel   map[string]string   // alias -> model name
+	AliasDependencies map[string][]string // alias -> list of dependency aliases
+}
+
+// RefsPayload is the payload stored in the refs token.
 type RefsPayload struct {
-	Refs        map[string][]map[string]any `json:"refs"`
-	TestRunID   string                      `json:"testRunId"`
-	Environment string                      `json:"environment"`
+	Refs              map[string][]map[string]any `json:"refs"`
+	TestRunID         string                      `json:"testRunId"`
+	Environment       string                      `json:"environment"`
+	AliasDependencies map[string][]string         `json:"aliasDependencies,omitempty"`
+	AliasOwnerModel   map[string]string           `json:"aliasOwnerModel,omitempty"`
+	// ModelOrder preserves the creation-time model ordering so that
+	// teardown (which runs in reverse) works correctly in Go where
+	// map iteration order is not deterministic.
+	ModelOrder []string `json:"modelOrder,omitempty"`
 }

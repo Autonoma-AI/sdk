@@ -2,13 +2,19 @@
 
 namespace Autonoma\Sdk;
 
-use Autonoma\Sdk\Dialect\DialectFactory;
 use Autonoma\Sdk\Types\FactoryContext;
 use Autonoma\Sdk\Types\HandlerConfig;
 use Autonoma\Sdk\Types\HandlerRequest;
 use Autonoma\Sdk\Types\HandlerResponse;
-use Autonoma\Sdk\Types\IntrospectionResult;
 
+/**
+ * Request routing for discover/up/down protocol actions.
+ *
+ * Factory-driven design: every model in body.create must have a registered
+ * factory. The SDK uses the factory's inputFields both to validate inputs
+ * and to build the discover schema. Ordering for up and down comes from the
+ * create payload's _alias/_ref graph; there is no SQL introspection.
+ */
 class Handler
 {
     private const PROTOCOL_VERSION_HARDCODED = '1.0';
@@ -26,9 +32,6 @@ class Handler
         }
         return self::$PROTOCOL_VERSION;
     }
-
-    /** @var array<int, IntrospectionResult> Cache introspection results per config */
-    private static array $introspectionCache = [];
 
     public static function handleRequest(HandlerConfig $config, HandlerRequest $req): HandlerResponse
     {
@@ -57,7 +60,7 @@ class Handler
 
             $action = $body['action'] ?? null;
             if ($action === null) {
-                throw AutonomaError::invalidBody('missing action');
+                throw AutonomaError::invalidBody('missing action. expected one of \'discover\', \'up\' or \'down\'');
             }
 
             return match ($action) {
@@ -73,26 +76,6 @@ class Handler
         }
     }
 
-    private static function getIntrospection(HandlerConfig $config): IntrospectionResult
-    {
-        $cacheKey = spl_object_id($config);
-        if (isset(self::$introspectionCache[$cacheKey])) {
-            return self::$introspectionCache[$cacheKey];
-        }
-
-        $dialect = DialectFactory::get($config->dialect);
-        $result = Introspect::introspectDatabase(
-            $config->executor,
-            $dialect,
-            $config->scopeField,
-            $config->dbSchema,
-            $config->tableNameMap,
-            $config->excludeTables,
-        );
-        self::$introspectionCache[$cacheKey] = $result;
-        return $result;
-    }
-
     private static function buildSdkMeta(HandlerConfig $config): array
     {
         $sdk = $config->sdk ?? [];
@@ -106,44 +89,22 @@ class Handler
         ];
     }
 
+    // -----------------------------------------------------------------------
+    // discover
+    // -----------------------------------------------------------------------
+
     private static function handleDiscover(HandlerConfig $config): HandlerResponse
     {
-        $introspection = self::getIntrospection($config);
-        $schema = $introspection->schema;
-
-        $schemaDict = [
-            'models' => array_map(fn($m) => [
-                'name' => $m->name,
-                'tableName' => $m->tableName,
-                'fields' => array_map(fn($f) => [
-                    'name' => $f->name,
-                    'type' => $f->type,
-                    'isRequired' => $f->isRequired,
-                    'isId' => $f->isId,
-                    'hasDefault' => $f->hasDefault,
-                ], $m->fields),
-            ], $schema->models),
-            'edges' => array_map(fn($e) => [
-                'from' => $e->fromModel,
-                'to' => $e->toModel,
-                'localField' => $e->localField,
-                'foreignField' => $e->foreignField,
-                'nullable' => $e->nullable,
-            ], $schema->edges),
-            'relations' => array_map(fn($r) => [
-                'parentModel' => $r->parentModel,
-                'childModel' => $r->childModel,
-                'parentField' => $r->parentField,
-                'childField' => $r->childField,
-            ], $schema->relations),
-            'scopeField' => $schema->scopeField,
-        ];
-
+        $schema = Schema::buildSchemaFromFactories($config->factories, $config->scopeField);
         return new HandlerResponse(
             status: 200,
-            body: array_merge(self::buildSdkMeta($config), ['schema' => $schemaDict]),
+            body: array_merge(self::buildSdkMeta($config), ['schema' => Schema::schemaToWire($schema)]),
         );
     }
+
+    // -----------------------------------------------------------------------
+    // up
+    // -----------------------------------------------------------------------
 
     private static function handleUp(HandlerConfig $config, array $body): HandlerResponse
     {
@@ -153,209 +114,65 @@ class Handler
         }
 
         $testRunId = $body['testRunId'] ?? self::generateUuid();
-        $introspection = self::getIntrospection($config);
-        $schema = $introspection->schema;
-        $dialect = DialectFactory::get($config->dialect);
 
-        $tree = Tree::resolveTree($create, $schema);
+        $factories = $config->factories;
+        if (empty($factories)) {
+            throw AutonomaError::invalidBody(
+                'no factories registered -- every model in `create` must have a factory.'
+            );
+        }
+
+        $tree = PayloadTopo::resolvePayloadTree($create);
+
         $refs = [];
         $idMap = [];
 
-        $config->executor->transaction(function ($tx) use (
-            &$refs, &$idMap, $tree, $schema, $dialect, $introspection, $config, $testRunId,
-        ) {
-            $i = 0;
-            while ($i < count($tree->ops)) {
-                $op = $tree->ops[$i];
-                $model = $op->model;
+        // Track per-model run index for {{index}} / {{cycle()}} substitution.
+        $modelIndex = [];
 
-                // Collect consecutive ops for same model with same batch flag
-                $batch = [$op];
-                while ($i + 1 < count($tree->ops) &&
-                    $tree->ops[$i + 1]->model === $model &&
-                    $tree->ops[$i + 1]->batch === $op->batch) {
-                    $i++;
-                    $batch[] = $tree->ops[$i];
-                }
-
-                // Find model info for auto-populating fields
-                $modelInfo = null;
-                foreach ($schema->models as $m) {
-                    if ($m->name === $model) {
-                        $modelInfo = $m;
-                        break;
-                    }
-                }
-
-                // Bug 4: find actual PK field name from schema
-                // When multiple isId fields exist (composite PK), prefer the one named "id"
-                $idFields = [];
-                if ($modelInfo !== null) {
-                    foreach ($modelInfo->fields as $f) {
-                        if ($f->isId) {
-                            $idFields[] = $f;
-                        }
-                    }
-                }
-                $pkField = null;
-                foreach ($idFields as $f) {
-                    if (strtolower($f->name) === 'id') {
-                        $pkField = $f;
-                        break;
-                    }
-                }
-                if ($pkField === null) {
-                    $pkField = $idFields[0] ?? null;
-                }
-                $pkFieldName = $pkField !== null ? $pkField->name : 'id';
-
-                $resolvedFields = [];
-                foreach ($batch as $batchIndex => $b) {
-                    $fields = $b->fields;
-
-                    // Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
-                    $fields = self::resolveTokens($fields, $testRunId, $batchIndex);
-
-                    // Replace temp IDs with real IDs
-                    foreach ($fields as $key => &$value) {
-                        if (is_string($value) && str_starts_with($value, '__temp_')) {
-                            $realId = $idMap[$value] ?? null;
-                            if ($realId !== null) {
-                                $value = $realId;
-                            }
-                        }
-                    }
-                    unset($value);
-
-                    // Inject scope field if applicable
-                    $scopeEdge = null;
-                    foreach ($schema->edges as $e) {
-                        if ($e->fromModel === $model &&
-                            strtolower(str_replace('_', '', $e->localField)) === strtolower(str_replace('_', '', $schema->scopeField)) &&
-                            $e->fromModel !== $e->toModel) {
-                            $scopeEdge = $e;
-                            break;
-                        }
-                    }
-                    if ($scopeEdge !== null && !isset($fields[$scopeEdge->localField])) {
-                        $scopeVal = self::detectScopeValue($refs, $schema->scopeField);
-                        if ($scopeVal !== null) {
-                            $fields[$scopeEdge->localField] = $scopeVal;
-                        }
-                    }
-
-                    // Auto-populate required DateTime fields without defaults
-                    if ($modelInfo !== null) {
-                        foreach ($modelInfo->fields as $field) {
-                            if ($field->isRequired && !$field->hasDefault && !$field->isId && !isset($fields[$field->name])) {
-                                if ($field->type === 'DateTime') {
-                                    $fields[$field->name] = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-                                }
-                            }
-                        }
-                    }
-
-                    $resolvedFields[] = $fields;
-                }
-
-                $factory = $config->factories[$model] ?? null;
-
-                if ($factory !== null) {
-                    // Factory path: call user-defined create() for each record
-                    $records = [];
-                    foreach ($resolvedFields as $fields) {
-                        $factoryCtx = new FactoryContext(
-                            refs: $refs,
-                            executor: $tx,
-                            scenarioName: $testRunId,
-                            testRunId: $testRunId,
-                        );
-                        $record = ($factory->create)($fields, $factoryCtx);
-                        if (!isset($record[$pkFieldName]) || $record[$pkFieldName] === null) {
-                            throw AutonomaError::factoryMissingPk($model, $pkFieldName);
-                        }
-                        $records[] = $record;
-                    }
-                } else {
-                    // SQL fallback path (existing behavior)
-                    $spec = [$model => ['count' => count($resolvedFields), 'fields' => $resolvedFields, 'batch' => $op->batch]];
-                    $created = Create::createEntities($tx, $dialect, $introspection->tableMap, $introspection->columnMaps, $spec, $introspection->enumTypeMaps, $schema->models);
-                    $records = $created[$model] ?? [];
-                }
-
-                if (!isset($refs[$model])) {
-                    $refs[$model] = [];
-                }
-                $refs[$model] = array_merge($refs[$model], $records);
-
-                foreach ($batch as $j => $b) {
-                    if ($j < count($records)) {
-                        $record = $records[$j];
-                        $recordId = $record[$pkFieldName] ?? null;
-                        if ($recordId !== null) {
-                            $idMap[$b->tempId] = $recordId;
-                        }
-                    }
-                }
-
-                $i++;
-            }
-
-            // Resolve deferred FK updates
-            foreach ($tree->deferredUpdates as $deferred) {
-                $realTargetId = $idMap[$deferred->targetTempId] ?? null;
-                $refTempId = $tree->aliases[$deferred->refAlias] ?? null;
-                $realRefId = $refTempId !== null ? ($idMap[$refTempId] ?? null) : null;
-
-                if ($realTargetId === null || $realRefId === null) {
-                    throw new \RuntimeException(
-                        "_ref \"{$deferred->refAlias}\" could not be resolved. " .
-                        "Ensure the referenced node has _alias defined in the scenario."
-                    );
-                }
-
-                // Find PK field name for the deferred model
-                $deferredModelInfo = null;
-                foreach ($schema->models as $m) {
-                    if ($m->name === $deferred->model) {
-                        $deferredModelInfo = $m;
-                        break;
-                    }
-                }
-                // When multiple isId fields exist (composite PK), prefer the one named "id"
-                $deferredIdFields = [];
-                if ($deferredModelInfo !== null) {
-                    foreach ($deferredModelInfo->fields as $f) {
-                        if ($f->isId) {
-                            $deferredIdFields[] = $f;
-                        }
-                    }
-                }
-                $deferredPkField = null;
-                foreach ($deferredIdFields as $f) {
-                    if (strtolower($f->name) === 'id') {
-                        $deferredPkField = $f;
-                        break;
-                    }
-                }
-                if ($deferredPkField === null) {
-                    $deferredPkField = $deferredIdFields[0] ?? null;
-                }
-                $deferredPkFieldName = $deferredPkField !== null ? $deferredPkField->name : 'id';
-
-                Create::updateEntity(
-                    $tx, $dialect, $introspection->tableMap, $introspection->columnMaps,
-                    $deferred->model, (string) $realTargetId, [$deferred->field => $realRefId],
-                    $introspection->enumTypeMaps, $deferredPkFieldName,
+        foreach ($tree->ops as $op) {
+            $model = $op->model;
+            $factory = $factories[$model] ?? null;
+            if ($factory === null) {
+                throw AutonomaError::invalidBody(
+                    "no factory registered for model \"{$model}\". " .
+                    "Register one with Factory::define(...) and add it to HandlerConfig factories."
                 );
             }
-        });
 
-        $scopeValue = self::detectScopeValue($refs, $schema->scopeField) ?? $testRunId;
+            $idx = $modelIndex[$model] ?? 0;
+            $modelIndex[$model] = $idx + 1;
 
-        $firstUser = self::findFirstUser($refs);
+            // Substitute built-in tokens then swap temp ids for real ids.
+            $resolved = self::resolveTokens($op->fields, $testRunId, $idx);
+            $resolved = self::swapTempIds($resolved, $idMap);
+
+            // Validate through the factory's inputFields and call create.
+            $validated = self::validateInput($resolved, $factory->inputFields);
+
+            $ctx = new FactoryContext(
+                refs: $refs,
+                scenarioName: $testRunId,
+                testRunId: $testRunId,
+            );
+            $record = ($factory->create)($validated, $ctx);
+
+            if (!is_array($record) || !isset($record['id']) || $record['id'] === null) {
+                throw AutonomaError::factoryMissingPk($model, 'id');
+            }
+
+            if (!isset($refs[$model])) {
+                $refs[$model] = [];
+            }
+            $refs[$model][] = $record;
+            $idMap[$op->tempId] = $record['id'];
+        }
+
+        // Auth callback gets the first User (case-insensitive on model name).
+        $authUser = self::findFirstUser($refs);
+        $scopeValue = self::detectScopeValue($refs, $config->scopeField) ?? $testRunId;
         $authContext = ['scope_value' => $scopeValue, 'refs' => $refs];
-        $auth = ($config->auth)($firstUser, $authContext);
+        $auth = ($config->auth)($authUser, $authContext);
 
         if ($config->afterUp !== null) {
             $hookCtx = ['scenarioName' => $scopeValue, 'refs' => $refs];
@@ -363,15 +180,80 @@ class Handler
         }
 
         $refsToken = Refs::signRefs(
-            ['refs' => $refs, 'testRunId' => $scopeValue, 'environment' => ''],
+            [
+                'refs' => $refs,
+                'testRunId' => $scopeValue,
+                'environment' => '',
+                'aliasDependencies' => $tree->aliasDependencies,
+                'aliasOwnerModel' => $tree->aliasOwnerModel,
+            ],
             $config->signingSecret,
         );
 
         return new HandlerResponse(
             status: 200,
-            body: array_merge(self::buildSdkMeta($config), ['auth' => $auth, 'refs' => $refs, 'refsToken' => $refsToken]),
+            body: array_merge(self::buildSdkMeta($config), [
+                'auth' => $auth,
+                'refs' => $refs,
+                'refsToken' => $refsToken,
+            ]),
         );
     }
+
+    /**
+     * Replace any __temp_* placeholder string with its real id.
+     */
+    private static function swapTempIds(mixed $value, array $idMap): mixed
+    {
+        if (is_string($value) && str_starts_with($value, '__temp_')) {
+            return $idMap[$value] ?? $value;
+        }
+        if (is_array($value)) {
+            $result = [];
+            foreach ($value as $k => $v) {
+                $result[$k] = self::swapTempIds($v, $idMap);
+            }
+            return $result;
+        }
+        return $value;
+    }
+
+    /**
+     * Validate input against factory's inputFields.
+     * Strips unknown keys and checks required fields are present.
+     *
+     * @param array<string, mixed> $data
+     * @param \Autonoma\Sdk\Types\FieldInfo[] $inputFields
+     * @return array<string, mixed>
+     */
+    private static function validateInput(array $data, array $inputFields): array
+    {
+        $knownFields = [];
+        foreach ($inputFields as $field) {
+            $knownFields[$field->name] = $field;
+        }
+
+        // Strip unknown keys.
+        $validated = [];
+        foreach ($data as $key => $value) {
+            if (isset($knownFields[$key])) {
+                $validated[$key] = $value;
+            }
+        }
+
+        // Check required fields.
+        foreach ($inputFields as $field) {
+            if ($field->isRequired && !$field->hasDefault && !array_key_exists($field->name, $validated)) {
+                throw AutonomaError::invalidBody("missing required field \"{$field->name}\"");
+            }
+        }
+
+        return $validated;
+    }
+
+    // -----------------------------------------------------------------------
+    // down
+    // -----------------------------------------------------------------------
 
     private static function handleDown(HandlerConfig $config, array $body): HandlerResponse
     {
@@ -386,60 +268,36 @@ class Handler
             throw AutonomaError::invalidRefsToken($e->getMessage());
         }
 
-        $introspection = self::getIntrospection($config);
-        $dialect = DialectFactory::get($config->dialect);
+        $refs = $payload['refs'] ?? [];
+        $testRunId = $payload['testRunId'] ?? '';
+        $aliasDeps = $payload['aliasDependencies'] ?? [];
+        $aliasOwnerModel = $payload['aliasOwnerModel'] ?? [];
 
         if ($config->beforeDown !== null) {
-            $hookCtx = ['scenarioName' => $payload['testRunId'], 'refs' => $payload['refs'] ?? []];
+            $hookCtx = ['scenarioName' => $testRunId, 'refs' => $refs];
             ($config->beforeDown)($hookCtx);
         }
 
-        // Determine which models have factory teardown
-        $factoryTeardownModels = [];
-        if ($config->factories !== null) {
-            foreach ($config->factories as $model => $factory) {
-                if ($factory->teardown !== null) {
-                    $factoryTeardownModels[] = $model;
-                }
+        $factories = $config->factories;
+        $teardownOrder = PayloadTopo::computeTeardownOrder($refs, $aliasDeps, $aliasOwnerModel);
+
+        foreach ($teardownOrder as $model) {
+            $factory = $factories[$model] ?? null;
+            if ($factory === null || $factory->teardown === null) {
+                // No teardown means the host has decided not to delete this
+                // model; skip. The SDK has no SQL fallback.
+                continue;
+            }
+            $records = $refs[$model] ?? [];
+            $ctx = new FactoryContext(
+                refs: $refs,
+                scenarioName: $testRunId,
+                testRunId: $testRunId,
+            );
+            foreach (array_reverse($records) as $record) {
+                ($factory->teardown)($record, $ctx);
             }
         }
-
-        // Run factory teardowns in reverse topo order
-        if (!empty($factoryTeardownModels)) {
-            $teardownInfo = Teardown::computeTeardownOrder($introspection->schema);
-            $fullOrder = $teardownInfo['scopeRootModel'] !== null
-                ? array_merge($teardownInfo['order'], [$teardownInfo['scopeRootModel']])
-                : $teardownInfo['order'];
-            $payloadRefs = $payload['refs'] ?? [];
-
-            foreach (array_reverse($fullOrder) as $model) {
-                if (!in_array($model, $factoryTeardownModels, true)) {
-                    continue;
-                }
-                $records = $payloadRefs[$model] ?? [];
-                $factoryCtx = new FactoryContext(
-                    refs: $payloadRefs,
-                    executor: $config->executor,
-                    scenarioName: $payload['testRunId'],
-                    testRunId: $payload['testRunId'],
-                );
-                foreach (array_reverse($records) as $record) {
-                    ($config->factories[$model]->teardown)($record, $factoryCtx);
-                }
-            }
-        }
-
-        // SQL teardown for remaining models (skipping factory-teardown ones)
-        Teardown::teardown(
-            $config->executor,
-            $dialect,
-            $introspection->tableMap,
-            $introspection->columnMaps,
-            $introspection->schema,
-            $payload['testRunId'],
-            $payload['refs'] ?? null,
-            $factoryTeardownModels,
-        );
 
         return new HandlerResponse(
             status: 200,
@@ -447,10 +305,14 @@ class Handler
         );
     }
 
+    // -----------------------------------------------------------------------
+    // helpers
+    // -----------------------------------------------------------------------
+
     /**
      * Substitute built-in tokens in field values: {{testRunId}}, {{index}},
      * {{cycle(a,b,c)}}. Raises AutonomaError(UNRESOLVED_TOKEN) for any other
-     * {{token}}. Defense-in-depth against recipe tokens bypassing preflight.
+     * {{token}}.
      */
     public static function resolveTokens(mixed $value, string $testRunId, int $index): mixed
     {

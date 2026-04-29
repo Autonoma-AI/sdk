@@ -3,50 +3,27 @@ defmodule Autonoma.Plug.HandlerTest do
   import Plug.Test
   import Plug.Conn
 
-  alias Autonoma.{HMAC, Refs}
+  alias Autonoma.{HMAC, Refs, Factory}
 
   @shared_secret "test-shared-secret-1234"
   @signing_secret "test-signing-secret-5678"
 
-  defp fake_executor do
-    fn
-      :query, sql, _params ->
-        sql_lower = String.downcase(sql) |> String.trim()
-
-        cond do
-          String.starts_with?(sql_lower, "select table_name") ->
-            [%{"table_name" => "user"}]
-
-          String.contains?(sql_lower, "column_name") ->
-            [
-              %{"table_name" => "user", "column_name" => "id", "data_type" => "uuid",
-                "udt_name" => "uuid", "is_nullable" => "NO", "column_default" => "gen_random_uuid()"},
-              %{"table_name" => "user", "column_name" => "email", "data_type" => "character varying",
-                "udt_name" => "varchar", "is_nullable" => "NO", "column_default" => nil}
-            ]
-
-          String.starts_with?(sql_lower, "insert") ->
-            [%{"id" => "user-1", "email" => "test@test.com"}]
-
-          true ->
-            []
-        end
-
-      :transaction, fun, _opts ->
-        tx = fn :query, sql, params ->
-          fake_executor().(:query, sql, params)
-        end
-
-        fun.(tx)
-    end
+  defp user_factory do
+    Factory.define_factory(%{
+      create: fn data, _ctx ->
+        %{"id" => "user-1", "email" => data["email"]}
+      end,
+      input_fields: [%{name: "email", type: :string, required: true}],
+      teardown: fn _record, _ctx -> :ok end
+    })
   end
 
   defp make_config do
     %{
-      executor: fake_executor(),
       scope_field: "organizationId",
       shared_secret: @shared_secret,
       signing_secret: @signing_secret,
+      factories: %{"User" => user_factory()},
       auth: fn user, _ctx ->
         user_id = if user, do: user["id"], else: "anon"
         %{"headers" => %{"Authorization" => "Bearer test-token-#{user_id}"}}
@@ -74,7 +51,7 @@ defmodule Autonoma.Plug.HandlerTest do
   end
 
   test "up returns refs and auth" do
-    conn = post_action("up", %{"create" => %{"User" => [%{"id" => "u1"}]}})
+    conn = post_action("up", %{"create" => %{"User" => [%{"email" => "u1@test.com"}]}})
     assert conn.status == 200
     body = Jason.decode!(conn.resp_body)
     assert is_map(body["refs"])
@@ -83,10 +60,15 @@ defmodule Autonoma.Plug.HandlerTest do
   end
 
   test "down tears down" do
-    token = Refs.sign(
-      %{"refs" => %{"User" => [%{"id" => "u1"}]}, "testRunId" => "test-run-1", "environment" => "test"},
-      @signing_secret
-    )
+    token =
+      Refs.sign(
+        %{
+          "refs" => %{"User" => [%{"id" => "u1"}]},
+          "testRunId" => "test-run-1",
+          "environment" => ""
+        },
+        @signing_secret
+      )
 
     conn = post_action("down", %{"refsToken" => token})
     assert conn.status == 200

@@ -39,7 +39,7 @@ func GinHandler(config *HandlerConfig) gin.HandlerFunc {
 			Headers: headers,
 		}
 
-		result := HandleRequest(c.Request.Context(), &enrichedConfig, req)
+		result := HandleRequest(&enrichedConfig, req)
 		c.JSON(result.Status, result.Body)
 	}
 }

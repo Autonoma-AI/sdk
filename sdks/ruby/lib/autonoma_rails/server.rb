@@ -19,10 +19,12 @@ module AutonomaRails
   #     private
   #
   #     def autonoma_config
-  #       @autonoma_config ||= AutonomaActiveRecord.create_config(
+  #       @autonoma_config ||= Autonoma::HandlerConfig.new(
   #         scope_field: "organizationId",
   #         shared_secret: ENV["AUTONOMA_SHARED_SECRET"],
-  #         signing_secret: ENV["AUTONOMA_SIGNING_SECRET"]
+  #         signing_secret: ENV["AUTONOMA_SIGNING_SECRET"],
+  #         auth: ->(user, ctx) { { "token" => "..." } },
+  #         factories: { "User" => Autonoma::Factory.define_factory(...) }
   #       )
   #     end
   #   end

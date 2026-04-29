@@ -19,12 +19,21 @@ func SignRefs(payload RefsPayload, secret string) (string, error) {
 		return "", err
 	}
 
-	// Bug 7: pre-process refs to convert time.Time, uuid.UUID, etc. to JSON-safe strings
 	sanitizedRefs := sanitizeRefs(payload.Refs)
 	sanitizedPayload := map[string]any{
 		"refs":        sanitizedRefs,
 		"testRunId":   payload.TestRunID,
 		"environment": payload.Environment,
+	}
+
+	if payload.AliasDependencies != nil {
+		sanitizedPayload["aliasDependencies"] = payload.AliasDependencies
+	}
+	if payload.AliasOwnerModel != nil {
+		sanitizedPayload["aliasOwnerModel"] = payload.AliasOwnerModel
+	}
+	if payload.ModelOrder != nil {
+		sanitizedPayload["modelOrder"] = payload.ModelOrder
 	}
 
 	payloadJSON, err := json.Marshal(sanitizedPayload)
@@ -74,8 +83,7 @@ func hmacBase64URL(data string, secret string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// sanitizeRefs converts non-JSON-safe types (time.Time, uuid.UUID, etc.) to strings
-// so that JSON marshaling produces deterministic, portable output.
+// sanitizeRefs converts non-JSON-safe types (time.Time, uuid.UUID, etc.) to strings.
 func sanitizeRefs(refs map[string][]map[string]any) map[string][]map[string]any {
 	result := make(map[string][]map[string]any, len(refs))
 	for model, records := range refs {
@@ -112,7 +120,6 @@ func sanitizeValue(value any) any {
 		}
 		return sanitized
 	default:
-		// For types that implement fmt.Stringer (like uuid.UUID), convert to string
 		if stringer, ok := value.(fmt.Stringer); ok {
 			return stringer.String()
 		}

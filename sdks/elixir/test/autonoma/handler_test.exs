@@ -1,78 +1,49 @@
 defmodule Autonoma.HandlerTest do
   use ExUnit.Case, async: true
 
-  alias Autonoma.{Handler, HMAC, Refs}
+  alias Autonoma.{Handler, HMAC, Refs, Factory}
 
   @shared_secret "test-shared-secret-1234"
   @signing_secret "test-signing-secret-5678"
 
-  # Fake SQL executor that returns canned introspection results
-  defp fake_executor do
-    fn
-      :query, sql, _params ->
-        sql_lower = String.downcase(sql) |> String.trim()
-
-        cond do
-          String.starts_with?(sql_lower, "select table_name") ->
-            [%{"table_name" => "user"}]
-
-          String.contains?(sql_lower, "column_name") ->
-            [
-              %{
-                "table_name" => "user",
-                "column_name" => "id",
-                "data_type" => "uuid",
-                "udt_name" => "uuid",
-                "is_nullable" => "NO",
-                "column_default" => "gen_random_uuid()"
-              },
-              %{
-                "table_name" => "user",
-                "column_name" => "email",
-                "data_type" => "character varying",
-                "udt_name" => "varchar",
-                "is_nullable" => "NO",
-                "column_default" => nil
-              }
-            ]
-
-          String.contains?(sql_lower, "pg_type") or String.contains?(sql_lower, "enum") ->
-            []
-
-          String.contains?(sql_lower, "tc.constraint_type = 'foreign key'") or
-              String.contains?(sql_lower, "foreign key") ->
-            []
-
-          String.starts_with?(sql_lower, "insert") ->
-            [%{"id" => "user-1", "email" => "test@test.com"}]
-
-          String.starts_with?(sql_lower, "delete") ->
-            []
-
-          true ->
-            []
-        end
-
-      :transaction, fun, _opts ->
-        tx = fn :query, sql, params ->
-          fake_executor().(:query, sql, params)
-        end
-
-        fun.(tx)
-    end
+  defp user_factory do
+    Factory.define_factory(%{
+      create: fn data, _ctx ->
+        %{"id" => "user-#{data["email"]}", "email" => data["email"]}
+      end,
+      input_fields: [
+        %{name: "email", type: :string, required: true}
+      ],
+      teardown: fn _record, _ctx -> :ok end
+    })
   end
 
-  defp make_config do
-    %{
-      executor: fake_executor(),
-      scope_field: "organizationId",
-      shared_secret: @shared_secret,
-      signing_secret: @signing_secret,
-      auth: fn user, _ctx ->
-        user_id = if user, do: user["id"], else: "anon"
-        %{"headers" => %{"Authorization" => "Bearer test-token-#{user_id}"}}
-      end
-    }
+  defp org_factory do
+    Factory.define_factory(%{
+      create: fn data, _ctx ->
+        %{"id" => "org-#{data["name"]}", "name" => data["name"]}
+      end,
+      input_fields: [
+        %{name: "name", type: :string, required: true}
+      ],
+      teardown: fn _record, _ctx -> :ok end
+    })
+  end
+
+  defp make_config(overrides \\ %{}) do
+    Map.merge(
+      %{
+        scope_field: "organizationId",
+        shared_secret: @shared_secret,
+        signing_secret: @signing_secret,
+        factories: %{"User" => user_factory()},
+        auth: fn user, _ctx ->
+          user_id = if user, do: user["id"], else: "anon"
+          %{"headers" => %{"Authorization" => "Bearer test-token-#{user_id}"}}
+        end
+      },
+      overrides
+    )
   end
 
   defp signed_req(body_map) do
@@ -80,22 +51,131 @@ defmodule Autonoma.HandlerTest do
     %{body: body, headers: %{"x-signature" => HMAC.sign_body(body, @shared_secret)}}
   end
 
-  # --- Executor-based tests ---
+  # --- Discover tests ---
 
-  test "discover via executor" do
+  test "discover returns schema from factories" do
     result = Handler.handle(make_config(), signed_req(%{"action" => "discover"}))
     assert result.status == 200
     assert is_list(result.body["schema"]["models"])
     assert result.body["sdk"]["language"] == "elixir"
+
+    user_model = Enum.find(result.body["schema"]["models"], fn m -> m["name"] == "User" end)
+    assert user_model != nil
+    assert Enum.any?(user_model["fields"], fn f -> f["name"] == "email" end)
   end
 
-  test "down via executor" do
-    token = Refs.sign(
-      %{"refs" => %{"User" => [%{"id" => "u1"}]}, "testRunId" => "test-run-1", "environment" => "test"},
-      @signing_secret
-    )
+  # --- Up tests ---
 
-    result = Handler.handle(make_config(), signed_req(%{"action" => "down", "refsToken" => token}))
+  test "up creates entities via factory" do
+    result =
+      Handler.handle(
+        make_config(),
+        signed_req(%{
+          "action" => "up",
+          "create" => %{"User" => [%{"email" => "test@test.com"}]},
+          "testRunId" => "run-1"
+        })
+      )
+
+    assert result.status == 200
+    assert result.body["refs"]["User"] |> List.first() |> Map.get("id") == "user-test@test.com"
+    assert is_binary(result.body["refsToken"])
+    assert is_map(result.body["auth"])
+  end
+
+  test "up resolves _alias/_ref dependencies" do
+    test_pid = self()
+
+    user_factory_with_tracking =
+      Factory.define_factory(%{
+        create: fn data, _ctx ->
+          send(test_pid, {:user_data, data})
+          %{"id" => "user-1", "email" => data["email"], "organizationId" => data["organizationId"]}
+        end,
+        input_fields: [
+          %{name: "email", type: :string, required: true},
+          %{name: "organizationId", type: :string, required: true}
+        ]
+      })
+
+    config =
+      make_config(%{
+        factories: %{
+          "Organization" => org_factory(),
+          "User" => user_factory_with_tracking
+        }
+      })
+
+    result =
+      Handler.handle(
+        config,
+        signed_req(%{
+          "action" => "up",
+          "create" => %{
+            "Organization" => [%{"_alias" => "org1", "name" => "TestOrg"}],
+            "User" => [%{"email" => "a@b.com", "organizationId" => %{"_ref" => "org1"}}]
+          },
+          "testRunId" => "run-ref"
+        })
+      )
+
+    assert result.status == 200
+    assert_receive {:user_data, data}
+    # The User factory should receive the real org ID, not __temp_Organization_0
+    assert data["organizationId"] == "org-TestOrg"
+  end
+
+  # --- Down tests ---
+
+  test "down tears down via factory" do
+    config = make_config()
+
+    # First create
+    up_result =
+      Handler.handle(
+        config,
+        signed_req(%{
+          "action" => "up",
+          "create" => %{"User" => [%{"email" => "td@test.com"}]},
+          "testRunId" => "run-down"
+        })
+      )
+
+    assert up_result.status == 200
+    refs_token = up_result.body["refsToken"]
+
+    # Then teardown
+    down_result =
+      Handler.handle(config, signed_req(%{"action" => "down", "refsToken" => refs_token}))
+
+    assert down_result.status == 200
+    assert down_result.body["ok"] == true
+  end
+
+  test "down skips models without teardown" do
+    factory_no_teardown =
+      Factory.define_factory(%{
+        create: fn data, _ctx ->
+          %{"id" => "u1", "email" => data["email"]}
+        end,
+        input_fields: [%{name: "email", type: :string, required: true}]
+      })
+
+    config = make_config(%{factories: %{"User" => factory_no_teardown}})
+
+    token =
+      Refs.sign(
+        %{
+          "refs" => %{"User" => [%{"id" => "u1"}]},
+          "testRunId" => "test-run-1",
+          "environment" => ""
+        },
+        @signing_secret
+      )
+
+    result =
+      Handler.handle(config, signed_req(%{"action" => "down", "refsToken" => token}))
+
     assert result.status == 200
     assert result.body["ok"] == true
   end
@@ -137,6 +217,31 @@ defmodule Autonoma.HandlerTest do
     assert result.body["code"] == "INVALID_BODY"
   end
 
+  test "errors when factory does not return id (FACTORY_MISSING_PK)" do
+    bad_factory =
+      Factory.define_factory(%{
+        create: fn data, _ctx ->
+          %{"name" => data["name"]}
+        end,
+        input_fields: [%{name: "name", type: :string, required: true}]
+      })
+
+    config = make_config(%{factories: %{"Organization" => bad_factory}})
+
+    result =
+      Handler.handle(
+        config,
+        signed_req(%{
+          "action" => "up",
+          "create" => %{"Organization" => [%{"name" => "NoPK"}]},
+          "testRunId" => "run-nopk"
+        })
+      )
+
+    assert result.status == 500
+    assert result.body["code"] == "FACTORY_MISSING_PK"
+  end
+
   # --- Handler hook tests ---
 
   test "after_up hook modifies auth result" do
@@ -145,37 +250,127 @@ defmodule Autonoma.HandlerTest do
         Map.put(auth, "headers", Map.merge(auth["headers"] || %{}, %{"X-Custom" => "enriched"}))
       end)
 
-    req =
-      signed_req(%{
-        "action" => "up",
-        "create" => %{"User" => [%{"email" => "test@test.com"}]},
-        "testRunId" => "run-1"
-      })
+    result =
+      Handler.handle(
+        config,
+        signed_req(%{
+          "action" => "up",
+          "create" => %{"User" => [%{"email" => "test@test.com"}]},
+          "testRunId" => "run-1"
+        })
+      )
 
-    result = Handler.handle(config, req)
     assert result.status == 200
     assert result.body["auth"]["headers"]["X-Custom"] == "enriched"
   end
 
   test "before_down hook is called" do
-    self = self()
+    self_pid = self()
 
     config =
       Map.put(make_config(), :before_down, fn ctx ->
-        send(self, {:before_down_called, ctx})
+        send(self_pid, {:before_down_called, ctx})
       end)
 
     token =
       Refs.sign(
-        %{"refs" => %{"User" => [%{"id" => "u1"}]}, "testRunId" => "run-1", "environment" => ""},
+        %{
+          "refs" => %{"User" => [%{"id" => "u1"}]},
+          "testRunId" => "run-1",
+          "environment" => ""
+        },
         @signing_secret
       )
 
-    req = signed_req(%{"action" => "down", "refsToken" => token})
-    result = Handler.handle(config, req)
+    result =
+      Handler.handle(config, signed_req(%{"action" => "down", "refsToken" => token}))
+
     assert result.status == 200
     assert_receive {:before_down_called, ctx}
     assert is_map(ctx)
     assert is_map(ctx.refs)
+  end
+
+  test "factory teardown is called per record in reverse order" do
+    test_pid = self()
+
+    factory =
+      Factory.define_factory(%{
+        create: fn data, _ctx ->
+          %{"id" => "org-#{data["name"]}", "name" => data["name"]}
+        end,
+        input_fields: [%{name: "name", type: :string, required: true}],
+        teardown: fn record, _ctx ->
+          send(test_pid, {:teardown_called, record["id"]})
+        end
+      })
+
+    config = make_config(%{factories: %{"Organization" => factory}})
+
+    up_result =
+      Handler.handle(
+        config,
+        signed_req(%{
+          "action" => "up",
+          "create" => %{"Organization" => [%{"name" => "A"}, %{"name" => "B"}]},
+          "testRunId" => "run-teardown"
+        })
+      )
+
+    assert up_result.status == 200
+    refs_token = up_result.body["refsToken"]
+
+    down_result =
+      Handler.handle(config, signed_req(%{"action" => "down", "refsToken" => refs_token}))
+
+    assert down_result.status == 200
+
+    assert_receive {:teardown_called, id1}
+    assert_receive {:teardown_called, id2}
+    assert id1 == "org-B"
+    assert id2 == "org-A"
+  end
+
+  test "factory context contains refs of previously created models" do
+    test_pid = self()
+
+    user_factory_with_ctx =
+      Factory.define_factory(%{
+        create: fn data, ctx ->
+          send(test_pid, {:user_ctx, ctx})
+          %{"id" => "user-ctx", "email" => data["email"], "organizationId" => data["organizationId"]}
+        end,
+        input_fields: [
+          %{name: "email", type: :string, required: true},
+          %{name: "organizationId", type: :string, required: true}
+        ]
+      })
+
+    config =
+      make_config(%{
+        factories: %{
+          "Organization" => org_factory(),
+          "User" => user_factory_with_ctx
+        }
+      })
+
+    Handler.handle(
+      config,
+      signed_req(%{
+        "action" => "up",
+        "create" => %{
+          "Organization" => [%{"_alias" => "org1", "name" => "Org"}],
+          "User" => [%{"email" => "x@y.com", "organizationId" => %{"_ref" => "org1"}}]
+        },
+        "testRunId" => "run-ctx"
+      })
+    )
+
+    assert_receive {:user_ctx, ctx}
+    assert is_map(ctx.refs)
+    assert Map.has_key?(ctx.refs, "Organization")
+    assert length(ctx.refs["Organization"]) == 1
+    assert List.first(ctx.refs["Organization"])["id"] == "org-Org"
+    assert ctx.test_run_id == "run-ctx"
   end
 end

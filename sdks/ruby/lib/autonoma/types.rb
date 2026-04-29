@@ -10,11 +10,7 @@ module Autonoma
 
   SchemaInfo = Struct.new(:models, :edges, :relations, :scope_field, keyword_init: true)
 
-  IntrospectionResult = Struct.new(:schema, :table_map, :column_maps, :enum_type_maps, keyword_init: true)
-
-  CreateOp = Struct.new(:model, :fields, :temp_id, :batch, keyword_init: true)
-
-  DeferredUpdate = Struct.new(:target_temp_id, :model, :field, :ref_alias, keyword_init: true)
+  CreateOp = Struct.new(:model, :fields, :temp_id, keyword_init: true)
 
   HandlerRequest = Struct.new(:body, :headers, keyword_init: true) do
     def initialize(body:, headers: {})
@@ -27,18 +23,14 @@ module Autonoma
   HookContext = Struct.new(:scenario_name, :refs, keyword_init: true)
   AuthContext = Struct.new(:scope_value, :refs, keyword_init: true)
 
-  FactoryContext = Struct.new(:refs, :executor, :scenario_name, :test_run_id, keyword_init: true)
-  FactoryDefinition = Struct.new(:create, :teardown, keyword_init: true)
+  FactoryContext = Struct.new(:refs, :scenario_name, :test_run_id, keyword_init: true)
+
+  FactoryDefinition = Struct.new(:create, :teardown, :input_fields, keyword_init: true)
 
   HandlerConfig = Struct.new(
-    :executor,
     :scope_field,
     :shared_secret,
     :signing_secret,
-    :dialect,
-    :db_schema,
-    :table_name_map,
-    :exclude_tables,
     :allow_production,
     :auth,
     :sdk,
@@ -47,25 +39,10 @@ module Autonoma
     :factories,
     keyword_init: true
   ) do
-    def initialize(executor:, scope_field:, shared_secret:, signing_secret:, auth:,
-                   dialect: "postgres", db_schema: nil, table_name_map: nil,
-                   exclude_tables: nil, allow_production: false, sdk: nil,
+    def initialize(scope_field:, shared_secret:, signing_secret:, auth:,
+                   allow_production: false, sdk: nil,
                    before_down: nil, after_up: nil, factories: nil)
       super
-    end
-  end
-
-  # SQL executor interface — duck-typed in Ruby.
-  # Classes implementing this must respond to:
-  #   #query(sql, params = []) -> Array<Hash>
-  #   #transaction { |tx| ... } -> result
-  module SQLExecutor
-    def query(sql, params = [])
-      raise NotImplementedError
-    end
-
-    def transaction(&block)
-      raise NotImplementedError
     end
   end
 end

@@ -1,46 +1,19 @@
 defmodule Autonoma.Handler do
   @moduledoc """
   Request routing for discover/up/down protocol actions.
-  Requires an executor-based config.
+
+  Factory-driven design: every model in `body.create` must have a
+  registered factory. The SDK uses the factory's `input_fields` both
+  to validate inputs and to build the `discover` schema. Ordering for
+  `up` and `down` comes from the create payload's `_alias` / `_ref`
+  graph; there is no SQL introspection.
   """
 
-  alias Autonoma.{Error, HMAC, Refs, Dialect, Introspect, Tree, Create, TeardownSQL}
+  alias Autonoma.{Error, HMAC, Refs, PayloadTopo, Schema, Factory}
 
   @protocol_version_file Path.expand("../../../../protocol/version.txt", __DIR__)
   @external_resource @protocol_version_file
   @protocol_version File.read!(@protocol_version_file) |> String.trim()
-
-  # ---------------------------------------------------------------------------
-  # Introspection cache (per config, stored in process dictionary)
-  # ---------------------------------------------------------------------------
-
-  defp get_introspection(config) do
-    cache_key = {:autonoma_introspection_cache, :erlang.phash2(config)}
-
-    case Process.get(cache_key) do
-      nil ->
-        dialect = get_dialect(config)
-        opts =
-          [
-            scope_field: config.scope_field,
-            schema: Map.get(config, :db_schema),
-            table_name_map: Map.get(config, :table_name_map),
-            exclude_tables: Map.get(config, :exclude_tables, ["_prisma_migrations"])
-          ]
-          |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-
-        result = Introspect.introspect(config.executor, dialect, opts)
-        Process.put(cache_key, result)
-        result
-      cached ->
-        cached
-    end
-  end
-
-  defp get_dialect(config) do
-    dialect_name = Map.get(config, :dialect) || "postgres"
-    Dialect.get(dialect_name)
-  end
 
   # ---------------------------------------------------------------------------
   # SDK metadata
@@ -104,12 +77,12 @@ defmodule Autonoma.Handler do
         end
 
       action = Map.get(body, "action")
-      unless action, do: raise(Error.invalid_body("missing action"))
+      unless action, do: raise(Error.invalid_body("missing action. expected one of 'discover', 'up' or 'down'"))
 
       case action do
-        "discover" -> handle_discover_sql(config)
-        "up" -> handle_up_sql(config, body)
-        "down" -> handle_down_sql(config, body)
+        "discover" -> handle_discover(config)
+        "up" -> handle_up(config, body)
+        "down" -> handle_down(config, body)
         other -> raise Error.unknown_action(other)
       end
     rescue
@@ -121,63 +94,87 @@ defmodule Autonoma.Handler do
     end
   end
 
-  # ===========================================================================
-  # SQL-first path (executor-based)
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
+  # discover
+  # ---------------------------------------------------------------------------
 
-  defp handle_discover_sql(config) do
-    %{schema: schema} = get_introspection(config)
-    %{status: 200, body: Map.merge(build_sdk_meta(config), %{"schema" => schema})}
+  defp handle_discover(config) do
+    factories = Map.get(config, :factories) || %{}
+    schema = Schema.build_schema_from_factories(factories, config.scope_field)
+    %{status: 200, body: Map.merge(build_sdk_meta(config), %{"schema" => Schema.schema_to_wire(schema)})}
   end
 
-  defp handle_up_sql(config, body) do
+  # ---------------------------------------------------------------------------
+  # up
+  # ---------------------------------------------------------------------------
+
+  defp handle_up(config, body) do
     create = Map.get(body, "create")
     unless create, do: raise(Error.invalid_body("missing \"create\" in request body"))
 
     test_run_id = Map.get(body, "testRunId", generate_uuid())
-    %{schema: schema, table_map: table_map, column_maps: column_maps, enum_type_maps: enum_type_maps} =
-      get_introspection(config)
 
-    dialect = get_dialect(config)
-    tree = Tree.resolve_tree(create, schema)
+    factories = Map.get(config, :factories) || %{}
 
-    refs = %{}
-    id_map = %{}
+    if factories == %{} do
+      raise Error.invalid_body(
+              "no factories registered -- every model in `create` must have a factory."
+            )
+    end
+
+    tree = PayloadTopo.resolve_payload_tree(create)
 
     {refs, _id_map} =
-      config.executor.(:transaction, fn tx ->
-        {refs, id_map, _i} = process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, 0, config, test_run_id)
+      Enum.reduce(tree.ops, {%{}, %{}, %{}}, fn op, {refs, id_map, model_index} ->
+        model = op.model
+        factory = Map.get(factories, model)
 
-        # Resolve deferred FK updates
-        Enum.each(tree.deferred_updates, fn du ->
-          real_target_id = Map.get(id_map, du.target_temp_id)
-          ref_temp_id = Map.get(tree.aliases, du.ref_alias)
-          real_ref_id = if ref_temp_id, do: Map.get(id_map, ref_temp_id)
+        unless factory do
+          raise Error.invalid_body(
+                  "no factory registered for model \"#{model}\". " <>
+                    "Register one with `define_factory(...)` and add it to config.factories."
+                )
+        end
 
-          unless real_target_id && real_ref_id do
-            raise "\"_ref\" \"#{du.ref_alias}\" could not be resolved. Ensure the referenced node has _alias defined in the scenario."
+        idx = Map.get(model_index, model, 0)
+        model_index = Map.put(model_index, model, idx + 1)
+
+        # Substitute built-in tokens then swap temp ids for real ids.
+        resolved = resolve_tokens(op.fields, test_run_id, idx)
+        resolved = swap_temp_ids(resolved, id_map)
+
+        # Validate through the factory's input_fields
+        input_fields = Map.get(factory, :input_fields, [])
+
+        resolved =
+          case Factory.validate_input(resolved, input_fields) do
+            {:ok, validated} -> validated
+            {:error, reason} -> raise Error.invalid_body("#{model}: #{reason}")
           end
 
-          # Bug 4: Use dynamic PK name for deferred updates
-          deferred_model_info = Enum.find(schema["models"], fn m -> m["name"] == du.model end)
-          deferred_pk_field_name =
-            if deferred_model_info do
-              id_fields = Enum.filter(deferred_model_info["fields"] || [], fn f -> f["isId"] end)
-              pk = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
-              if pk, do: pk["name"], else: "id"
-            else
-              "id"
-            end
+        # Call the factory create
+        ctx = %{
+          refs: refs,
+          scenario_name: test_run_id,
+          test_run_id: test_run_id
+        }
 
-          Create.update_entity(tx, dialect, table_map, column_maps, du.model, to_string(real_target_id), %{du.field => real_ref_id}, enum_type_maps, deferred_pk_field_name)
-        end)
+        record = factory.create.(resolved, ctx)
 
-        {refs, id_map}
-      end, nil)
+        unless is_map(record) and Map.get(record, "id") != nil do
+          raise Error.factory_missing_pk(model, "id")
+        end
 
-    scope_value = detect_scope_value(refs, schema["scopeField"]) || test_run_id
+        refs = Map.update(refs, model, [record], fn existing -> existing ++ [record] end)
+        id_map = Map.put(id_map, op.temp_id, record["id"])
 
+        {refs, id_map, model_index}
+      end)
+      |> then(fn {refs, id_map, _model_index} -> {refs, id_map} end)
+
+    # Auth callback gets the first User (case-insensitive on model name).
     first_user = find_first_user(refs)
+    scope_value = detect_scope_value(refs, config.scope_field) || test_run_id
     auth_context = %{"scope_value" => scope_value, "refs" => refs}
     auth = config.auth.(first_user, auth_context)
 
@@ -187,160 +184,34 @@ defmodule Autonoma.Handler do
         hook -> hook.(%{scenario_name: scope_value, refs: refs}, auth)
       end
 
-    refs_token = Refs.sign(
-      %{"refs" => refs, "testRunId" => scope_value, "environment" => ""},
-      config.signing_secret
-    )
+    refs_token =
+      Refs.sign(
+        %{
+          "refs" => refs,
+          "testRunId" => scope_value,
+          "environment" => "",
+          "aliasDependencies" => tree.alias_dependencies,
+          "aliasOwnerModel" => tree.alias_owner_model
+        },
+        config.signing_secret
+      )
 
-    %{status: 200, body: Map.merge(build_sdk_meta(config), %{"auth" => auth, "refs" => refs, "refsToken" => refs_token})}
+    %{
+      status: 200,
+      body:
+        Map.merge(build_sdk_meta(config), %{
+          "auth" => auth,
+          "refs" => refs,
+          "refsToken" => refs_token
+        })
+    }
   end
 
-  defp process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id) do
-    if i >= length(tree.ops) do
-      {refs, id_map, i}
-    else
-      do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id)
-    end
-  end
+  # ---------------------------------------------------------------------------
+  # down
+  # ---------------------------------------------------------------------------
 
-  defp do_process_op(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i, config, test_run_id) do
-    op = Enum.at(tree.ops, i)
-    model = op.model
-
-    # Collect consecutive ops for the same model with same batch flag
-    {batch, i} = collect_batch(tree.ops, i, model, op.batch, [op])
-
-    # Bug 4: Find model info and actual PK field name from schema
-    # When multiple isId fields exist (composite PK), prefer the one named "id"
-    model_info = Enum.find(schema["models"], fn m -> m["name"] == model end)
-    id_fields = if model_info, do: Enum.filter(model_info["fields"] || [], fn f -> f["isId"] end), else: []
-    pk_field = Enum.find(id_fields, List.first(id_fields), fn f -> String.downcase(f["name"]) == "id" end)
-    pk_field_name = if pk_field, do: pk_field["name"], else: "id"
-
-    resolved_fields =
-      batch
-      |> Enum.with_index()
-      |> Enum.map(fn {b, batch_index} ->
-        # Substitute built-in tokens ({{testRunId}}, {{index}}, {{cycle(...)}})
-        fields = resolve_tokens(b.fields, test_run_id, batch_index)
-
-        # Replace temp IDs with real IDs
-        fields =
-          Enum.reduce(fields, %{}, fn {key, value}, acc ->
-            resolved =
-              if is_binary(value) && String.starts_with?(value, "__temp_") do
-                Map.get(id_map, value, value)
-              else
-                value
-              end
-            Map.put(acc, key, resolved)
-          end)
-
-        # Inject scope field
-        fields =
-          case Enum.find(schema["edges"], fn e ->
-            e["from"] == model &&
-              normalize_field(e["localField"]) == normalize_field(schema["scopeField"]) &&
-              e["from"] != e["to"]
-          end) do
-            nil -> fields
-            scope_edge ->
-              if Map.has_key?(fields, scope_edge["localField"]) do
-                fields
-              else
-                scope_val = detect_scope_value(refs, schema["scopeField"])
-                if scope_val, do: Map.put(fields, scope_edge["localField"], scope_val), else: fields
-              end
-          end
-
-        # Auto-populate required DateTime fields without defaults
-        fields =
-          if model_info do
-            Enum.reduce(model_info["fields"] || [], fields, fn field, acc ->
-              if field["isRequired"] && !field["hasDefault"] && !field["isId"] && !Map.has_key?(acc, field["name"]) do
-                if field["type"] == "DateTime" do
-                  Map.put(acc, field["name"], DateTime.utc_now() |> DateTime.to_iso8601())
-                else
-                  acc
-                end
-              else
-                acc
-              end
-            end)
-          else
-            fields
-          end
-
-        fields
-      end)
-
-    factories = Map.get(config, :factories, %{}) || %{}
-    factory = Map.get(factories, model)
-
-    records =
-      if factory do
-        # Factory path: call user-defined create() for each record
-        Enum.map(resolved_fields, fn fields ->
-          factory_ctx = %{
-            refs: refs,
-            executor: tx,
-            scenario_name: test_run_id,
-            test_run_id: test_run_id
-          }
-
-          record = factory.create.(fields, factory_ctx)
-
-          if Map.get(record, pk_field_name) == nil do
-            raise Error.factory_missing_pk(model, pk_field_name)
-          end
-
-          record
-        end)
-      else
-        # SQL fallback path (existing behavior)
-        is_batch = op.batch
-        spec = %{model => %{"count" => length(resolved_fields), "fields" => resolved_fields, "batch" => is_batch}}
-
-        created = Create.create_entities(tx, dialect, table_map, column_maps, spec, enum_type_maps, schema["models"] || [])
-        Map.get(created, model, [])
-      end
-
-    refs =
-      Map.update(refs, model, records, fn existing -> existing ++ records end)
-
-    # Bug 3: Accept any non-nil value for id_map, not just strings
-    # Bug 4: Use dynamic pk_field_name instead of hardcoded "id"
-    id_map =
-      batch
-      |> Enum.with_index()
-      |> Enum.reduce(id_map, fn {b, j}, acc ->
-        record = Enum.at(records, j)
-        if record do
-          record_id = Map.get(record, pk_field_name)
-          if record_id != nil, do: Map.put(acc, b.temp_id, record_id), else: acc
-        else
-          acc
-        end
-      end)
-
-    process_ops(tx, dialect, table_map, column_maps, enum_type_maps, schema, tree, refs, id_map, i + 1, config, test_run_id)
-  end
-
-  defp collect_batch(ops, i, model, batch_flag, acc) do
-    next = i + 1
-    if next < length(ops) do
-      next_op = Enum.at(ops, next)
-      if next_op.model == model && next_op.batch == batch_flag do
-        collect_batch(ops, next, model, batch_flag, acc ++ [next_op])
-      else
-        {acc, i}
-      end
-    else
-      {acc, i}
-    end
-  end
-
-  defp handle_down_sql(config, body) do
+  defp handle_down(config, body) do
     refs_token = Map.get(body, "refsToken")
     unless refs_token, do: raise(Error.invalid_body("missing refsToken"))
 
@@ -351,50 +222,38 @@ defmodule Autonoma.Handler do
         e -> raise Error.invalid_refs_token(Exception.message(e))
       end
 
-    %{schema: schema, table_map: table_map, column_maps: column_maps} = get_introspection(config)
-    dialect = get_dialect(config)
+    refs = Map.get(payload, "refs") || %{}
+    test_run_id = Map.get(payload, "testRunId", "")
+    alias_deps = Map.get(payload, "aliasDependencies") || %{}
+    alias_owner_model = Map.get(payload, "aliasOwnerModel") || %{}
 
     case Map.get(config, :before_down) do
       nil -> :ok
-      hook -> hook.(%{scenario_name: payload["testRunId"], refs: payload["refs"] || %{}})
+      hook -> hook.(%{scenario_name: test_run_id, refs: refs})
     end
 
-    # Determine which models have factory teardown
-    factories = Map.get(config, :factories, %{}) || %{}
-    factory_teardown_models =
-      factories
-      |> Enum.filter(fn {_model, factory} -> factory[:teardown] != nil end)
-      |> Enum.map(fn {model, _} -> model end)
-      |> MapSet.new()
+    factories = Map.get(config, :factories) || %{}
+    teardown_order = PayloadTopo.compute_teardown_order(refs, alias_deps, alias_owner_model)
 
-    # Run factory teardowns in reverse topo order
-    if MapSet.size(factory_teardown_models) > 0 do
-      %{order: order, scope_root: scope_root} = TeardownSQL.compute_teardown_order(schema)
-      full_order = if scope_root, do: order ++ [scope_root], else: order
-      td_refs = payload["refs"] || %{}
+    Enum.each(teardown_order, fn model ->
+      factory = Map.get(factories, model)
 
-      full_order
-      |> Enum.reverse()
-      |> Enum.filter(fn model -> MapSet.member?(factory_teardown_models, model) end)
-      |> Enum.each(fn model ->
-        records = Map.get(td_refs, model, [])
-        factory_ctx = %{
-          refs: td_refs,
-          executor: config.executor,
-          scenario_name: payload["testRunId"],
-          test_run_id: payload["testRunId"]
+      if factory != nil and factory.teardown != nil do
+        records = Map.get(refs, model, [])
+
+        ctx = %{
+          refs: refs,
+          scenario_name: test_run_id,
+          test_run_id: test_run_id
         }
 
         records
         |> Enum.reverse()
         |> Enum.each(fn record ->
-          factories[model].teardown.(record, factory_ctx)
+          factory.teardown.(record, ctx)
         end)
-      end)
-    end
-
-    # SQL teardown for remaining models (skipping factory-teardown ones)
-    TeardownSQL.teardown(config.executor, dialect, table_map, column_maps, schema, payload["testRunId"], payload["refs"], factory_teardown_models)
+      end
+    end)
 
     %{status: 200, body: Map.merge(build_sdk_meta(config), %{"ok" => true})}
   end
@@ -466,11 +325,30 @@ defmodule Autonoma.Handler do
   # Helpers
   # ---------------------------------------------------------------------------
 
-  # Bug 8: Match both "user" and "users" (case-insensitive)
+  @doc false
+  def swap_temp_ids(value, id_map) when is_binary(value) do
+    if String.starts_with?(value, "__temp_") do
+      Map.get(id_map, value, value)
+    else
+      value
+    end
+  end
+
+  def swap_temp_ids(value, id_map) when is_map(value) do
+    Map.new(value, fn {k, v} -> {k, swap_temp_ids(v, id_map)} end)
+  end
+
+  def swap_temp_ids(value, id_map) when is_list(value) do
+    Enum.map(value, fn v -> swap_temp_ids(v, id_map) end)
+  end
+
+  def swap_temp_ids(value, _id_map), do: value
+
   defp find_first_user(refs) do
     Enum.find_value(refs, fn {model, records} ->
       normalized = String.downcase(model)
-      if (normalized == "user" || normalized == "users") && records != [] do
+
+      if (normalized == "user" or normalized == "users") and records != [] do
         List.first(records)
       end
     end)
@@ -484,7 +362,7 @@ defmodule Autonoma.Handler do
     Enum.find_value(refs, fn {_model, records} ->
       Enum.find_value(records, fn record ->
         Enum.find_value(record, fn {key, value} ->
-          if normalize_field(to_string(key)) == scope_normalized && is_binary(value) do
+          if normalize_field(to_string(key)) == scope_normalized and is_binary(value) do
             value
           end
         end)

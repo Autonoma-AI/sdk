@@ -1,11 +1,20 @@
 //! Type definitions for Autonoma SDK.
+//!
+//! The SDK is factory-driven: every model is owned by a registered factory
+//! whose input is described by `Vec<FieldDef>`. There is no SQL introspection,
+//! no executor protocol, and no dialect machinery.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::errors::AutonomaError;
+
+// ---------------------------------------------------------------------------
+// Wire-shape types (discover response)
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldInfo {
@@ -62,61 +71,149 @@ pub struct SchemaInfo {
     pub scope_field: String,
 }
 
-/// Minimal SQL executor — wrap your DB connection into this.
-#[async_trait]
-pub trait SqlExecutor: Send + Sync {
-    async fn query(
-        &self,
-        sql: &str,
-        params: Option<&[Value]>,
-    ) -> Result<Vec<HashMap<String, Value>>, String>;
+// ---------------------------------------------------------------------------
+// Factory field definition (replaces Pydantic input_model)
+// ---------------------------------------------------------------------------
 
-    async fn transaction(
-        &self,
-        f: Box<dyn for<'a> FnOnce(&'a dyn SqlExecutor) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> + Send>,
-    ) -> Result<(), String>;
+/// Describes a single field on a factory's input.
+///
+/// Types are SDK type strings: "string", "integer", "number", "boolean",
+/// "timestamp", "date", "uuid", "json".
+#[derive(Debug, Clone)]
+pub struct FieldDef {
+    pub name: String,
+    pub field_type: String,
+    pub required: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Create operation (produced by payload_topo)
+// ---------------------------------------------------------------------------
+
+/// A create operation produced by the payload topo resolver.
+#[derive(Debug, Clone)]
+pub struct CreateOp {
+    pub model: String,
+    pub fields: serde_json::Map<String, Value>,
+    pub temp_id: String,
+}
+
+/// Output of `resolve_payload_tree`.
+#[derive(Debug, Clone)]
+pub struct ResolvedTree {
+    pub ops: Vec<CreateOp>,
+    /// alias -> temp_id
+    pub aliases: HashMap<String, String>,
+    /// alias -> model name
+    pub alias_owner_model: HashMap<String, String>,
+    /// alias -> list of dependency alias names
+    pub alias_dependencies: HashMap<String, Vec<String>>,
+}
+
+// ---------------------------------------------------------------------------
+// Factory definition
+// ---------------------------------------------------------------------------
+
+/// A factory for creating entities via user code.
+///
+/// `input_fields` is required: the SDK validates the resolved field dict
+/// against it before invoking `create`, and uses it to build the discover
+/// schema. `ref_fields` is optional; when provided, the SDK validates
+/// the stored record against it before invoking `teardown`.
+pub struct FactoryDefinition {
+    pub input_fields: Vec<FieldDef>,
+    pub create_fn: Box<
+        dyn for<'a> Fn(
+                &'a serde_json::Map<String, Value>,
+                &'a FactoryContext,
+            ) -> Pin<Box<dyn Future<Output = Result<serde_json::Map<String, Value>, AutonomaError>> + Send + 'a>>
+            + Send
+            + Sync,
+    >,
+    pub teardown_fn: Option<
+        Box<
+            dyn for<'a> Fn(
+                    &'a serde_json::Map<String, Value>,
+                    &'a FactoryContext,
+                ) -> Pin<Box<dyn Future<Output = Result<(), AutonomaError>> + Send + 'a>>
+                + Send
+                + Sync,
+        >,
+    >,
+    pub ref_fields: Option<Vec<FieldDef>>,
+}
+
+/// Registry mapping model names to their factory definitions.
+pub type FactoryRegistry = HashMap<String, FactoryDefinition>;
+
+// ---------------------------------------------------------------------------
+// Context types
+// ---------------------------------------------------------------------------
+
+/// Context passed to factory create/teardown functions.
+///
+/// Factories that need a database connection get it from the host (their
+/// own connection pool, ORM, etc.). The SDK provides `refs` and
+/// `test_run_id` only.
+pub struct FactoryContext {
+    pub refs: HashMap<String, Vec<serde_json::Map<String, Value>>>,
+    pub scenario_name: String,
+    pub test_run_id: String,
 }
 
 /// Context passed to handler hooks (before_down, after_up).
 pub struct HookContext {
     pub scenario_name: String,
-    pub refs: HashMap<String, Vec<HashMap<String, Value>>>,
+    pub refs: HashMap<String, Vec<serde_json::Map<String, Value>>>,
 }
 
 /// Context passed to the auth callback alongside the user record.
 pub struct AuthContext<'a> {
     pub scope_value: &'a str,
-    pub refs: &'a HashMap<String, Vec<HashMap<String, Value>>>,
+    pub refs: &'a HashMap<String, Vec<serde_json::Map<String, Value>>>,
 }
 
-/// Configuration for the Autonoma request handler.
-pub struct HandlerConfig {
-    pub executor: Box<dyn SqlExecutor>,
-    pub scope_field: String,
-    pub shared_secret: String,
-    pub signing_secret: String,
-    pub auth: Box<dyn Fn(Option<&HashMap<String, Value>>, &AuthContext<'_>) -> HashMap<String, Value> + Send + Sync>,
-    pub dialect: String,
-    pub db_schema: Option<String>,
-    pub table_name_map: Option<HashMap<String, String>>,
-    pub exclude_tables: Option<Vec<String>>,
-    pub allow_production: bool,
-    pub sdk: Option<SdkMeta>,
-    /// Cached introspection result (populated on first request).
-    /// Initialize with `tokio::sync::OnceCell::new()`.
-    pub introspection_cache: tokio::sync::OnceCell<IntrospectionResult>,
-    /// Optional hook called before teardown in `down`.
-    pub before_down: Option<Box<dyn Fn(&HookContext) + Send + Sync>>,
-    /// Optional hook called after entity creation and auth in `up`.
-    pub after_up: Option<Box<dyn Fn(&HookContext, HashMap<String, Value>) -> HashMap<String, Value> + Send + Sync>>,
-    /// Factory definitions per model. If a factory exists for a model, it is used instead of raw SQL INSERT.
-    pub factories: Option<FactoryRegistry>,
-}
+// ---------------------------------------------------------------------------
+// Handler config and request/response
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkMeta {
     pub orm: String,
     pub server: String,
+}
+
+/// Configuration for the Autonoma request handler.
+pub struct HandlerConfig {
+    pub scope_field: String,
+    pub shared_secret: String,
+    pub signing_secret: String,
+    pub auth: Box<
+        dyn for<'a> Fn(
+                Option<&'a serde_json::Map<String, Value>>,
+                &'a AuthContext<'a>,
+            ) -> Pin<Box<dyn Future<Output = HashMap<String, Value>> + Send + 'a>>
+            + Send
+            + Sync,
+    >,
+    pub factories: FactoryRegistry,
+    pub allow_production: bool,
+    pub sdk: Option<SdkMeta>,
+    /// Optional hook called before teardown in `down`.
+    pub before_down: Option<
+        Box<dyn Fn(&HookContext) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> + Send + Sync>,
+    >,
+    /// Optional hook called after entity creation and auth in `up`.
+    pub after_up: Option<
+        Box<
+            dyn Fn(
+                    &HookContext,
+                    HashMap<String, Value>,
+                ) -> Pin<Box<dyn Future<Output = HashMap<String, Value>> + Send + '_>>
+                + Send
+                + Sync,
+        >,
+    >,
 }
 
 #[derive(Debug, Clone)]
@@ -130,75 +227,3 @@ pub struct HandlerResponse {
     pub status: u16,
     pub body: Value,
 }
-
-/// A create operation produced by the tree resolver.
-#[derive(Debug, Clone)]
-pub struct CreateOp {
-    pub model: String,
-    pub fields: HashMap<String, Value>,
-    pub temp_id: String,
-    pub batch: bool,
-}
-
-/// A deferred FK update for circular dependencies.
-#[derive(Debug, Clone)]
-pub struct DeferredUpdate {
-    pub target_temp_id: String,
-    pub model: String,
-    pub field: String,
-    pub ref_alias: String,
-}
-
-/// Result of database introspection.
-#[derive(Debug, Clone)]
-pub struct IntrospectionResult {
-    pub schema: SchemaInfo,
-    pub table_map: HashMap<String, String>,
-    pub column_maps: HashMap<String, HashMap<String, String>>,
-    pub enum_type_maps: HashMap<String, HashMap<String, String>>,
-}
-
-/// Context passed to factory create/teardown functions.
-pub struct FactoryContext<'a> {
-    pub refs: &'a HashMap<String, Vec<HashMap<String, Value>>>,
-    pub executor: &'a dyn SqlExecutor,
-    pub scenario_name: String,
-    pub test_run_id: String,
-}
-
-/// User-defined factory for creating entities via custom code instead of raw SQL.
-///
-/// Implement this trait to register a factory for a model. The SDK will call
-/// `create()` instead of raw SQL INSERT for models with registered factories.
-#[async_trait]
-pub trait Factory: Send + Sync {
-    /// Create a single entity. Receives pre-resolved fields (temp IDs already replaced).
-    /// Must return at least the primary key field.
-    async fn create(
-        &self,
-        data: HashMap<String, Value>,
-        ctx: &FactoryContext<'_>,
-    ) -> Result<HashMap<String, Value>, AutonomaError>;
-
-    /// Optional teardown per record. Return `Err` with code `NO_FACTORY_TEARDOWN`
-    /// to signal that SQL DELETE should be used instead.
-    async fn teardown(
-        &self,
-        _record: &HashMap<String, Value>,
-        _ctx: &FactoryContext<'_>,
-    ) -> Result<(), AutonomaError> {
-        Err(AutonomaError {
-            message: "no factory teardown".to_string(),
-            code: "NO_FACTORY_TEARDOWN".to_string(),
-            status: 500,
-        })
-    }
-
-    /// Whether this factory has a custom teardown. If false, SQL DELETE is used.
-    fn has_teardown(&self) -> bool {
-        false
-    }
-}
-
-/// Registry mapping model names to their factory implementations.
-pub type FactoryRegistry = HashMap<String, Box<dyn Factory>>;
