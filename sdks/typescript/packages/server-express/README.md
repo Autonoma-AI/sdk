@@ -5,7 +5,7 @@ Express/Fastify server adapter for the Autonoma SDK.
 ## Install
 
 ```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-express
+pnpm add @autonoma-ai/sdk @autonoma-ai/server-express zod
 ```
 
 ## Usage
@@ -15,16 +15,16 @@ pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-express
 ```typescript
 import express from 'express'
 import { createExpressHandler } from '@autonoma-ai/server-express'
-import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
-import { prisma } from './db'
+import { defineFactory } from '@autonoma-ai/sdk'
+import { z } from 'zod'
 
 const app = express()
 
 app.post('/api/autonoma', createExpressHandler({
-  executor: prismaExecutor(prisma),
   scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  factories: { Organization, User },
   auth: async (user, context) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }

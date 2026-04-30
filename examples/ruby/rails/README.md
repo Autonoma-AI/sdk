@@ -100,10 +100,20 @@ class AutonomaController < ApplicationController
   private
 
   def autonoma_config
-    @autonoma_config ||= AutonomaActiveRecord.create_config(
+    @autonoma_config ||= Autonoma::HandlerConfig.new(
       scope_field: "organization_id",
       shared_secret: ENV.fetch("AUTONOMA_SHARED_SECRET", "my-shared-secret"),
       signing_secret: ENV.fetch("AUTONOMA_SIGNING_SECRET", "my-signing-secret"),
+      factories: {
+        "Organization" => Autonoma::Factory.define(
+          create: ->(data, ctx) {
+            org = Organization.create!(name: data["name"])
+            { "id" => org.id.to_s, "name" => org.name }
+          },
+          input_fields: [Autonoma::FieldInfo.new("name", "string", true)],
+          teardown: ->(record, ctx) { Organization.find(record["id"]).destroy! }
+        ),
+      },
       auth: ->(user, _context) {
         { "headers" => { "Authorization" => "Bearer test-token" } }
       }
@@ -111,5 +121,3 @@ class AutonomaController < ApplicationController
   end
 end
 ```
-
-The SDK introspects your database schema automatically — no manual configuration of models needed.

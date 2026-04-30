@@ -90,22 +90,24 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The key integration is just a few lines in `src/index.ts`:
+The SDK is factory-driven: you register a factory per model with a Zod `inputSchema` and `create`/`teardown` functions. The SDK derives the discover schema from your Zod types — no database introspection needed.
 
 ```typescript
-import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
 import { createExpressHandler } from '@autonoma-ai/server-express'
+import { defineFactory } from '@autonoma-ai/sdk'
+import { z } from 'zod'
 
-// Wire up the Autonoma endpoint
+const Organization = defineFactory({
+  inputSchema: z.object({ name: z.string(), slug: z.string() }),
+  create: async (data, ctx) => { /* create via your repo/ORM */ },
+  teardown: async (record, ctx) => { /* delete by id */ },
+})
+
 app.post('/api/autonoma', createExpressHandler({
-  executor: prismaExecutor(prisma),
   scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user, context) => {
-    return { headers: { Authorization: `Bearer test-token` } }
-  },
+  factories: { Organization, User, Project, Task },
+  auth: async (user) => ({ headers: { Authorization: `Bearer test-token` } }),
 }))
 ```
-
-That's it. The SDK introspects your database schema automatically — no manual configuration of models or fields needed.

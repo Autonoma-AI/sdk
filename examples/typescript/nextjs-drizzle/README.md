@@ -82,22 +82,20 @@ docker stop autonoma-postgres
 
 ## How it works
 
-With Next.js App Router + Drizzle, the integration is a single route handler:
+With Next.js App Router, the integration is a single route handler. The SDK is factory-driven: you register a factory per model with a Zod `inputSchema` and `create`/`teardown` functions.
 
 ```typescript
 // src/app/api/autonoma/route.ts
 import { createHandler } from '@autonoma-ai/server-web'
-import { drizzleExecutor } from '@autonoma-ai/sdk-drizzle'
-import { db } from '@/db'
+import { defineFactory } from '@autonoma-ai/sdk'
+import { z } from 'zod'
 
 export const POST = createHandler({
-  executor: drizzleExecutor(db),
   scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user, context) => {
-    return { headers: { Authorization: `Bearer test-token` } }
-  },
+  factories: { Organization, User, Project, Task },
+  auth: async (user) => ({ headers: { Authorization: `Bearer test-token` } }),
 })
 ```
 
