@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.3](https://github.com/Autonoma-AI/sdk/compare/v0.2.2...v0.2.3) (2026-04-30)
+
+
+### Bug Fixes
+
+* clean up release-please config for factory-driven SDK ([#53](https://github.com/Autonoma-AI/sdk/issues/53)) ([cd1f065](https://github.com/Autonoma-AI/sdk/commit/cd1f065f792ae0f4eeafcd5d06a91ec171426aea))
+
+
+### Documentation
+
+* update all READMEs to reflect factory-driven API ([be7efa5](https://github.com/Autonoma-AI/sdk/commit/be7efa556c08404fd64b90390252d19e1097743d))
+* update all READMEs to reflect factory-driven API ([#52](https://github.com/Autonoma-AI/sdk/issues/52)) ([efd763e](https://github.com/Autonoma-AI/sdk/commit/efd763e7fd2e783519c8213485aa9994f7112dde))
+
 ## [0.2.2](https://github.com/Autonoma-AI/sdk/compare/v0.2.1...v0.2.2) (2026-04-30)
 
 
