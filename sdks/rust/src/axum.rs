@@ -2,22 +2,6 @@
 //!
 //! Provides `create_axum_handler` to mount the Autonoma endpoint as an Axum route,
 //! and `axum_handler` for standalone use.
-//!
-//! # Example
-//! ```rust,ignore
-//! use axum::{Router, routing::post};
-//! use autonoma_sdk::axum::create_axum_handler;
-//! use autonoma_sdk::types::HandlerConfig;
-//!
-//! #[tokio::main]
-//! async fn main() {
-//!     let config = todo!("build HandlerConfig");
-//!     let app = Router::new()
-//!         .route("/api/autonoma", post(create_axum_handler(config)));
-//!     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-//!     axum::serve(listener, app).await.unwrap();
-//! }
-//! ```
 
 #[cfg(feature = "axum")]
 mod inner {
@@ -78,8 +62,6 @@ mod inner {
     }
 
     /// Standalone handler for custom Axum routing.
-    ///
-    /// Use this when you need more control over routing than `create_axum_handler` provides.
     pub async fn axum_handler(
         config: &HandlerConfig,
         headers: HeaderMap,

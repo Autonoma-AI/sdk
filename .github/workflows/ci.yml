@@ -43,46 +43,6 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
-  ts-integration:
-    name: TypeScript Integration Tests
-    runs-on: ubuntu-latest
-    needs: ts-unit
-    defaults:
-      run:
-        working-directory: sdks/typescript
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: sdks/typescript/package.json
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: sdks/typescript/pnpm-lock.yaml
-
-      - uses: actions/cache@v4
-        with:
-          path: sdks/typescript/node_modules/.cache/turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('sdks/typescript/pnpm-lock.yaml') }}
-          restore-keys: turbo-${{ runner.os }}-
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-
-      - name: Generate Prisma clients for integration tests
-        run: |
-          npx prisma generate --schema tests/integration/navigator/prisma/schema.prisma
-          npx prisma generate --schema packages/sdk-prisma/test/prisma/schema.prisma
-
-      - name: Run adapter integration tests (Prisma + Drizzle)
-        run: npx vitest run packages/sdk-prisma/test/integration.test.ts packages/sdk-drizzle/test/integration.test.ts --config vitest.integration.config.ts
-
-      - name: Run integration tests (navigator)
-        run: npx vitest run tests/integration/navigator/e2e.test.ts --testTimeout 120000
-
   # ---------------------------------------------------------------------------
   # Python
   # ---------------------------------------------------------------------------
@@ -212,8 +172,6 @@ jobs:
       - run: cargo test
       - run: cargo build --features actix
       - run: cargo build --features axum
-      - run: cargo build --features sqlx-postgres
-      - run: cargo build --features sqlx-mysql
 
   # ---------------------------------------------------------------------------
   # Conformance (all languages must produce identical output)

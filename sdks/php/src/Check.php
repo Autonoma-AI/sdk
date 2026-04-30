@@ -8,10 +8,14 @@ use Autonoma\Sdk\Types\HandlerRequest;
 class Check
 {
     /**
-     * Run a full up→down cycle and return structured errors.
+     * Run a full up->down cycle and return structured errors.
+     *
+     * @param array<string, \Autonoma\Sdk\Types\FactoryDefinition> $factories
+     * @param array $scenario
+     * @param array $options
      */
     public static function checkScenario(
-        $executor,
+        array $factories,
         array $scenario,
         array $options = [],
     ): CheckResult {
@@ -19,14 +23,11 @@ class Check
         $signingSecret = $options['signingSecret'] ?? 'autonoma-check-signing';
 
         $config = new HandlerConfig(
-            executor: $executor,
             scopeField: $options['scopeField'] ?? 'organizationId',
             sharedSecret: $sharedSecret,
             signingSecret: $signingSecret,
-            dialect: $options['dialect'] ?? 'postgres',
-            dbSchema: $options['dbSchema'] ?? null,
-            tableNameMap: $options['tableNameMap'] ?? null,
-            auth: $options['auth'] ?? fn($u) => ['credentials' => ['token' => 'check-token']],
+            auth: $options['auth'] ?? fn($u, $ctx) => ['credentials' => ['token' => 'check-token']],
+            factories: $factories,
         );
 
         // Up

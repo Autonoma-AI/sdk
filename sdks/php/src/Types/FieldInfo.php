@@ -5,7 +5,7 @@ readonly class FieldInfo {
         public string $name,
         public string $type,
         public bool $isRequired,
-        public bool $isId,
-        public bool $hasDefault,
+        public bool $isId = false,
+        public bool $hasDefault = false,
     ) {}
 }

@@ -1,64 +1,60 @@
 <?php
 
 // =============================================================================
-// Autonoma SDK — Laravel Example (Hybrid Factories + SQL)
+// Autonoma SDK — Laravel Example (Factory-driven)
 // =============================================================================
-// This example shows how to use factories for models with business logic
-// (Organization, User) while letting the SDK handle simpler models (Project,
-// Task) via raw SQL. This "hybrid" approach gives you the best of both worlds:
-// correct business logic where it matters, zero setup where it doesn't.
+// The SDK is factory-driven: every model the dashboard can create has a
+// registered factory whose inputFields drives both validation and the discover
+// schema. There is no SQL introspection, no Eloquent executor, and no SQL
+// fallback — your factories call whatever services your app already has.
 
 use App\Repositories\OrganizationRepository;
 use App\Repositories\UserRepository;
 use Autonoma\Sdk\Factory;
+use Autonoma\Sdk\Types\FieldInfo;
 use Autonoma\Sdk\Types\FactoryContext;
 
 return [
-    'connection' => env('AUTONOMA_DB_CONNECTION'),
-    // The column that scopes all models to a tenant (e.g. organization_id). The SDK uses this to
-    // isolate test data and ensure teardown only removes records belonging to the test run.
+    // The column that scopes all models to a tenant — used to isolate test data
     'scope_field' => env('AUTONOMA_SCOPE_FIELD', 'organization_id'),
-    // Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
+    // Shared with Autonoma — verifies incoming requests via HMAC-SHA256
     'shared_secret' => env('AUTONOMA_SHARED_SECRET', 'my-shared-secret'),
-    // Private to your server only. Used to sign the refs token that tracks created records,
-    // so teardown can only delete what was created.
+    // Private to your server — signs the refs token so teardown only deletes what was created
     'signing_secret' => env('AUTONOMA_SIGNING_SECRET', 'my-signing-secret'),
-    'dialect' => env('AUTONOMA_DIALECT', 'postgres'),
-    'db_schema' => env('AUTONOMA_DB_SCHEMA'),
-    'exclude_tables' => ['migrations'],
     'allow_production' => false,
     'path' => 'api/autonoma',
     'middleware' => [],
-    // Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
-    // so Autonoma can make authenticated requests as the test user.
+
+    // Called after `up` — returns credentials so Autonoma can make authenticated requests
     'auth' => function (?array $user, array $context): array {
         return ['headers' => ['Authorization' => 'Bearer test-token']];
     },
 
-    // Custom create/teardown logic for models with business logic (password hashing, slug
-    // generation, etc.). Models without a factory fall back to raw SQL INSERT.
+    // Every model the dashboard can create needs a factory.
+    // The factory's inputFields drives both validation and discover.
     'factories' => [
-        // Organization: uses the repository which handles slug generation,
-        // default settings, external service setup, etc.
         'Organization' => Factory::define(
-            function (array $data, FactoryContext $ctx) {
+            inputFields: [
+                new FieldInfo('name', 'string', true),
+            ],
+            create: function (array $data, FactoryContext $ctx) {
                 $repo = new OrganizationRepository();
-                return $repo->create([
-                    'name' => $data['name'],
-                ]);
+                return $repo->create(['name' => $data['name']]);
             },
-            // Custom teardown: cleans up related resources (billing, etc.)
-            function (array $record, FactoryContext $ctx) {
+            teardown: function (array $record, FactoryContext $ctx) {
                 $repo = new OrganizationRepository();
                 $repo->delete($record['id']);
             }
         ),
 
-        // User: uses the repository which handles password hashing,
-        // email normalization, and other business logic.
-        // No teardown defined — the SDK falls back to SQL DELETE.
+        // $data is validated against inputFields before reaching this function
         'User' => Factory::define(
-            function (array $data, FactoryContext $ctx) {
+            inputFields: [
+                new FieldInfo('email', 'string', true),
+                new FieldInfo('name', 'string', true),
+                new FieldInfo('organization_id', 'string', true),
+            ],
+            create: function (array $data, FactoryContext $ctx) {
                 $repo = new UserRepository();
                 return $repo->create([
                     'email' => $data['email'],
@@ -67,8 +63,5 @@ return [
                 ]);
             }
         ),
-
-        // Project and Task have no factories — they use raw SQL INSERT.
-        // This is fine because they're simple tables with no business logic.
     ],
 ];

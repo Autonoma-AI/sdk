@@ -1,9 +1,16 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
-interface RefsPayload {
+export interface RefsPayload {
   refs: Record<string, Record<string, unknown>[]>
   testRunId: string
   environment: string
+  /**
+   * Captured at `up` time so `down` can topo-sort teardown without
+   * re-parsing the create payload. Optional — older tokens omitted it
+   * and `down` falls back to refs-key insertion order.
+   */
+  aliasDependencies?: Record<string, string[]>
+  aliasOwnerModel?: Record<string, string>
 }
 
 /**

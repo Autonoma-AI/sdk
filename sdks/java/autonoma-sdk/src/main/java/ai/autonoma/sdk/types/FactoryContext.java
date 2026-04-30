@@ -9,8 +9,6 @@ import java.util.Map;
 public record FactoryContext(
     /** All refs created so far, keyed by model name. */
     Map<String, List<Map<String, Object>>> refs,
-    /** The SQL executor (for factories that need direct DB access). */
-    SQLExecutor executor,
     /** The detected or fallback scope value. */
     String scenarioName,
     /** Unique ID for this test run. */

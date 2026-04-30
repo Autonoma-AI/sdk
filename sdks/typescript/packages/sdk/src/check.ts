@@ -1,8 +1,4 @@
-import type {
-  SQLExecutor,
-  ScenarioDefinition,
-  HandlerConfig,
-} from './types'
+import type { FactoryRegistry, HandlerConfig } from './types'
 import { handleRequest } from './handler'
 import { signBody } from './hmac'
 
@@ -19,18 +15,20 @@ export interface CheckError {
   fix?: string
 }
 
+export interface CheckScenario {
+  /** Flat map: model name → list of entity payloads (with `_alias` / `_ref`). */
+  create: Record<string, Record<string, unknown>[]>
+}
+
 /**
- * Dry-run a scenario against a real database.
- * Runs the full up → down cycle and returns structured errors.
+ * Dry-run a scenario through the same handler the dashboard hits. Runs
+ * `up` then `down` and returns structured errors if either fails.
  */
 export async function checkScenario(
-  executor: SQLExecutor,
-  scenario: ScenarioDefinition,
+  factories: FactoryRegistry,
+  scenario: CheckScenario,
   options?: {
-    scopeField: string
-    dialect?: HandlerConfig['dialect']
-    dbSchema?: string
-    tableNameMap?: Record<string, string>
+    scopeField?: string
     sharedSecret?: string
     signingSecret?: string
     auth?: HandlerConfig['auth']
@@ -40,17 +38,13 @@ export async function checkScenario(
   const signingSecret = options?.signingSecret ?? 'autonoma-check-signing'
 
   const config: HandlerConfig = {
-    executor,
     scopeField: options?.scopeField ?? 'organizationId',
-    dialect: options?.dialect,
-    dbSchema: options?.dbSchema,
-    tableNameMap: options?.tableNameMap,
     sharedSecret,
     signingSecret,
+    factories,
     auth: options?.auth ?? (async () => ({ headers: { Authorization: 'Bearer check-token' } })),
   }
 
-  // Up
   const upBody = JSON.stringify({ action: 'up', create: scenario.create })
   const upReq = {
     body: upBody,
@@ -66,12 +60,11 @@ export async function checkScenario(
     return {
       valid: false,
       phase: 'up',
-      errors: [{ phase: 'up', message: errorMsg, fix: suggestFix(errorMsg) }],
+      errors: [{ phase: 'up', message: errorMsg }],
       timing: { upMs, downMs: 0 },
     }
   }
 
-  // Down
   const refsToken = (upRes.body as Record<string, string>).refsToken
   const downBody = JSON.stringify({ action: 'down', refsToken })
   const downReq = {
@@ -96,40 +89,14 @@ export async function checkScenario(
   return { valid: true, phase: 'ok', errors: [], timing: { upMs, downMs } }
 }
 
-/**
- * Check multiple scenarios sequentially.
- */
 export async function checkAllScenarios(
-  executor: SQLExecutor,
-  scenarios: ScenarioDefinition[],
-  options?: {
-    scopeField: string
-    dialect?: HandlerConfig['dialect']
-    dbSchema?: string
-    tableNameMap?: Record<string, string>
-    sharedSecret?: string
-    signingSecret?: string
-    auth?: HandlerConfig['auth']
-  },
+  factories: FactoryRegistry,
+  scenarios: CheckScenario[],
+  options?: Parameters<typeof checkScenario>[2],
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = []
   for (const scenario of scenarios) {
-    results.push(await checkScenario(executor, scenario, options))
+    results.push(await checkScenario(factories, scenario, options))
   }
   return results
-}
-
-function suggestFix(errorMsg: string): string {
-  if (errorMsg.includes('Unique constraint failed') || errorMsg.includes('unique constraint')) {
-    const match = errorMsg.match(/fields: \(`(.+?)`\)/) ?? errorMsg.match(/constraint "(.+?)"/)
-    if (match) return `Unique constraint on (${match[1]}). Ensure field values are unique across instances.`
-    return 'Unique constraint violation. Make field values unique across instances.'
-  }
-  if (errorMsg.includes('Foreign key constraint') || errorMsg.includes('foreign key')) {
-    return 'A referenced record does not exist. Check that parent entities are nested correctly.'
-  }
-  if (errorMsg.includes('null value in column') || errorMsg.includes('must not be null')) {
-    return 'A required field is null. Add it to the node with a value.'
-  }
-  return ''
 }

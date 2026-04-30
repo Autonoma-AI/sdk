@@ -1,17 +1,17 @@
 // =============================================================================
-// Autonoma SDK — Next.js App Router Route Handler (Hybrid Factories + SQL)
+// Autonoma SDK — Next.js App Router Route Handler (Factory-driven)
 // =============================================================================
-// This example shows how to use factories for models with business logic
-// (Organization, User) while letting the SDK handle simpler models (Project,
-// Task) via raw SQL. This "hybrid" approach gives you the best of both worlds:
-// correct business logic where it matters, zero setup where it doesn't.
+// The SDK is factory-driven: every model the dashboard can create has a
+// registered factory whose `inputSchema` (Zod) drives both validation and
+// the discover schema. There is no SQL introspection, no SQL fallback, and
+// no executor — your factories call whatever client / repository your app
+// already has.
 //
 // Route: POST /api/autonoma
 
+import { z } from 'zod'
 import { createHandler } from '@autonoma-ai/server-web'
-import { drizzleExecutor } from '@autonoma-ai/sdk-drizzle'
 import { defineFactory } from '@autonoma-ai/sdk'
-import { db } from '@/db'
 import { OrganizationRepository } from '@/repositories/organization'
 import { UserRepository } from '@/repositories/user'
 
@@ -22,63 +22,53 @@ const organizationRepo = new OrganizationRepository()
 const userRepo = new UserRepository()
 
 // ---------------------------------------------------------------------------
-// Create the Autonoma handler with Factories
+// Factory schemas
 // ---------------------------------------------------------------------------
-// Factories let you use your own repositories/services to create test data.
-// The SDK still handles scenario resolution, FK ordering, and teardown —
-// but delegates actual creation to your code for models that need it.
-//
-// Models WITHOUT a factory (Project, Task) fall back to raw SQL INSERT,
-// which works fine for simple tables without business logic.
+// Drizzle schemas often use snake_case columns; we keep that convention in
+// `inputSchema` to match what the dashboard sends in `create.<table>[i]`.
+const OrganizationInput = z.object({ name: z.string() })
+const OrganizationRef = z.object({ id: z.string(), name: z.string() })
+const UserInput = z.object({
+  email: z.string(),
+  name: z.string(),
+  organization_id: z.string(),
+})
 
+// ---------------------------------------------------------------------------
+// Create the Autonoma handler
+// ---------------------------------------------------------------------------
 export const POST = createHandler({
-  // Connects the SDK to your database through your ORM (Prisma, Drizzle, SQLAlchemy, etc.)
-  executor: drizzleExecutor(db),
-  // The column that scopes all models to a tenant (e.g. organizationId). The SDK uses this to
-  // isolate test data and ensure teardown only removes records belonging to the test run.
+  // The column that scopes all models to a tenant.
   scopeField: 'organizationId',
-  // Shared between your server and Autonoma. Used to verify incoming requests via HMAC-SHA256.
+  // Shared with Autonoma — verifies incoming requests via HMAC-SHA256.
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET ?? 'my-shared-secret',
-  // Private to your server only. Used to sign the refs token that tracks created records,
-  // so teardown can only delete what was created.
+  // Private to your server only — signs the refs token so teardown only
+  // deletes what was created.
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET ?? 'my-signing-secret',
 
-  // Custom create/teardown logic for models with business logic (password hashing, slug
-  // generation, etc.). Models without a factory fall back to raw SQL INSERT.
+  // One factory per model. With Drizzle the natural factory key is the
+  // table name (`organizations`, `users`); the dashboard uses these keys
+  // verbatim in the discover schema and create payload.
   factories: {
-    // Organization: uses the repository which handles slug generation,
-    // default settings, external service setup, etc.
     organizations: defineFactory({
-      create: async (data, ctx) => {
-        return organizationRepo.create({
-          name: data.name as string,
-        })
-      },
-      teardown: async (record, ctx) => {
-        await organizationRepo.delete(record.id as string)
-      },
+      inputSchema: OrganizationInput,
+      refSchema: OrganizationRef,
+      create: async (data) => organizationRepo.create({ name: data.name }),
+      teardown: async (record) => organizationRepo.delete(record.id),
     }),
 
-    // User: uses the repository which handles password hashing,
-    // email normalization, and other business logic.
-    // No teardown defined — the SDK falls back to SQL DELETE.
     users: defineFactory({
-      create: async (data, ctx) => {
-        return userRepo.create({
-          email: data.email as string,
-          name: data.name as string,
-          organizationId: data.organization_id as string,
-        })
-      },
+      inputSchema: UserInput,
+      create: async (data) =>
+        userRepo.create({
+          email: data.email,
+          name: data.name,
+          organizationId: data.organization_id,
+        }),
     }),
-
-    // projects and tasks have no factories — they use raw SQL INSERT.
-    // This is fine because they're simple tables with no business logic.
   },
 
-  // Called after entity creation during `up`. Returns credentials (cookies, headers, tokens)
-  // so Autonoma can make authenticated requests as the test user.
-  auth: async (user, context) => {
-    return { headers: { Authorization: `Bearer test-token` } }
-  },
+  // Called after `up` — returns credentials so Autonoma can make
+  // authenticated requests as the test user.
+  auth: async () => ({ headers: { Authorization: 'Bearer test-token' } }),
 })

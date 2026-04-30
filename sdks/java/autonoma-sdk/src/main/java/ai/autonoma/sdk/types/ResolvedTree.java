@@ -5,6 +5,7 @@ import java.util.Map;
 
 public record ResolvedTree(
     List<CreateOp> ops,
-    List<DeferredUpdate> deferredUpdates,
-    Map<String, String> aliases
+    Map<String, String> aliases,
+    Map<String, String> aliasOwnerModel,
+    Map<String, List<String>> aliasDependencies
 ) {}

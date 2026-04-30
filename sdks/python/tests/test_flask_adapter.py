@@ -7,17 +7,8 @@ import json
 from flask import Flask
 
 from autonoma.hmac_util import sign_body
-from autonoma.refs import sign_refs
 from autonoma.types import HandlerConfig
 from autonoma_flask import create_flask_handler
-
-
-class FakeExecutor:
-    """Minimal SQL executor for testing."""
-    async def query(self, sql, params=None):
-        return []
-    async def transaction(self, fn):
-        return await fn(self)
 
 
 SHARED_SECRET = "test-shared-secret-1234"
@@ -27,7 +18,6 @@ SIGNING_SECRET = "test-signing-secret-5678"
 def _make_app():
     app = Flask(__name__)
     config = HandlerConfig(
-        executor=FakeExecutor(),
         scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,

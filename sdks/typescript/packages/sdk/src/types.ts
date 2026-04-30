@@ -1,24 +1,24 @@
-/** Minimal SQL executor — wrap your DB connection (pg Pool, Prisma, Drizzle, etc.) into this. */
-export interface SQLExecutor {
-  /** Execute a SQL query with parameterized values. Returns rows as plain objects. */
-  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
-
-  /**
-   * Execute a block within a transaction.
-   * The callback receives an executor scoped to the transaction.
-   * If the callback throws, the transaction is rolled back.
-   */
-  transaction<T>(fn: (tx: SQLExecutor) => Promise<T>): Promise<T>
-}
+/**
+ * Public types for the Autonoma SDK.
+ *
+ * The SDK is now factory-driven: every model the dashboard can create
+ * comes from a registered factory, and each factory carries a Zod input
+ * schema (and optional ref schema). There is no SQL introspection, no
+ * SQL fallback, and no executor on `HandlerConfig`. Factories that need
+ * DB access use whatever client the host already has.
+ */
+import type { ZodTypeAny, z } from 'zod'
 
 export interface SchemaInfo {
   models: ModelInfo[]
+  /** Always emitted as `[]` in factory-driven mode; kept for wire-shape symmetry. */
   edges: FKEdge[]
+  /** Always emitted as `[]` in factory-driven mode; kept for wire-shape symmetry. */
   relations: SchemaRelation[]
   scopeField: string
 }
 
-/** Maps a parent's relation field name to the child model and its FK */
+/** Wire-shape relic — emitted as an empty array in factory-driven mode. */
 export interface SchemaRelation {
   parentModel: string
   childModel: string
@@ -28,6 +28,7 @@ export interface SchemaRelation {
 
 export interface ModelInfo {
   name: string
+  /** Cosmetic — snake_case of `name`; the dashboard renders it for display only. */
   tableName: string
   fields: FieldInfo[]
 }
@@ -40,35 +41,13 @@ export interface FieldInfo {
   hasDefault: boolean
 }
 
+/** Wire-shape relic — emitted as an empty array in factory-driven mode. */
 export interface FKEdge {
   from: string
   to: string
   localField: string
   foreignField: string
   nullable: boolean
-}
-
-export interface EntitySpec {
-  count: number
-  fields: Record<string, unknown>
-  batch?: boolean
-}
-
-export interface ResolvedEntitySpec {
-  count: number
-  fields: Record<string, unknown>[]
-  batch?: boolean
-}
-
-export interface CreateContext {
-  testRunId: string
-  refs: Record<string, Record<string, unknown>[]>
-}
-
-/** Scenario sent inline in the `up` request body */
-export interface ScenarioDefinition {
-  /** Nested tree: model name → array of node objects with nested children */
-  create: Record<string, Record<string, unknown>[]>
 }
 
 export interface SdkInfo {
@@ -80,45 +59,77 @@ export interface SdkInfo {
 export interface FactoryContext {
   /** All refs created so far, keyed by model name */
   refs: Record<string, Record<string, unknown>[]>
-  /** The SQL executor (for factories that need direct DB access) */
-  executor: SQLExecutor
-  /** The detected or fallback scope value */
+  /** Logical scope value or testRunId fallback (kept for backwards-compat). */
   scenarioName: string
   /** Unique ID for this test run */
   testRunId: string
 }
 
-export interface FactoryDefinition {
-  /** Create a single entity. Receives pre-resolved fields (temp IDs already replaced). Must return at least { id }. */
-  create: (data: Record<string, unknown>, ctx: FactoryContext) => Promise<Record<string, unknown>>
-  /** Optional teardown per record. If omitted, falls back to SQL DELETE. */
-  teardown?: (record: Record<string, unknown>, ctx: FactoryContext) => Promise<void>
+/**
+ * Factory definition.
+ *
+ * The two type parameters are bound to the Zod schemas you pass in:
+ *   - `TInput extends ZodTypeAny` — the create input. `data` arrives
+ *     already validated and typed as `z.infer<TInput>`, so your factory
+ *     body doesn't need a manual `z.infer<...>` annotation.
+ *   - `TRef extends ZodTypeAny` — the shape your `create` returns and
+ *     `teardown` later receives. When `refSchema` is omitted, `TRef`
+ *     widens to a generic `{ id; ... }` record so old factories keep
+ *     compiling without a refSchema.
+ *
+ * Bind both at the call site by writing `defineFactory({...})` — TS
+ * infers the generics from the schema instances.
+ */
+export interface FactoryDefinition<
+  TInput extends ZodTypeAny = ZodTypeAny,
+  TRef extends ZodTypeAny | undefined = undefined,
+> {
+  /**
+   * Create a single entity. Receives the validated input (parsed by
+   * `inputSchema`) and must return at least `{ id }`. When `refSchema`
+   * is set, the return type is constrained to `z.input<TRef>` so the
+   * teardown signature lines up exactly.
+   */
+  create: (
+    data: z.infer<TInput>,
+    ctx: FactoryContext,
+  ) =>
+    | Promise<RefRecord<TRef>>
+    | RefRecord<TRef>
+  /**
+   * Optional teardown per record. Receives whatever `create` returned —
+   * validated through `refSchema` first when one is registered. If
+   * omitted the model is left alone on `down`. There is no SQL fallback.
+   */
+  teardown?: (
+    record: TRef extends ZodTypeAny ? z.infer<TRef> : Record<string, unknown> & { id: string | number },
+    ctx: FactoryContext,
+  ) => Promise<void> | void
+  /** Required Zod schema for the create input — drives both validation and discover. */
+  inputSchema: TInput
+  /** Optional Zod schema for the record returned by `create` (validated on teardown). */
+  refSchema?: TRef
 }
 
-export type FactoryRegistry = Record<string, FactoryDefinition>
+type RefRecord<TRef extends ZodTypeAny | undefined> = TRef extends ZodTypeAny
+  ? z.input<TRef>
+  : Record<string, unknown> & { id: string | number }
+
+// `FactoryDefinition` is invariant in its type parameters (functions
+// take the schema-derived types as inputs), so the registry must accept
+// any concrete factory. The handler uses `factory.inputSchema.safeParse`
+// at runtime — TypeScript can't statically know which schema sits
+// behind a registry lookup, and that's fine.
+export type FactoryRegistry = Record<string, FactoryDefinition<any, any>>
 
 export interface HandlerConfig {
-  /** SQL executor wrapping your database connection */
-  executor: SQLExecutor
   /** Scope field name (camelCase), e.g., 'organizationId' */
   scopeField: string
-  /** Database dialect. Defaults to 'postgres'. */
-  dialect?: 'postgres' | 'mysql' | 'sqlite'
-  /** DB schema name. Defaults to 'public' for Postgres. */
-  dbSchema?: string
-  /**
-   * Map scenario model names to DB table names.
-   * Keys are model names (PascalCase), values are DB table names.
-   * If omitted, auto-detected from information_schema with PascalCase inference.
-   */
-  tableNameMap?: Record<string, string>
-  /** Tables to exclude from introspection. Defaults to ['_prisma_migrations']. */
-  excludeTables?: string[]
   /** Shared secret — known by both you and Autonoma. Used to verify HMAC signatures on incoming requests. */
   sharedSecret: string
   /** Internal secret — only you know this. Used to sign the refs JWT token. Autonoma never sees it. */
   signingSecret: string
-  /** Factory definitions per model. If a factory exists for a model, it is used instead of raw SQL INSERT. */
+  /** Factory definitions per model. Required: every model the dashboard sends in `create` must have one. */
   factories?: FactoryRegistry
   allowProduction?: boolean
   /**
@@ -138,7 +149,7 @@ export interface HandlerConfig {
    * Can modify the auth result before it is returned to the caller.
    */
   afterUp?: (context: HookContext, authResult: AuthResult) => Promise<AuthResult> | AuthResult
-  /** SDK identity metadata. Server and ORM adapters populate this. */
+  /** SDK identity metadata. Server adapters populate this. */
   sdk?: Partial<SdkInfo>
 }
 
@@ -153,7 +164,6 @@ export interface HookContext {
   scenarioName: string
   refs: Record<string, Record<string, unknown>[]>
 }
-
 
 export interface AuthCookie {
   name: string

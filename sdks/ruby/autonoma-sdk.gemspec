@@ -2,13 +2,13 @@
 
 Gem::Specification.new do |spec|
   spec.name          = "autonoma-ai"
-  spec.version       = "0.1.0"
+  spec.version       = "0.2.0"
   spec.authors       = ["Autonoma AI"]
   spec.email         = ["eng@autonoma.ai"]
 
   spec.summary       = "Autonoma SDK — automate the Autonoma Environment Factory endpoint"
   spec.description   = "Ruby SDK for the Autonoma Environment Factory. Handles HMAC verification, " \
-                        "JWT refs, template resolution, FK-ordered entity creation, and scoped teardown."
+                        "JWT refs, template resolution, factory-driven entity creation, and scoped teardown."
   spec.homepage      = "https://autonoma.ai"
   spec.license       = "MIT"
 
@@ -26,6 +26,4 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency "minitest", "~> 5.0"
   spec.add_development_dependency "rake", "~> 13.0"
-  spec.add_development_dependency "activerecord", ">= 7.0"
-  spec.add_development_dependency "pg", ">= 1.5"
 end

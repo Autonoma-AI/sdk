@@ -2,28 +2,6 @@
 //!
 //! Provides `create_actix_handler` to mount the Autonoma endpoint as an Actix Web resource,
 //! and `actix_handler` for standalone use with custom routing.
-//!
-//! # Example
-//! ```rust,ignore
-//! use actix_web::{App, HttpServer, web};
-//! use autonoma_sdk::actix::create_actix_handler;
-//! use autonoma_sdk::types::{HandlerConfig, SdkMeta};
-//!
-//! #[actix_web::main]
-//! async fn main() -> std::io::Result<()> {
-//!     let config = todo!("build HandlerConfig");
-//!     HttpServer::new(move || {
-//!         App::new()
-//!             .service(
-//!                 web::resource("/api/autonoma")
-//!                     .route(web::post().to(create_actix_handler(config)))
-//!             )
-//!     })
-//!     .bind("0.0.0.0:3000")?
-//!     .run()
-//!     .await
-//! }
-//! ```
 
 #[cfg(feature = "actix")]
 mod inner {
@@ -85,8 +63,6 @@ mod inner {
     }
 
     /// Standalone handler for custom Actix Web routing.
-    ///
-    /// Use this when you need more control over routing than `create_actix_handler` provides.
     pub async fn actix_handler(
         config: &HandlerConfig,
         req: HttpRequest,

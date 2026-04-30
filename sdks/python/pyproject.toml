@@ -23,34 +23,28 @@ classifiers = [
 ]
 packages = [
     { include = "autonoma", from = "src" },
-    { include = "autonoma_sqlalchemy", from = "src" },
     { include = "autonoma_flask", from = "src" },
     { include = "autonoma_fastapi", from = "src" },
     { include = "autonoma_django", from = "src" },
 ]
 
 [tool.poetry.extras]
-sqlalchemy = ["sqlalchemy"]
 flask = ["flask"]
 fastapi = ["fastapi", "uvicorn"]
 django = ["django"]
-postgres = ["psycopg2-binary"]
-all = ["sqlalchemy", "flask", "fastapi", "uvicorn", "django", "psycopg2-binary"]
+all = ["flask", "fastapi", "uvicorn", "django"]
 
 [tool.poetry.dependencies]
 python = ">=3.10"
-sqlalchemy = { version = ">=2.0", optional = true }
+pydantic = ">=2.0"
 flask = { version = ">=3.0", optional = true }
 fastapi = { version = ">=0.100", optional = true }
 uvicorn = { version = "*", optional = true }
 django = { version = ">=4.2", optional = true }
-psycopg2-binary = { version = ">=2.9", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0"
 pytest-asyncio = ">=0.21"
-testcontainers = { version = ">=4.0", extras = ["postgres"] }
-psycopg2-binary = ">=2.9"
 httpx = "*"
 
 [tool.pytest.ini_options]

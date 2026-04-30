@@ -1,27 +1,25 @@
 // Public API
-export { handleRequest, PROTOCOL_VERSION } from './handler'
+export { handleRequest, PROTOCOL_VERSION, resolveTokens } from './handler'
 export { signBody, verifySignature } from './hmac'
 export { signRefs, verifyRefs } from './refs'
 export { fingerprint } from './fingerprint'
 export { topoSort, findDeferrableEdge } from './graph'
-export { resolveTree } from './tree'
+export { resolvePayloadTree, computeTeardownOrder } from './payload-topo'
+export {
+  buildSchemaFromFactories,
+  fieldTypeFromZod,
+  schemaToWire,
+} from './schema'
 export { checkScenario, checkAllScenarios } from './check'
-export { introspectDatabase } from './introspect'
-export { getDialect } from './dialect'
-export { createEntities } from './create'
-export { teardown, computeTeardownOrder } from './teardown'
 export { defineFactory } from './factory'
+export { AutonomaError, Errors } from './errors'
 
 // Types
 export type {
-  SQLExecutor,
   SchemaInfo,
   ModelInfo,
   FieldInfo,
   FKEdge,
-  ResolvedEntitySpec,
-  CreateContext,
-  ScenarioDefinition,
   HandlerConfig,
   HandlerRequest,
   HandlerResponse,
@@ -39,7 +37,6 @@ export type {
   FactoryRegistry,
 } from './types'
 
-export type { Dialect } from './dialect'
-export type { IntrospectionResult } from './introspect'
-export type { CreateOp, ResolvedTree, RefNode } from './tree'
-export type { CheckResult, CheckError } from './check'
+export type { CheckResult, CheckError, CheckScenario } from './check'
+export type { CreateOp, ResolvedTree } from './payload-topo'
+export type { RefsPayload } from './refs'

@@ -1,5 +1,5 @@
 defmodule Autonoma.Check do
-  @moduledoc "Dry-run a scenario against a real database (up -> down cycle)."
+  @moduledoc "Dry-run a scenario against factories (up -> down cycle)."
 
   alias Autonoma.{HMAC, Handler}
 
@@ -13,20 +13,20 @@ defmodule Autonoma.Check do
     defstruct valid: false, phase: "ok", errors: [], timing: nil
   end
 
-  def check_scenario(executor, scenario, opts \\ []) do
+  def check_scenario(scenario, opts \\ []) do
     shared_secret = Keyword.get(opts, :shared_secret, "autonoma-check-shared")
     signing_secret = Keyword.get(opts, :signing_secret, "autonoma-check-signing")
 
     config = %{
-      executor: executor,
       scope_field: Keyword.get(opts, :scope_field, "organizationId"),
-      dialect: Keyword.get(opts, :dialect),
-      db_schema: Keyword.get(opts, :db_schema),
-      table_name_map: Keyword.get(opts, :table_name_map),
       shared_secret: shared_secret,
       signing_secret: signing_secret,
       sdk: Keyword.get(opts, :sdk, %{}),
-      auth: Keyword.get(opts, :auth, fn _user -> %{"headers" => %{"Authorization" => "Bearer check-token"}} end)
+      factories: Keyword.get(opts, :factories, %{}),
+      auth:
+        Keyword.get(opts, :auth, fn _user, _ctx ->
+          %{"headers" => %{"Authorization" => "Bearer check-token"}}
+        end)
     }
 
     create = Map.get(scenario, "create", Map.get(scenario, :create, %{}))
@@ -79,25 +79,22 @@ defmodule Autonoma.Check do
     end
   end
 
-  def check_all_scenarios(executor, scenarios, opts \\ []) do
+  def check_all_scenarios(scenarios, opts \\ []) do
     Enum.map(scenarios, fn scenario ->
-      check_scenario(executor, scenario, opts)
+      check_scenario(scenario, opts)
     end)
   end
 
   defp suggest_fix(msg) do
     cond do
-      String.contains?(msg, "Unique constraint") || String.contains?(msg, "unique constraint") ->
-        case Regex.run(~r/fields: \(`(.+?)`\)/, msg) || Regex.run(~r/constraint "(.+?)"/, msg) do
-          [_, match] -> "Unique constraint on (#{match}). Add {{testRunId}} or {{index}} to make values unique."
-          _ -> "Unique constraint violation. Make field values unique across instances."
-        end
+      String.contains?(msg, "missing required fields") ->
+        "A required field is missing. Add it to the entity with a value."
 
-      String.contains?(msg, "Foreign key constraint") || String.contains?(msg, "foreign key") ->
-        "A referenced record does not exist. Check that parent entities are nested correctly."
+      String.contains?(msg, "no factory registered") ->
+        "Register a factory for the referenced model."
 
-      String.contains?(msg, "null value in column") || String.contains?(msg, "must not be null") ->
-        "A required field is null. Add it to the node with a value."
+      String.contains?(msg, "cycle detected") ->
+        "Break the circular dependency between models."
 
       true ->
         nil

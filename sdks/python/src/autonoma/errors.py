@@ -1,5 +1,7 @@
 """Structured error for Autonoma protocol responses."""
 
+from typing import Optional
+
 
 class AutonomaError(Exception):
     def __init__(self, message: str, code: str, status: int) -> None:
@@ -21,8 +23,12 @@ def unknown_action(action: str) -> AutonomaError:
     return AutonomaError(f"Unknown action: {action}", "UNKNOWN_ACTION", 400)
 
 
-def production_blocked() -> AutonomaError:
-    return AutonomaError("Blocked in production", "PRODUCTION_BLOCKED", 404)
+def production_blocked(detail: Optional[str] = None) -> AutonomaError:
+    return AutonomaError(
+        "Blocked in production" + "" if detail is None else f". {detail}",
+        "PRODUCTION_BLOCKED",
+        404,
+    )
 
 
 def invalid_refs_token(detail: str) -> AutonomaError:

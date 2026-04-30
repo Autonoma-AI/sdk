@@ -26,10 +26,10 @@ import java.util.Map;
  * @Configuration
  * public class AutonomaConfig {
  *     @Bean
- *     public AutonomaController autonomaController(DataSource dataSource) {
- *         SQLExecutor executor = new JdbcSQLExecutor(dataSource);
- *         HandlerConfig config = new HandlerConfig(executor, "organizationId", sharedSecret, signingSecret,
+ *     public AutonomaController autonomaController() {
+ *         HandlerConfig config = new HandlerConfig("organizationId", sharedSecret, signingSecret,
  *             (user, ctx) -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer " + generateToken(user))));
+ *         config.setFactories(Map.of("User", userFactory, "Organization", orgFactory));
  *         return new AutonomaController(config);
  *     }
  * }
@@ -44,7 +44,7 @@ public class AutonomaController {
         SdkInfo currentSdk = config.getSdk();
         SdkInfo enriched = new SdkInfo(
             "java",
-            currentSdk != null ? currentSdk.orm() : "jdbc",
+            currentSdk != null ? currentSdk.orm() : "unknown",
             "spring"
         );
         this.config = config.withSdk(enriched);

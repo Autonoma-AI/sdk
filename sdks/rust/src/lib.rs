@@ -1,29 +1,24 @@
 //! Autonoma SDK for Rust.
 //!
-//! Automates the Autonoma Environment Factory endpoint. Handles HMAC verification,
-//! JWT refs, FK-ordered entity creation, and scoped teardown.
+//! Factory-driven design: every model is owned by a registered factory whose
+//! input is described by `Vec<FieldDef>`. There is no SQL introspection — the
+//! SDK derives discover schema from factory input_fields and uses the create
+//! payload's `_alias`/`_ref` graph for ordering.
 //!
 //! # Features
 //!
 //! - `actix` — Actix Web server adapter
 //! - `axum` — Axum server adapter
-//! - `sqlx-postgres` — SQLx executor for PostgreSQL
-//! - `sqlx-mysql` — SQLx executor for MySQL
 
 pub mod actix;
 pub mod axum;
-pub mod create;
-pub mod dialect;
 pub mod errors;
 pub mod factory;
 pub mod fingerprint;
-mod generated;
 pub mod graph;
 pub mod handler;
 pub mod hmac;
-pub mod introspect;
+pub mod payload_topo;
 pub mod refs;
-pub mod sqlx_adapter;
-pub mod teardown;
-pub mod tree;
+pub mod schema;
 pub mod types;
