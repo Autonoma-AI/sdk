@@ -65,26 +65,27 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The SDK is factory-driven: you register a factory per model with field definitions and `create`/`teardown` functions.
+The key integration in `src/main.rs`:
 
 ```rust
 let config = HandlerConfig {
+    executor: Box::new(SqlxPostgresExecutor::new(pool)),
     scope_field: "organization_id".to_string(),
     shared_secret,
     signing_secret,
-    factories: factories![
-        "Organization" => Factory::define(
-            |data, _ctx| { /* create via your repo/ORM */ },
-            vec![FieldInfo::new("name", "string", true)],
-            Some(|record, _ctx| { /* teardown */ }),
-        ),
-    ],
     auth: Box::new(|_user, _ctx| {
-        AuthResult::headers(HashMap::from([
-            ("Authorization".into(), "Bearer test-token".into()),
-        ]))
+        let mut result = HashMap::new();
+        result.insert(
+            "headers".to_string(),
+            Value::Object(serde_json::Map::from_iter([(
+                "Authorization".to_string(),
+                Value::String("Bearer test-token".to_string()),
+            )])),
+        );
+        result
     }),
-    ..Default::default()
+    dialect: "postgres".to_string(),
+    // ...
 };
 
 let app = Router::new()

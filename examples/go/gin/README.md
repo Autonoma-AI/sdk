@@ -69,16 +69,15 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The SDK is factory-driven: you register a factory per model with field definitions and `create`/`teardown` functions.
+The key integration in `main.go`:
 
 ```go
 config := &autonoma.HandlerConfig{
-    ScopeField:   "organization_id",
+    Executor:      autonoma.NewSQLExecutor(db),
+    ScopeField:    "organization_id",
+    Dialect:       "postgres",
     SharedSecret:  sharedSecret,
     SigningSecret:  signingSecret,
-    Factories: map[string]*autonoma.FactoryDefinition{
-        "Organization": autonoma.DefineFactory(createOrg, orgFields, teardownOrg),
-    },
     Auth: func(user map[string]any, ctx autonoma.AuthContext) (*autonoma.AuthResult, error) {
         return &autonoma.AuthResult{
             Extra: map[string]any{

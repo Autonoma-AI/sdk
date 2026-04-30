@@ -67,33 +67,27 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The SDK is factory-driven: you register a factory per model with field definitions and `create`/`teardown` functions.
+The key integration in `AutonomaConfig.java`:
 
 ```java
 @Configuration
 public class AutonomaConfig {
     @Bean
-    public AutonomaController autonomaController() {
-        Map<String, FactoryDefinition> factories = Map.of(
-            "Organization", Factory.define(
-                (data, ctx) -> Map.of("id", UUID.randomUUID().toString(), "name", data.get("name")),
-                List.of(new FieldInfo("name", "string", true)),
-                (record, ctx) -> deleteOrganization(record.get("id"))
-            )
-        );
-
+    public AutonomaController autonomaController(DataSource dataSource) {
+        SQLExecutor executor = new JdbcSQLExecutor(dataSource);
         HandlerConfig config = new HandlerConfig(
+            executor,
             "organization_id",
             "my-shared-secret",
             "my-signing-secret",
             (user, context) -> AuthResult.ofHeaders(
                 Map.of("Authorization", "Bearer test-token")
-            ),
-            factories
+            )
         );
+        config.setDialect("postgres");
         return new AutonomaController(config);
     }
 }
 ```
 
-The `AutonomaController` bean registers a `POST /api/autonoma` endpoint that handles all three Autonoma actions (discover, up, down).
+The `AutonomaController` bean registers a `POST /api/autonoma` endpoint that handles all three Autonoma actions (discover, up, down). Spring Boot's auto-configured `DataSource` is injected and wrapped in a `JdbcSQLExecutor` for the SDK to use.

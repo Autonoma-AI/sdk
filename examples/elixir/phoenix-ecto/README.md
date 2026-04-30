@@ -89,24 +89,22 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The SDK is factory-driven: you register a factory per model with input field definitions and `create`/`teardown` functions. The SDK derives the discover schema from your factory definitions.
+The key integration is in the router (`lib/autonoma_example/router.ex`):
 
 ```elixir
-factories = %{
-  "Organization" => Autonoma.Factory.define(
-    fn data, _ctx -> %{"id" => Ecto.UUID.generate(), "name" => data["name"]} end,
-    [%Autonoma.FieldInfo{name: "name", type: "string", is_required: true}],
-    fn record, _ctx -> Repo.delete!(%Organization{id: record["id"]}) end
-  )
-}
+# Create the executor
+executor = Autonoma.Ecto.Executor.ecto_executor(AutonomaExample.Repo)
 
+# Mount the endpoint
 forward "/api/autonoma", Autonoma.Plug.Handler, %{
+  executor: executor,
   scope_field: "organization_id",
   shared_secret: "my-shared-secret",
   signing_secret: "my-signing-secret",
-  factories: factories,
   auth: fn _user, _context ->
     %{"headers" => %{"Authorization" => "Bearer test-token"}}
   end
 }
 ```
+
+The SDK introspects your database schema automatically — no manual configuration of models needed.

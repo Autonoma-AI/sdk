@@ -74,21 +74,17 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The SDK is factory-driven: you register a factory per model with a Pydantic `input_model` and `create`/`teardown` functions. The SDK derives the discover schema from your Pydantic types — no database introspection needed.
+The key integration in `app.py`:
 
 ```python
-from autonoma.factory import define_factory
 from autonoma_fastapi import create_fastapi_handler
+from autonoma_sqlalchemy import sqlalchemy_executor
 
 config = HandlerConfig(
+    executor=sqlalchemy_executor(engine),
     scope_field="organization_id",
     shared_secret="my-shared-secret",
     signing_secret="my-signing-secret",
-    factories={
-        "Organization": define_factory(
-            create=create_org, input_model=OrganizationInput, teardown=teardown_org,
-        ),
-    },
     auth=lambda user, context: {
         "headers": {"Authorization": "Bearer test-token"}
     },
@@ -97,3 +93,5 @@ config = HandlerConfig(
 router = create_fastapi_handler(config)
 app.include_router(router, prefix="/api/autonoma")
 ```
+
+The SDK introspects your database schema automatically — no manual configuration of models needed.
