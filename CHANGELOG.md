@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1](https://github.com/Autonoma-AI/sdk/compare/v0.2.0...v0.2.1) (2026-04-30)
+
+
+### Features
+
+* factory-driven SDK redesign — all 8 languages ([#50](https://github.com/Autonoma-AI/sdk/issues/50)) ([109c88e](https://github.com/Autonoma-AI/sdk/commit/109c88e46295d7df4fcc0cb048b0f7e66f73aed5))
+
+
+### Bug Fixes
+
+* unblock 0.2.0 PyPI/Hex + make publish idempotent ([#47](https://github.com/Autonoma-AI/sdk/issues/47)) ([bbfed39](https://github.com/Autonoma-AI/sdk/commit/bbfed39191215cce58956524f61e769545a65521))
+
 ## [0.2.0](https://github.com/Autonoma-AI/sdk/compare/v0.1.13...v0.2.0) (2026-04-23)
 
 
