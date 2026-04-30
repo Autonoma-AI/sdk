@@ -4,7 +4,7 @@ A minimal Django application using the Autonoma SDK with Django ORM.
 
 ## What this example does
 
-This example shows how to wire up the Autonoma Environment Factory endpoint in a Django project. Unlike the SQLAlchemy examples, Django uses its own ORM — the Autonoma SDK has a dedicated Django adapter that introspects Django models natively.
+This example shows how to wire up the Autonoma Environment Factory endpoint in a Django project using the factory-driven SDK.
 
 ## Prerequisites
 
@@ -80,16 +80,21 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The key integration in `core/autonoma_config.py`:
+The SDK is factory-driven: you register a factory per model with a Pydantic `input_model` and `create`/`teardown` functions.
 
 ```python
-from autonoma_django import django_executor, create_django_handler
+from autonoma.factory import define_factory
+from autonoma_django import create_django_handler
 
 config = HandlerConfig(
-    executor=django_executor(),
     scope_field="organization_id",
     shared_secret="my-shared-secret",
     signing_secret="my-signing-secret",
+    factories={
+        "Organization": define_factory(
+            create=create_org, input_model=OrganizationInput, teardown=teardown_org,
+        ),
+    },
     auth=lambda user, context: {
         "headers": {"Authorization": "Bearer test-token"}
     },

@@ -1,16 +1,12 @@
 # Autonoma TypeScript SDK
 
-TypeScript implementation of the Autonoma Environment Factory SDK. Get a working factory endpoint in ~15 lines with HMAC authentication, FK-ordered entity creation, and scoped teardown.
+TypeScript implementation of the Autonoma Environment Factory SDK. Define typed factories with Zod schemas, and the SDK handles HMAC authentication, dependency-ordered entity creation, and scoped teardown.
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
-| `@autonoma-ai/sdk` | Core protocol (HMAC, refs, graph, handler) |
-| `@autonoma-ai/sdk-prisma` | Prisma ORM adapter |
-| `@autonoma-ai/sdk-drizzle` | Drizzle ORM adapter |
-| `@autonoma-ai/sdk-pg` | PostgreSQL driver adapter |
-| `@autonoma-ai/sdk-mysql2` | MySQL driver adapter |
+| `@autonoma-ai/sdk` | Core protocol (HMAC, refs, graph, handler, schema) |
 | `@autonoma-ai/server-web` | Web standard handler (Next.js App Router, Hono, Bun, Deno) |
 | `@autonoma-ai/server-express` | Express handler |
 | `@autonoma-ai/server-node` | Node.js `http` handler |
@@ -20,23 +16,34 @@ TypeScript implementation of the Autonoma Environment Factory SDK. Get a working
 ### Install
 
 ```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
+pnpm add @autonoma-ai/sdk @autonoma-ai/server-web zod
 ```
 
-### Next.js App Router + Prisma
+### Next.js App Router
 
 ```ts
 // app/api/autonoma/route.ts
 import { createHandler } from '@autonoma-ai/server-web'
-import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
-import { prisma } from '@/lib/db'
+import { defineFactory } from '@autonoma-ai/sdk'
+import { z } from 'zod'
+
+const Organization = defineFactory({
+  inputSchema: z.object({ name: z.string(), slug: z.string() }),
+  create: async (data) => {
+    const org = await db.organization.create({ data })
+    return { id: org.id, ...data }
+  },
+  teardown: async (record) => {
+    await db.organization.delete({ where: { id: record.id } })
+  },
+})
 
 export const POST = createHandler({
-  executor: prismaExecutor(prisma),
   scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user, context) => {
+  factories: { Organization },
+  auth: async (user) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }
   },
@@ -48,17 +55,17 @@ export const POST = createHandler({
 ```ts
 import express from 'express'
 import { createExpressHandler } from '@autonoma-ai/server-express'
-import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
-import { prisma } from './db'
+import { defineFactory } from '@autonoma-ai/sdk'
+import { z } from 'zod'
 
 const app = express()
 
 app.post('/api/autonoma', createExpressHandler({
-  executor: prismaExecutor(prisma),
   scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  auth: async (user, context) => {
+  factories: { Organization, User },
+  auth: async (user) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }
   },
@@ -66,47 +73,6 @@ app.post('/api/autonoma', createExpressHandler({
 
 app.listen(3000)
 ```
-
-## Model name ↔ table name
-
-By default, the SDK derives a model name from each SQL table by splitting on `_` and PascalCasing each part — **no pluralization**. Examples:
-
-| SQL table | Auto-derived model name |
-|-----------|-------------------------|
-| `user` | `User` |
-| `api_key` | `ApiKey` |
-| `branch_deployment` | `BranchDeployment` |
-| `organizations` | `Organizations` (stays plural) |
-| `api_keys` | `ApiKeys` (stays plural) |
-
-If every factory you register is keyed under the auto-derived name, **omit `tableNameMap` entirely**. The SDK handles the mapping.
-
-You only need `tableNameMap` when a factory key disagrees with the auto-derived name. Common reasons:
-
-- Your tables are plural but you want singular factory keys: `organizations` table ↔ `Organization` key.
-- Legacy short names: `usr` table ↔ `User` key, `acl` table ↔ `AccessControl` key.
-
-The map is **sparse, not exhaustive**: only list entries that actually differ. Auto-derivation covers the rest.
-
-```ts
-// Tables in DB: organization, user, api_key, deal   (singular)
-// Factories keyed: Organization, User, ApiKey, Deal
-// tableNameMap: undefined  // auto-derive is exact; omit the field
-
-// Tables in DB: organizations, users, api_keys
-// Factories keyed singular → every entry disagrees:
-createHandler({
-  // ...
-  tableNameMap: {
-    Organization: 'organizations',
-    User: 'users',
-    ApiKey: 'api_keys',
-  },
-  factories: { Organization: ..., User: ..., ApiKey: ... },
-})
-```
-
-**Red flag:** if your `tableNameMap` has one entry per factory and every entry is just a plural↔singular rename, consider keeping factory keys plural (`Organizations`) and dropping the map entirely. Plural keys are valid — pick whichever convention your scenarios use.
 
 ## Commands
 

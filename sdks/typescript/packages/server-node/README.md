@@ -5,7 +5,7 @@ Node.js `http` server adapter for the Autonoma SDK.
 ## Install
 
 ```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-node
+pnpm add @autonoma-ai/sdk @autonoma-ai/server-node zod
 ```
 
 ## Usage
@@ -13,14 +13,14 @@ pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-node
 ```typescript
 import http from 'node:http'
 import { createNodeHandler } from '@autonoma-ai/server-node'
-import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
-import { prisma } from './db'
+import { defineFactory } from '@autonoma-ai/sdk'
+import { z } from 'zod'
 
 const handler = createNodeHandler({
-  executor: prismaExecutor(prisma),
   scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  factories: { Organization, User },
   auth: async (user, context) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }

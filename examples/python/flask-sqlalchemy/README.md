@@ -70,17 +70,21 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The key integration in `app.py`:
+The SDK is factory-driven: you register a factory per model with a Pydantic `input_model` and `create`/`teardown` functions.
 
 ```python
+from autonoma.factory import define_factory
 from autonoma_flask import create_flask_handler
-from autonoma_sqlalchemy import sqlalchemy_executor
 
 config = HandlerConfig(
-    executor=sqlalchemy_executor(engine),
     scope_field="organization_id",
     shared_secret="my-shared-secret",
     signing_secret="my-signing-secret",
+    factories={
+        "Organization": define_factory(
+            create=create_org, input_model=OrganizationInput, teardown=teardown_org,
+        ),
+    },
     auth=lambda user, context: {
         "headers": {"Authorization": "Bearer test-token"}
     },

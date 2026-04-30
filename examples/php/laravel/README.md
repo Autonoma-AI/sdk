@@ -80,11 +80,6 @@ docker stop autonoma-postgres
 
 ## How it works
 
-The Autonoma SDK for Laravel uses a service provider (`AutonomaServiceProvider`) that is auto-discovered via Composer. On boot, it reads `config/autonoma.php` and automatically registers a `POST /api/autonoma` route.
+The SDK is factory-driven: you register a factory per model with field definitions and `create`/`teardown` functions. The SDK derives the discover schema from your factory definitions — no database introspection needed.
 
-No controllers, no route files, no manual wiring — just:
-
-1. **`config/autonoma.php`** — defines the scope field, secrets, dialect, and auth callback
-2. **`composer.json`** — pulls in `autonoma-ai/sdk`, which triggers auto-discovery of the service provider
-
-The SDK introspects your database schema automatically — no manual configuration of models needed.
+The `config/autonoma.php` file defines the scope field, secrets, factories, and auth callback. The service provider auto-discovers and registers a `POST /api/autonoma` route.
