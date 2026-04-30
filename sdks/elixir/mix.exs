@@ -1,7 +1,7 @@
 defmodule Autonoma.MixProject do
   use Mix.Project
 
-  @version "0.2.0" # x-release-please-version
+  @version "0.2.1" # x-release-please-version
   @source_url "https://github.com/Autonoma-AI/sdk"
 
   def project do
