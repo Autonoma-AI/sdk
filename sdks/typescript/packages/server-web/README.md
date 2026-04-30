@@ -5,7 +5,7 @@ Web standard server adapter for the Autonoma SDK. Works with Next.js App Router,
 ## Install
 
 ```bash
-pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
+pnpm add @autonoma-ai/sdk @autonoma-ai/server-web zod
 ```
 
 ## Usage
@@ -15,14 +15,14 @@ pnpm add @autonoma-ai/sdk @autonoma-ai/sdk-prisma @autonoma-ai/server-web
 ```typescript
 // app/api/autonoma/route.ts
 import { createHandler } from '@autonoma-ai/server-web'
-import { prismaExecutor } from '@autonoma-ai/sdk-prisma'
-import { prisma } from '@/lib/db'
+import { defineFactory } from '@autonoma-ai/sdk'
+import { z } from 'zod'
 
 export const POST = createHandler({
-  executor: prismaExecutor(prisma),
   scopeField: 'organizationId',
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  factories: { Organization, User },
   auth: async (user, context) => {
     const session = await createSession(user.id as string)
     return { headers: { Authorization: `Bearer ${session.token}` } }

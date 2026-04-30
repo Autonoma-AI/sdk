@@ -4,19 +4,19 @@ Runnable example projects for every supported framework combination. Each exampl
 
 ## Examples
 
-| Language | Framework | ORM | Directory |
-|----------|-----------|-----|-----------|
-| TypeScript | Express | Prisma | [`typescript/express-prisma`](typescript/express-prisma/) |
-| TypeScript | Next.js (App Router) | Drizzle | [`typescript/nextjs-drizzle`](typescript/nextjs-drizzle/) |
-| Python | FastAPI | SQLAlchemy | [`python/fastapi-sqlalchemy`](python/fastapi-sqlalchemy/) |
-| Python | Flask | SQLAlchemy | [`python/flask-sqlalchemy`](python/flask-sqlalchemy/) |
-| Python | Django | Django ORM | [`python/django`](python/django/) |
-| Elixir | Phoenix | Ecto | [`elixir/phoenix-ecto`](elixir/phoenix-ecto/) |
-| Java | Spring Boot | JDBC | [`java/spring-boot`](java/spring-boot/) |
-| Ruby | Rails | ActiveRecord | [`ruby/rails`](ruby/rails/) |
-| Rust | Axum | SQLx | [`rust/axum-sqlx`](rust/axum-sqlx/) |
-| Go | Gin | database/sql | [`go/gin`](go/gin/) |
-| PHP | Laravel | Eloquent | [`php/laravel`](php/laravel/) |
+| Language | Framework | Directory |
+|----------|-----------|-----------|
+| TypeScript | Express | [`typescript/express-prisma`](typescript/express-prisma/) |
+| TypeScript | Next.js (App Router) | [`typescript/nextjs-drizzle`](typescript/nextjs-drizzle/) |
+| Python | FastAPI | [`python/fastapi-sqlalchemy`](python/fastapi-sqlalchemy/) |
+| Python | Flask | [`python/flask-sqlalchemy`](python/flask-sqlalchemy/) |
+| Python | Django | [`python/django`](python/django/) |
+| Elixir | Phoenix | [`elixir/phoenix-ecto`](elixir/phoenix-ecto/) |
+| Java | Spring Boot | [`java/spring-boot`](java/spring-boot/) |
+| Ruby | Rails | [`ruby/rails`](ruby/rails/) |
+| Rust | Axum | [`rust/axum-sqlx`](rust/axum-sqlx/) |
+| Go | Gin | [`go/gin`](go/gin/) |
+| PHP | Laravel | [`php/laravel`](php/laravel/) |
 
 ## Common setup
 
