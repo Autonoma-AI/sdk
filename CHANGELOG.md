@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/Autonoma-AI/sdk/compare/v0.2.3...v0.2.4) (2026-04-30)
+
+
+### Bug Fixes
+
+* remove workflow_call from release-please to fix PyPI OIDC ([#55](https://github.com/Autonoma-AI/sdk/issues/55)) ([2a76a34](https://github.com/Autonoma-AI/sdk/commit/2a76a341d6d500102873a982356238d22fca4695))
+
 ## [0.2.3](https://github.com/Autonoma-AI/sdk/compare/v0.2.2...v0.2.3) (2026-04-30)
 
 
