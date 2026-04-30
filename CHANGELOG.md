@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.5](https://github.com/Autonoma-AI/sdk/compare/v0.2.4...v0.2.5) (2026-04-30)
+
+
+### Bug Fixes
+
+* restore gh workflow run dispatch for publish ([#57](https://github.com/Autonoma-AI/sdk/issues/57)) ([cb25633](https://github.com/Autonoma-AI/sdk/commit/cb25633e43cbfb1e2a32e350b2bf5790286fcce9))
+
 ## [0.2.4](https://github.com/Autonoma-AI/sdk/compare/v0.2.3...v0.2.4) (2026-04-30)
 
 
