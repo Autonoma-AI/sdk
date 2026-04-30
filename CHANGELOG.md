@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/Autonoma-AI/sdk/compare/v0.2.1...v0.2.2) (2026-04-30)
+
+
+### Bug Fixes
+
+* use workflow_call instead of workflow_dispatch for publish ([1bb2b5e](https://github.com/Autonoma-AI/sdk/commit/1bb2b5e33db9d31019fef634c6d65c61be0cbca9))
+
 ## [0.2.1](https://github.com/Autonoma-AI/sdk/compare/v0.2.0...v0.2.1) (2026-04-30)
 
 
