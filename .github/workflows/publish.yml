@@ -188,3 +188,45 @@ jobs:
         run: mix hex.publish --yes
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # Ruby → RubyGems
+  # ---------------------------------------------------------------------------
+  rubygems:
+    name: Publish to RubyGems
+    needs: guard
+    if: ${{ !cancelled() && (needs.guard.result == 'success' || needs.guard.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdks/ruby
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Check if version already on RubyGems
+        id: gem_check
+        run: |
+          VERSION=$(ruby -e "spec = Gem::Specification.load('autonoma-sdk.gemspec'); puts spec.version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if curl -sS "https://rubygems.org/api/v1/versions/autonoma-ai.json" 2>/dev/null | grep -qF "\"number\":\"$VERSION\""; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::autonoma-ai $VERSION already on RubyGems — skipping RubyGems publish."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build gem
+        if: steps.gem_check.outputs.already_published == 'false'
+        run: gem build autonoma-sdk.gemspec
+
+      - name: Publish to RubyGems
+        if: steps.gem_check.outputs.already_published == 'false'
+        run: gem push autonoma-ai-${{ steps.gem_check.outputs.version }}.gem
+        env:
+          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}

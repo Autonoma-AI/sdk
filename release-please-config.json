@@ -28,6 +28,16 @@
           "type": "generic",
           "path": "sdks/elixir/mix.exs",
           "glob": false
+        },
+        {
+          "type": "generic",
+          "path": "sdks/ruby/autonoma-sdk.gemspec",
+          "glob": false
+        },
+        {
+          "type": "generic",
+          "path": "sdks/ruby/lib/autonoma.rb",
+          "glob": false
         }
       ]
     }
