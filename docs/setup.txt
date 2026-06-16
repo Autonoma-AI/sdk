@@ -66,7 +66,7 @@ model Member {
 
 If most models have `organizationId` (or `orgId`, `tenantId`, `workspaceId`), that's your scope field.
 
-**Important**: The scope root model (usually `Organization`) does NOT have this field on itself. The SDK knows this — it reads the FK graph and only injects the scope field into models that have it as a column.
+**Important**: The scope root model (usually `Organization`) does NOT have this field on itself. The SDK does NOT inject the scope field into any model — you set it explicitly on every model that has it (normally as a `{ "_ref": "..." }` to the scope record), and the registered factory writes it. The SDK reads the scope field only after create, to derive the auth scope value.
 
 ## 3. Generate secrets
 
@@ -291,17 +291,15 @@ auth: async (user) => ({
 ```json
 {
   "create": {
-    "Organization": [{
-      "name": "Test Org",
-      "members": [{
-        "role": "owner",
-        "user": [{
-          "email": "admin-test-run-id@test.com",
-          "name": "Admin",
-          "passwordHash": "$2b$10$..."
-        }]
-      }]
-    }]
+    "Organization": [{ "_alias": "org", "name": "Test Org", "slug": "test-org" }],
+    "User": [{
+      "_alias": "admin",
+      "email": "admin-test-run-id@test.com",
+      "name": "Admin",
+      "passwordHash": "$2b$10$...",
+      "organizationId": { "_ref": "org" }
+    }],
+    "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "admin" } }]
   }
 }
 ```
@@ -342,7 +340,7 @@ curl -s -X POST "$URL" \
   -d "$BODY" | jq .
 ```
 
-**Expected**: A JSON response with your full schema — models, fields, edges, relations. If you see this, your endpoint is working.
+**Expected**: A JSON response with your schema — models and their fields, plus `scopeField`. (`edges` and `relations` are emitted as empty arrays; the SDK does not introspect FK relations.) If you see this, your endpoint is working.
 
 **If you get 404**: Either `allowProduction` isn't set (the endpoint returns 404 `PRODUCTION_BLOCKED` unless `allowProduction: true`), or the route isn't mounted at this path. The SDK does not inspect `NODE_ENV` or any environment variable — `allowProduction` is the only switch.
 
@@ -390,14 +388,9 @@ describe('environment factory', () => {
   it('empty scenario — org + user only', async () => {
     const result = await checkScenario(adapter, {
       create: {
-        Organization: [{
-          name: 'Test Org [test-run-id]',
-          slug: 'test-test-run-id',
-          members: [{
-            role: 'owner',
-            user: [{ email: 'admin-test-run-id@test.com', name: 'Admin' }],
-          }],
-        }],
+        Organization: [{ _alias: 'org', name: 'Test Org [test-run-id]', slug: 'test-test-run-id' }],
+        User: [{ _alias: 'admin', email: 'admin-test-run-id@test.com', name: 'Admin', organizationId: { _ref: 'org' } }],
+        Member: [{ role: 'owner', organizationId: { _ref: 'org' }, userId: { _ref: 'admin' } }],
       },
     })
 
@@ -409,43 +402,33 @@ describe('environment factory', () => {
   it('standard scenario — org with apps, tests, runs', async () => {
     const result = await checkScenario(adapter, {
       create: {
-        Organization: [{
-          name: 'Acme [test-run-id]',
-          slug: 'acme-test-run-id',
-          members: [
-            { role: 'owner', user: [{ name: 'Alice', email: 'alice-test-run-id@test.com' }] },
-            { role: 'admin', user: [{ name: 'Bob', email: 'bob-test-run-id@test.com' }] },
-          ],
-          applications: [{
-            _alias: 'webApp',
-            name: 'Marketing Website',
-            architecture: 'WEB',
-            webApplicationData: [{ url: 'https://acme.com' }],
-            tags: [
-              { name: 'Critical', color: '#DC2626' },
-              { name: 'Flaky', color: '#EAB308' },
-            ],
-            testPlans: [{
-              name: 'Smoke Plan',
-              plan: 'Basic smoke tests',
-              testGenerations: [{
-                _alias: 'gen1',
-                conversation: '[]',
-                status: 'success',
-                applicationId: { _ref: 'webApp' },
-              }],
-            }],
-            tests: [{
-              name: 'Homepage Test',
-              testGenerationId: { _ref: 'gen1' },
-              steps: [
-                { order: 1, interaction: 'click', params: {} },
-                { order: 2, interaction: 'assert', params: {} },
-              ],
-              runs: [{}, {}, {}],
-            }],
-          }],
-        }],
+        Organization: [{ _alias: 'org', name: 'Acme [test-run-id]', slug: 'acme-test-run-id' }],
+        User: [
+          { _alias: 'alice', name: 'Alice', email: 'alice-test-run-id@test.com', organizationId: { _ref: 'org' } },
+          { _alias: 'bob', name: 'Bob', email: 'bob-test-run-id@test.com', organizationId: { _ref: 'org' } },
+        ],
+        Member: [
+          { role: 'owner', organizationId: { _ref: 'org' }, userId: { _ref: 'alice' } },
+          { role: 'admin', organizationId: { _ref: 'org' }, userId: { _ref: 'bob' } },
+        ],
+        Application: [{ _alias: 'webApp', name: 'Marketing Website', architecture: 'WEB', organizationId: { _ref: 'org' } }],
+        WebApplicationData: [{ url: 'https://acme.com', applicationId: { _ref: 'webApp' } }],
+        Tag: [
+          { name: 'Critical', color: '#DC2626', organizationId: { _ref: 'org' } },
+          { name: 'Flaky', color: '#EAB308', organizationId: { _ref: 'org' } },
+        ],
+        TestPlan: [{ _alias: 'smoke', name: 'Smoke Plan', plan: 'Basic smoke tests', applicationId: { _ref: 'webApp' } }],
+        TestGeneration: [{ _alias: 'gen1', conversation: '[]', status: 'success', testPlanId: { _ref: 'smoke' }, applicationId: { _ref: 'webApp' } }],
+        Test: [{ _alias: 'homepageTest', name: 'Homepage Test', testGenerationId: { _ref: 'gen1' } }],
+        Step: [
+          { order: 1, interaction: 'click', params: {}, testId: { _ref: 'homepageTest' } },
+          { order: 2, interaction: 'assert', params: {}, testId: { _ref: 'homepageTest' } },
+        ],
+        Run: [
+          { testId: { _ref: 'homepageTest' } },
+          { testId: { _ref: 'homepageTest' } },
+          { testId: { _ref: 'homepageTest' } },
+        ],
       },
     })
 
@@ -455,30 +438,14 @@ describe('environment factory', () => {
   it('large scenario — 10k runs with batch insert', async () => {
     const result = await checkScenario(adapter, {
       create: {
-        Organization: [{
-          name: 'Heavy [test-run-id]',
-          slug: 'heavy-test-run-id',
-          members: [{ role: 'owner', user: [{ name: 'User', email: 'heavy-test-run-id@test.com' }] }],
-          applications: [{
-            _alias: 'app',
-            name: 'App',
-            architecture: 'WEB',
-            testPlans: [{
-              name: 'Plan',
-              plan: 'x',
-              testGenerations: [{
-                _alias: 'gen1',
-                conversation: '[]',
-                applicationId: { _ref: 'app' },
-              }],
-            }],
-            tests: [{
-              name: 'Test',
-              testGenerationId: { _ref: 'gen1' },
-              runs: [{ status: 'completed' }],
-            }],
-          }],
-        }],
+        Organization: [{ _alias: 'org', name: 'Heavy [test-run-id]', slug: 'heavy-test-run-id' }],
+        User: [{ _alias: 'user', name: 'User', email: 'heavy-test-run-id@test.com', organizationId: { _ref: 'org' } }],
+        Member: [{ role: 'owner', organizationId: { _ref: 'org' }, userId: { _ref: 'user' } }],
+        Application: [{ _alias: 'app', name: 'App', architecture: 'WEB', organizationId: { _ref: 'org' } }],
+        TestPlan: [{ _alias: 'plan', name: 'Plan', plan: 'x', applicationId: { _ref: 'app' } }],
+        TestGeneration: [{ _alias: 'gen1', conversation: '[]', testPlanId: { _ref: 'plan' }, applicationId: { _ref: 'app' } }],
+        Test: [{ _alias: 'test', name: 'Test', testGenerationId: { _ref: 'gen1' } }],
+        Run: [{ status: 'completed', testId: { _ref: 'test' } }],
       },
     })
 

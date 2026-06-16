@@ -12,18 +12,18 @@ A string identifying the ORM (e.g., "prisma", "drizzle", "sqlalchemy", "ecto"). 
 
 ### getSchema
 
-Read the ORM's metadata and return a standardized schema description. This tells the SDK everything about your database: models, fields, FK edges, and named relations.
+Read the ORM's metadata and return a standardized schema description. This tells the SDK about your database's models and fields, plus the scope field name.
 
 What it must return:
-- A list of models, each with its fields (name, type, whether required, whether it's a primary key, whether it has a default value)
-- A list of FK edges (which model holds the FK, which model it points to, the local column name, the foreign column name, whether the FK is nullable)
-- A list of named relations (parent model, child model, relation field name on the parent, FK column name on the child)
+- A list of models, each with its fields (name, type, isRequired, isId, hasDefault)
+- edges: an empty array. The SDK does NOT introspect FK relations.
+- relations: an empty array. The SDK does NOT introspect FK relations.
 - The scope field name
 
 Important details:
 - Auto-updated timestamp fields should be marked as having a default, so they are not required in scenarios.
 - Auto-generated fields (UUIDs, auto-increment) should be marked as having a default.
-- The relation field name (the name used for nesting in scenarios) must match the exact name from the ORM schema. This is what users write in scenario JSON keys.
+- Dependency/order information is NOT derived from the schema. The SDK builds it from the `_alias`/`_ref` graph in the create payload at request time.
 - Cache the result -- getSchema is called on every request.
 
 ### createEntities
@@ -46,19 +46,19 @@ Implementation rules:
 Delete all data created during a test run. The SDK provides both the scope value (the root entity's ID) and the full set of created record references.
 
 Implementation rules:
-1. Get the FK graph from getSchema.
-2. Break circular FKs first: if the graph has cycles, find a nullable FK in the cycle and set it to null before deleting.
-3. Delete scoped models: for each model that has the scope FK, delete all records where the scope field equals the scope value. Do this in reverse topological order (children before parents) to avoid FK constraint violations.
-4. Delete non-scoped models by ID: some models (like User in a join-table setup) may not have the scope FK directly. Delete them by their individual IDs from the refs.
+1. Order from the create graph: the SDK derives create order from the `_alias`/`_ref` graph in the up payload (it does NOT introspect the ORM's FK graph). Delete in the reverse of that order — children before parents — to avoid FK constraint violations.
+2. Break circular references first: if the `_ref` graph has cycles, the record created with a deferred (nullable) reference is updated after its target exists; on teardown, null that reference before deleting.
+3. Delete scoped models: for each model that has the scope field, delete all records where the scope field equals the scope value, in reverse order.
+4. Delete non-scoped models by ID: some models (like User in a join-table setup) may not have the scope field directly. Delete them by their individual IDs from the refs.
 5. Delete the scope root entity last.
 
-The SDK core provides graph utilities (topological sort, cycle detection, deferrable edge finding) that adapters should use for ordering.
+The SDK core provides graph utilities (topological sort and cycle detection over the `_alias`/`_ref` graph) that adapters use for ordering.
 
 ### updateEntity (optional)
 
-Update a single record by ID. This is needed for circular FK resolution: when two models reference each other, one must be created with a null FK and then updated after the other is created.
+Update a single record by ID. This is needed for circular reference resolution: when two records `_ref` each other, one must be created with a null FK and then updated after the other is created.
 
-If not implemented and the schema has circular FKs, the SDK will raise an error asking for this method.
+If not implemented and the payload has circular `_ref`s, the SDK will raise an error asking for this method.
 
 ## Server Adapter
 

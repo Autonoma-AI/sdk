@@ -71,12 +71,11 @@ You fix the JSON file, re-run the test, and repeat until it passes.
 | Error message | What's wrong | How to fix |
 |---------------|-------------|-----------|
 | `Unique constraint failed on the fields: (\`slug\`)` | Two records have the same value for a unique field | Add `unique-value` to the field: `"slug": "acme-unique-value"` |
-| `Unique constraint failed on the fields: (\`userId\`,\`organizationId\`)` | A user is a member of the same org twice | Each member must have its own user. Nest each user under its member. |
+| `Unique constraint failed on the fields: (\`userId\`,\`organizationId\`)` | A user is a member of the same org twice | Each member must reference its own user. Give each User its own `_alias` and point each Member's `userId` at a distinct one. |
 | `Invalid value for argument \`architecture\`. Expected Architecture.` | Wrong enum value | Check your Prisma schema for valid enum values: `enum Architecture { WEB ANDROID IOS }` |
-| `Unknown argument \`applications\`.` | Wrong relation name | Check your Prisma schema for the exact relation field name. It might be `Application` (PascalCase) not `applications`. |
+| `references unknown alias(es)` | A `_ref` points at an `_alias` no record declares | Add the target record under its own top-level model key with that `_alias`, or fix the alias name. The referenced record must exist somewhere in the same payload. |
 | `Argument \`email\` must not be null.` | A required field is missing from the scenario | Add the field with a value: `"email": "user-unique-value@test.com"` |
-| `Foreign key constraint failed` | A referenced record doesn't exist | Check that parent entities are nested correctly. The parent must exist before the child. |
-| `_ref "xyz" not found` | An `_alias` is referenced before it's created | Move the aliased node earlier in the tree (it must appear before any `_ref` to it in depth-first order) |
+| `Foreign key constraint failed` | A referenced record doesn't exist | Set the FK as a `{ "_ref": "alias" }` to a record that is in the payload. The SDK creates referenced records first. |
 
 ### Example: fixing a unique constraint
 
@@ -104,30 +103,27 @@ You fix the JSON file, re-run the test, and repeat until it passes.
 }
 ```
 
-### Example: fixing a wrong relation name
+### Example: fixing an unknown alias reference
 
-**Broken** — "apps" is not the Prisma relation name:
+Each model is its own top-level key, and every FK is a `{ "_ref": "alias" }`. A `_ref` to an alias that no record declares fails.
+
+**Broken** — Application references `org`, but no record declares `_alias: "org"`:
 ```json
 {
-  "Organization": [{
-    "apps": [{ "name": "My App" }]
-  }]
+  "create": {
+    "Organization": [{ "name": "My Org", "slug": "my-org" }],
+    "Application": [{ "name": "My App", "organizationId": { "_ref": "org" } }]
+  }
 }
 ```
 
-**Fixed** — use the exact Prisma relation name:
-```prisma
-// Your Prisma schema says:
-model Organization {
-  applications Application[]  // ← the relation name is "applications"
-}
-```
-
+**Fixed** — give the Organization the `org` alias so the `_ref` resolves:
 ```json
 {
-  "Organization": [{
-    "applications": [{ "name": "My App" }]
-  }]
+  "create": {
+    "Organization": [{ "_alias": "org", "name": "My Org", "slug": "my-org" }],
+    "Application": [{ "name": "My App", "organizationId": { "_ref": "org" } }]
+  }
 }
 ```
 

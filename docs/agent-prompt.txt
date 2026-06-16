@@ -222,7 +222,7 @@ Every project starts with three scenarios. Generate each as a JSON file in a `sc
 Call `adapter.getSchema()` or look at the Prisma schema directly. Identify:
 - All models and their required fields (no default)
 - All enum types and their valid values
-- All relation names (the nesting keys)
+- Every foreign key column name (you set these explicitly with `_ref`)
 - Which models have the scope field
 
 ### 5.2 — Generate the three files
@@ -231,14 +231,9 @@ Call `adapter.getSchema()` or look at the Prisma schema directly. Identify:
 ```json
 {
   "create": {
-    "Organization": [{
-      "name": "Empty Org ",
-      "slug": "empty-unique-value",
-      "members": [{
-        "role": "owner",
-        "user": [{ "name": "Solo User", "email": "solo-unique-value@test.com" }]
-      }]
-    }]
+    "Organization": [{ "_alias": "org", "name": "Empty Org ", "slug": "empty-unique-value" }],
+    "User": [{ "_alias": "solo", "name": "Solo User", "email": "solo-unique-value@test.com", "organizationId": { "_ref": "org" } }],
+    "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "solo" } }]
   }
 }
 ```
@@ -334,7 +329,7 @@ npx vitest run tests/validate-scenarios.test.ts
 | Error | Fix |
 |-------|-----|
 | `Unique constraint on (slug)` | Ensure field values are unique across instances |
-| `Unknown argument 'applications'` | Check Prisma schema for the exact relation name (might be PascalCase) |
+| `references unknown alias(es)` | A `_ref` points at an `_alias` no record declares. Add the target record (with that `_alias`) as its own top-level model key, or fix the alias name. |
 | `Argument 'email' must not be null` | Add the required field to the scenario |
 | `Invalid value for 'architecture'` | Check enum values in your Prisma schema |
 
@@ -395,44 +390,25 @@ Generate `scenarios/run-statuses.json`:
 {
   "_description": "Runs in various pipeline states — for testing status filters, progress bars, and dashboard aggregations",
   "create": {
-    "Organization": [{
-      "name": "Status Test ",
-      "slug": "status-unique-value",
-      "members": [{
-        "role": "owner",
-        "user": [{ "name": "Admin", "email": "admin-unique-value@test.com" }]
-      }],
-      "applications": [{
-        "_alias": "app",
-        "name": "App",
-        "architecture": "WEB",
-        "testPlans": [{
-          "name": "Plan",
-          "plan": "x",
-          "testGenerations": [{
-            "_alias": "gen1",
-            "conversation": "[]",
-            "applicationId": { "_ref": "app" }
-          }]
-        }],
-        "tests": [{
-          "name": "Pipeline Test",
-          "testGenerationId": { "_ref": "gen1" },
-          "runs": [
-            { "status": "queued" },
-            { "status": "queued" },
-            { "status": "processing" },
-            { "status": "processing" },
-            { "status": "processing" },
-            { "status": "completed" },
-            { "status": "completed" },
-            { "status": "completed" },
-            { "status": "completed" },
-            { "status": "failed" }
-          ]
-        }]
-      }]
-    }]
+    "Organization": [{ "_alias": "org", "name": "Status Test ", "slug": "status-unique-value" }],
+    "User": [{ "_alias": "admin", "name": "Admin", "email": "admin-unique-value@test.com", "organizationId": { "_ref": "org" } }],
+    "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "admin" } }],
+    "Application": [{ "_alias": "app", "name": "App", "architecture": "WEB", "organizationId": { "_ref": "org" } }],
+    "TestPlan": [{ "_alias": "plan", "name": "Plan", "plan": "x", "applicationId": { "_ref": "app" } }],
+    "TestGeneration": [{ "_alias": "gen1", "conversation": "[]", "testPlanId": { "_ref": "plan" }, "applicationId": { "_ref": "app" } }],
+    "Test": [{ "_alias": "pipelineTest", "name": "Pipeline Test", "testGenerationId": { "_ref": "gen1" } }],
+    "Run": [
+      { "status": "queued", "testId": { "_ref": "pipelineTest" } },
+      { "status": "queued", "testId": { "_ref": "pipelineTest" } },
+      { "status": "processing", "testId": { "_ref": "pipelineTest" } },
+      { "status": "processing", "testId": { "_ref": "pipelineTest" } },
+      { "status": "processing", "testId": { "_ref": "pipelineTest" } },
+      { "status": "completed", "testId": { "_ref": "pipelineTest" } },
+      { "status": "completed", "testId": { "_ref": "pipelineTest" } },
+      { "status": "completed", "testId": { "_ref": "pipelineTest" } },
+      { "status": "completed", "testId": { "_ref": "pipelineTest" } },
+      { "status": "failed", "testId": { "_ref": "pipelineTest" } }
+    ]
   }
 }
 ```
@@ -450,7 +426,7 @@ Now the test that checks "dashboard shows 2 queued, 3 processing, 4 completed, 1
 - **DO** test with testcontainers and `checkScenario` — mocks don't catch real DB errors
 - **DO** add both secrets to `.env` and `.env.example`
 - **DO** use unique values for all unique fields in test scenarios
-- **DO** check your Prisma schema for exact relation field names before writing scenarios
+- **DO** check your Prisma schema for exact model names and FK column names before writing scenarios — each model is a top-level key and each FK is set explicitly via `_ref`
 - **DO** iterate on scenarios until `checkScenario` passes — never ship a scenario that hasn't been validated
 - **DO** generate new targeted scenarios when existing ones don't fit a test's needs
 - **DO** check existing scenarios before generating a new one — reuse when possible
@@ -458,7 +434,7 @@ Now the test that checks "dashboard shows 2 queued, 3 processing, 4 completed, 1
 ### DO NOT:
 - **DO NOT** implement HMAC verification, JWT signing, or teardown logic yourself. The SDK handles all of this.
 - **DO NOT** return fake or hardcoded auth tokens like `"test-token"`. The test runner uses these to actually log in. If they don't work, every test fails.
-- **DO NOT** set FK fields manually in scenarios. If you nest Application under Organization, don't set `organizationId` — the SDK does it.
+- **DO** set every FK field explicitly in scenarios, including the scope field — express each as `{ "_ref": "alias" }` pointing at the parent record's `_alias`. The SDK does NOT inject or wire any FK for you; the factory writes whatever you provide.
 - **DO NOT** set `id` fields in scenarios. They're auto-generated.
 - **DO NOT** set fields with `@default(...)` or `@updatedAt` in scenarios unless you want to override the default.
 - **DO NOT** use the same value for `sharedSecret` and `signingSecret`. The SDK will throw an error.

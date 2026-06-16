@@ -61,17 +61,19 @@ Response (200):
     "sdk": { "language": "typescript", "orm": "prisma", "server": "web" },
     "schema": {
       "models": [ ... ],
-      "edges": [ ... ],
-      "relations": [ ... ],
+      "edges": [],
+      "relations": [],
       "scopeField": "organizationId"
     }
   }
 
 The schema object contains:
-- models: list of all database models with their fields (name, type, required, id, hasDefault)
-- edges: list of all FK relationships (from model, to model, local field, foreign field, nullable)
-- relations: named relation mappings used for scenario nesting
+- models: list of all database models with their fields (name, type, isRequired, isId, hasDefault). This and scopeField are the meaningful parts.
+- edges: always emitted as an empty array. The SDK does NOT introspect FK relations.
+- relations: always emitted as an empty array. The SDK does NOT introspect FK relations.
 - scopeField: the field name used for test data isolation
+
+Dependency information does not come from the schema. The SDK derives create order entirely from the `_alias`/`_ref` graph in the up payload at request time.
 
 ### up
 
@@ -81,13 +83,15 @@ Request:
     "action": "up",
     "testRunId": "optional-uuid",
     "create": {
-      "ModelName": [{ "field": "value", ... }]
+      "Organization": [{ "_alias": "org", "name": "Acme Corp", "slug": "acme-corp" }],
+      "User": [{ "_alias": "alice", "email": "alice@test.com", "organizationId": { "_ref": "org" } }],
+      "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "alice" } }]
     }
   }
 
 If testRunId is omitted, the SDK generates a random UUID.
 
-The create field contains a nested JSON tree describing what records to create. See scenarios.txt for the full format.
+The create field is a FLAT map keyed by model name; each value is an array of records to create. A model is created only when it appears as a top-level key. There is no nesting — cross-model links are expressed with `_alias`/`_ref`. See scenarios.txt for the full format.
 
 Response (200):
 
@@ -128,9 +132,9 @@ Response (200):
 
 The scope field is a single column name (e.g., organizationId) present on most models in the database. It references a root entity (e.g., Organization) that acts as the isolation boundary for test data.
 
-During up: the SDK creates the root entity first, then injects the scope field value into all child records.
+During up: the SDK does NOT inject the scope field. Every model that has the scope field must set it explicitly in the payload — normally as a `{ "_ref": "..." }` to the scope record — and the registered factory writes it. The SDK reads the scope field only AFTER create, to derive the auth scope value for the response.
 
-During teardown: the SDK deletes all records matching the scope field value, in reverse topological order to respect FK constraints. Records on models without the scope field are deleted by their individual IDs from the refs token.
+During teardown: the SDK does not use the scope field to find rows. It tears down exactly the records captured in the signed refs token, calling each model's factory `teardown` per record in reverse topological order (derived from the up payload's `_alias`/`_ref` graph) to respect FK constraints. A model whose factory defines no `teardown` is skipped.
 
 ## The refs token
 
@@ -148,7 +152,7 @@ The protocol enforces hard safety constraints:
    The endpoint returns 404 PRODUCTION_BLOCKED unless allowProduction is set to true. The SDK does not inspect NODE_ENV (or any environment variable) — this explicit flag is the only switch. This keeps the gate explicit and visible instead of relying on implicit environment detection.
 
 2. UP CAN ONLY CREATE
-   The up action uses the ORM's create operations. It cannot update, delete, drop, truncate, or execute raw SQL. The worst it can do is insert rows.
+   The up action routes every record through a registered factory's create. The SDK itself never updates, deletes, drops, truncates, or runs SQL. The worst it can do is insert rows.
 
 3. DOWN CAN ONLY DELETE WHAT UP CREATED
    During up, the SDK signs a token with the IDs of every created record using your signing secret. During down, the SDK verifies that token before deleting. It deletes only the records listed in the token. Even the Autonoma platform cannot forge or modify this token.
@@ -156,8 +160,8 @@ The protocol enforces hard safety constraints:
 4. REQUESTS ARE AUTHENTICATED
    Every request is HMAC-SHA256 signed with the shared secret. Unsigned or tampered requests are rejected with 401.
 
-5. NO RAW SQL
-   All database operations go through the ORM layer. The SDK calls ORM create and delete methods, never raw SQL strings. Schema validation happens at the ORM level.
+5. FACTORY-DRIVEN WRITES
+   Every model the SDK writes goes through a registered factory's create — the SDK never runs SQL itself and never falls back to it. (A factory body may do a raw INSERT internally; that is owned by you, not the SDK.)
 
 ## Error codes
 

@@ -23,13 +23,13 @@ The Environment Factory is designed with hard constraints that make it safe by c
 
 Contrast with raw SQL: a raw SQL endpoint could DROP TABLE, DELETE FROM users, or UPDATE users SET role = 'admin'. Even with auth, one malformed query could destroy production data. The Environment Factory can't do any of that.
 
-This is why scenario data is a structured JSON tree, not SQL. The SDK interprets it as a series of ORM create calls -- nothing more.
+This is why scenario data is a structured JSON object, not SQL. The SDK interprets it as a series of factory create calls -- nothing more.
 
 ## The format
 
-Data is a nested JSON tree. The top-level keys are model names from your database schema. Children are nested inside their parents. The SDK reads FK relationships from your ORM schema and wires IDs automatically -- you never set FK fields manually.
+Data is a FLAT map. The top-level keys are model names from your database schema; each value is an array of records to create for that model. A model is created ONLY when it appears as a top-level key. There is NO nesting -- you do not place one model's records inside another model's fields. (If you do, the SDK treats that array as opaque field data and passes it to the factory verbatim; it is NOT created as separate records.)
 
-Think of it like Protocol Buffers: the schema is shared once (via discover), and after that the data contains only values -- no field types, no FK directions, no column names. Both sides already know the structure. The platform calls discover to learn your schema, then sends scenario data that references models and relation names. Your SDK already has the same schema from your ORM, so it knows exactly how to interpret the nesting and wire the foreign keys.
+Every cross-model link is expressed with `_alias`/`_ref`: name a record with `_alias`, and point a foreign key at it with `{ "_ref": "alias" }`. The SDK topologically sorts the records from this `_alias`/`_ref` graph, so the order of keys does not matter. There is no relation introspection — dependency order comes entirely from the `_ref` edges you write.
 
 All field values must be complete and literal -- the SDK does not perform any template resolution or variable substitution. The platform is responsible for generating fully resolved data before sending it.
 
@@ -37,100 +37,70 @@ All field values must be complete and literal -- the SDK does not perform any te
 
   {
     "create": {
-      "Organization": [{
-        "name": "Test Org",
-        "slug": "test-org",
-        "members": [{
-          "role": "owner",
-          "user": [{ "name": "Admin", "email": "admin@test.com" }]
-        }]
-      }]
+      "Organization": [{ "_alias": "org", "name": "Test Org", "slug": "test-org" }],
+      "User": [{ "_alias": "admin", "name": "Admin", "email": "admin@test.com", "organizationId": { "_ref": "org" } }],
+      "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "admin" } }]
     }
   }
 
 This creates:
-1. One Organization
-2. One User (created first because Member holds the FK to it)
-3. One Member with organizationId set to the Organization's ID and userId set to the User's ID
+1. One Organization (aliased "org")
+2. One User (aliased "admin"), with organizationId set explicitly via `_ref`
+3. One Member with organizationId and userId set explicitly via `_ref`
 
-### How does the SDK know which FK to set?
+The SDK creates them in dependency order (Organization, then User, then Member) because the `_ref` edges say Member depends on both, and User depends on Organization.
 
-It doesn't guess. The ORM adapter reads your schema metadata at runtime and extracts every model, field, and relationship -- including the exact FK column names.
+### How does the SDK know the create order?
 
-For example, given a schema where:
-- Organization has a one-to-many relation to Member
-- Member has a column organizationId pointing to Organization.id
-- Member has a column userId pointing to User.id
+From the `_alias`/`_ref` graph in the payload — nothing else. It does NOT read your ORM's FK graph or relations. A record that another record `_ref`s is created first. A `_ref` to an alias that no record in the SAME payload declares fails with INVALID_BODY ("references unknown alias(es)").
 
-The adapter extracts:
-- Organization.members is a relation to Member
-- Member holds the FK column organizationId pointing to Organization.id
-- Member.user is a relation to User
-- Member holds the FK column userId pointing to User.id
+You set every foreign key yourself, including the scope field. Use the exact FK column name from your schema -- whether you called it organizationId, orgId, tenant_fk, or anything else. The value is a `{ "_ref": "..." }` pointing at the parent's `_alias`. The factory for that model owns the actual write.
 
-Each ORM adapter reads this metadata differently -- Prisma embeds it in the generated client, Drizzle exports it as plain objects, SQLAlchemy exposes it via inspection, Ecto reads it from schema modules -- but they all produce the same result. The SDK receives a standardized schema map and uses it to wire every nested object automatically.
-
-The FK column name comes directly from your schema definition -- whether you called it organizationId, orgId, tenant_fk, or anything else. No string matching, no conventions, no guessing.
-
-### Realistic example (org with apps, tests, runs)
+### Realistic example (org with apps, members)
 
   {
     "create": {
-      "Organization": [{
-        "name": "Acme Corp",
-        "slug": "acme-corp",
+      "Organization": [{ "_alias": "org", "name": "Acme Corp", "slug": "acme-corp" }],
 
-        "members": [
-          { "role": "owner", "user": [{ "name": "Alice", "email": "alice@test.com" }] },
-          { "role": "admin", "user": [{ "name": "Bob", "email": "bob@test.com" }] }
-        ],
+      "User": [
+        { "_alias": "alice", "name": "Alice", "email": "alice@test.com", "organizationId": { "_ref": "org" } },
+        { "_alias": "bob", "name": "Bob", "email": "bob@test.com", "organizationId": { "_ref": "org" } }
+      ],
 
-        "applications": [
-          {
-            "_alias": "webApp",
-            "name": "Marketing Website",
-            "architecture": "WEB",
-            "webApplicationData": [{ "url": "https://acme.com" }],
-            "tags": [
-              { "name": "Critical", "color": "#DC2626" },
-              { "name": "Flaky", "color": "#EAB308" }
-            ]
-          },
-          {
-            "name": "Android App",
-            "architecture": "ANDROID",
-            "mobileApplicationData": [{ "packageUrl": "https://cdn.example.com/app.apk" }]
-          }
-        ]
-      }]
+      "Member": [
+        { "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "alice" } },
+        { "role": "admin", "organizationId": { "_ref": "org" }, "userId": { "_ref": "bob" } }
+      ],
+
+      "Application": [
+        {
+          "_alias": "webApp",
+          "name": "Marketing Website",
+          "architecture": "WEB",
+          "organizationId": { "_ref": "org" }
+        },
+        {
+          "name": "Android App",
+          "architecture": "ANDROID",
+          "organizationId": { "_ref": "org" }
+        }
+      ]
     }
   }
 
-## How nesting works
+## How the SDK orders records
 
-The SDK reads your ORM schema's relations to know what each nested key means. The nested key must be the exact relation field name from the parent model in your ORM schema.
+The SDK has no relation introspection. It builds a dependency graph purely from the `_alias`/`_ref` edges in your payload and topologically sorts it: any record referenced by a `_ref` is created before the record that points at it. Key order in the JSON is irrelevant.
 
-### Finding the right relation name
+### Setting foreign keys
 
-Look at the parent model in your ORM schema. The relation field names on the parent are the keys you use in scenario nesting. For example, if Organization has relation fields named members, applications, and invitations, use those exact names in your scenario JSON.
+Every FK is your responsibility, expressed as `{ "_ref": "alias" }`. There is no "FK direction" distinction to reason about — every link, whether it points "up" or "across", is just a `_ref` from the record that holds the FK column to the record it depends on.
 
-Warning: some schemas use PascalCase for relation names (e.g., Application instead of applications). Always check your ORM schema.
+Examples:
+- Application holds organizationId -> set `"organizationId": { "_ref": "org" }` on each Application record.
+- Member holds userId and organizationId -> set both as `_ref`s on each Member record.
 
-### FK direction: child FK vs parent FK
-
-The SDK handles both FK directions:
-
-FK on child (most common): Application.organizationId points to Organization.
-- Parent (Organization) is created first
-- Child (Application) is created after, with organizationId set automatically
-- In the scenario, nest Application under Organization
-
-FK on parent (reverse): Member.userId points to User.
-- The FK (userId) is on Member, but User is the child in the nesting
-- The SDK detects this: creates User first, then sets Member.userId
-- In the scenario, nest User under Member
-
-This is how you solve the "member-user distribution" problem -- each member gets its own user, correctly wired.
+This is how you solve the "member-user distribution" problem -- give each User its own `_alias`, then point each Member's userId at the right one. Each member gets its own user, correctly wired.
 
 ## What to include in fields
 
@@ -145,99 +115,74 @@ Unique fields: must have unique values to avoid collisions when tests run in par
 - id -- auto-generated by the database
 - Fields with default values -- the database or ORM handles them
 - Auto-updated timestamp fields -- handled by the ORM automatically
-- FK fields handled by nesting -- if you nest Application under Organization, don't set organizationId manually
-- The scope field -- the SDK injects it automatically for models that have it
 
-Example: given a model with fields id (auto-generated), name (required), architecture (required enum), organizationId (FK), createdAt (default now), and updatedAt (auto-updated), you only provide name and architecture:
+What you MUST include (the SDK does NOT fill these in):
+- Every foreign key -- set it explicitly as `{ "_ref": "alias" }`. The SDK does not wire FKs for you.
+- The scope field -- it is a FK like any other. Set it explicitly (usually `{ "_ref": "..." }` to the scope record). The SDK does NOT inject it.
 
-  { "name": "My App", "architecture": "WEB" }
+Example: given a model with fields id (auto-generated), name (required), architecture (required enum), organizationId (FK + scope field), createdAt (default now), and updatedAt (auto-updated), you provide name, architecture, and organizationId:
 
-The SDK handles id, organizationId, createdAt, and updatedAt.
+  { "name": "My App", "architecture": "WEB", "organizationId": { "_ref": "org" } }
 
-## Cross-branch references (_alias / _ref)
+The SDK handles id, createdAt, and updatedAt. You set organizationId.
 
-When a record needs a FK to something in a different branch of the tree, use _alias to name a node and _ref to reference it.
+## Cross-model references (_alias / _ref)
 
-### Problem: TestGeneration needs applicationId
+Every foreign key is a cross-model reference: name the target record with _alias, and point the FK at it with _ref. This is the ONLY way to link records — there is no nesting.
 
-TestGeneration is nested under TestPlan, but it also needs applicationId which points to the Application (a different branch):
+### Example: TestGeneration needs applicationId
 
-  Organization
-  +-- Application (webApp)       <- need to reference this
-  |   +-- TestPlan
-  |       +-- TestGeneration     <- needs applicationId = webApp.id
-
-### Solution: _alias + _ref
+TestGeneration has an applicationId pointing at an Application, and Test has a testGenerationId pointing at a TestGeneration. Each model is a top-level key; the FKs are `_ref`s:
 
   {
-    "applications": [{
-      "_alias": "webApp",
-      "name": "Marketing Website",
-      "architecture": "WEB",
+    "create": {
+      "Application": [{ "_alias": "webApp", "name": "Marketing Website", "architecture": "WEB", "organizationId": { "_ref": "org" } }],
 
-      "testPlans": [{
-        "name": "Smoke Plan",
-        "plan": "content",
-        "testGenerations": [{
-          "_alias": "gen1",
-          "conversation": "[]",
-          "status": "success",
-          "applicationId": { "_ref": "webApp" }
-        }]
-      }],
+      "TestPlan": [{ "_alias": "smoke", "name": "Smoke Plan", "plan": "content", "applicationId": { "_ref": "webApp" } }],
 
-      "tests": [{
-        "name": "Homepage Test",
-        "testGenerationId": { "_ref": "gen1" },
-        "steps": [
-          { "order": 1, "interaction": "click", "params": {} }
-        ]
-      }]
-    }]
+      "TestGeneration": [{ "_alias": "gen1", "conversation": "[]", "status": "success", "testPlanId": { "_ref": "smoke" }, "applicationId": { "_ref": "webApp" } }],
+
+      "Test": [{ "name": "Homepage Test", "testGenerationId": { "_ref": "gen1" } }],
+
+      "Step": [{ "order": 1, "interaction": "click", "params": {}, "testId": { "_ref": "homepageTest" } }]
+    }
   }
 
 Rules:
-- _alias is a string name you choose. It must be unique across the entire scenario.
-- _ref resolves to the id of the aliased node after it's created.
-- The aliased node must appear before the _ref in tree traversal order (depth-first). If it doesn't, you'll get: _ref "xyz" not found.
-- You can chain references: alias a node, then reference it from multiple places.
+- _alias is a string name you choose. It must be unique across the entire payload.
+- _ref resolves to the id of the aliased record after it's created.
+- A _ref to an alias that no record in the SAME payload declares fails with INVALID_BODY ("references unknown alias(es)").
+- Key order does not matter — the SDK topologically sorts records from the _alias/_ref graph, so a record is created before anything that _refs it.
+- You can chain references: alias a record, then reference it from multiple places.
 
 ### Another example: Invitation with inviterId
 
   {
-    "Organization": [{
-      "name": "Org",
-      "members": [{
-        "role": "owner",
-        "user": [{
-          "_alias": "inviter",
-          "name": "Alice",
-          "email": "alice@test.com"
-        }]
-      }],
-      "invitations": [
-        { "email": "bob@test.com", "inviterId": { "_ref": "inviter" }, "role": "admin", "expiresAt": "2025-01-01T00:00:00Z" },
-        { "email": "carol@test.com", "inviterId": { "_ref": "inviter" }, "role": "member", "expiresAt": "2025-01-01T00:00:00Z" }
+    "create": {
+      "Organization": [{ "_alias": "org", "name": "Org", "slug": "org" }],
+      "User": [{ "_alias": "inviter", "name": "Alice", "email": "alice@test.com", "organizationId": { "_ref": "org" } }],
+      "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "inviter" } }],
+      "Invitation": [
+        { "email": "bob@test.com", "organizationId": { "_ref": "org" }, "inviterId": { "_ref": "inviter" }, "role": "admin", "expiresAt": "2025-01-01T00:00:00Z" },
+        { "email": "carol@test.com", "organizationId": { "_ref": "org" }, "inviterId": { "_ref": "inviter" }, "role": "member", "expiresAt": "2025-01-01T00:00:00Z" }
       ]
-    }]
+    }
   }
 
 ### Another example: TestTag (join table)
 
   {
-    "applications": [{
-      "tags": [
-        { "_alias": "tag1", "name": "Critical", "color": "#FF0000" },
-        { "_alias": "tag2", "name": "High", "color": "#FF8800" }
+    "create": {
+      "Tag": [
+        { "_alias": "tag1", "name": "Critical", "color": "#FF0000", "organizationId": { "_ref": "org" } },
+        { "_alias": "tag2", "name": "High", "color": "#FF8800", "organizationId": { "_ref": "org" } }
       ],
-      "tests": [{
-        "name": "Test",
-        "testTags": [
-          { "tagId": { "_ref": "tag1" } },
-          { "tagId": { "_ref": "tag2" } }
-        ]
-      }]
-    }]
+      "Test": [{ "_alias": "test1", "name": "Test", "testGenerationId": { "_ref": "gen1" } }],
+      "TestTag": [
+        { "testId": { "_ref": "test1" }, "tagId": { "_ref": "tag1" } },
+        { "testId": { "_ref": "test1" }, "tagId": { "_ref": "tag2" } }
+      ]
+    }
   }
 
 ## The three standard scenarios
@@ -249,11 +194,9 @@ Tests empty states, onboarding flows, "no data yet" screens.
 
   {
     "create": {
-      "Organization": [{
-        "name": "Empty Org",
-        "slug": "empty-org",
-        "members": [{ "role": "owner", "user": [{ "name": "Solo User", "email": "solo@test.com" }] }]
-      }]
+      "Organization": [{ "_alias": "org", "name": "Empty Org", "slug": "empty-org" }],
+      "User": [{ "_alias": "solo", "name": "Solo User", "email": "solo@test.com", "organizationId": { "_ref": "org" } }],
+      "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "solo" } }]
     }
   }
 
@@ -262,29 +205,27 @@ Enough data to test every filter, status, and category. Use descriptive names ("
 
   {
     "create": {
-      "Organization": [{
-        "name": "Acme Corp",
-        "slug": "acme-corp",
-        "members": [
-          { "role": "owner", "user": [{ "name": "Alice", "email": "alice@test.com" }] },
-          { "role": "admin", "user": [{ "name": "Bob", "email": "bob@test.com" }] },
-          { "role": "viewer", "user": [{ "name": "Carol", "email": "carol@test.com" }] }
-        ],
-        "applications": [
-          {
-            "_alias": "webApp",
-            "name": "Marketing Website",
-            "architecture": "WEB",
-            "tags": [
-              { "name": "Critical", "color": "#DC2626" },
-              { "name": "P1 - High", "color": "#F97316" },
-              { "name": "Flaky", "color": "#EAB308" }
-            ]
-          },
-          { "name": "Android App", "architecture": "ANDROID" },
-          { "name": "iOS App", "architecture": "IOS" }
-        ]
-      }]
+      "Organization": [{ "_alias": "org", "name": "Acme Corp", "slug": "acme-corp" }],
+      "User": [
+        { "_alias": "alice", "name": "Alice", "email": "alice@test.com", "organizationId": { "_ref": "org" } },
+        { "_alias": "bob", "name": "Bob", "email": "bob@test.com", "organizationId": { "_ref": "org" } },
+        { "_alias": "carol", "name": "Carol", "email": "carol@test.com", "organizationId": { "_ref": "org" } }
+      ],
+      "Member": [
+        { "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "alice" } },
+        { "role": "admin", "organizationId": { "_ref": "org" }, "userId": { "_ref": "bob" } },
+        { "role": "viewer", "organizationId": { "_ref": "org" }, "userId": { "_ref": "carol" } }
+      ],
+      "Application": [
+        { "_alias": "webApp", "name": "Marketing Website", "architecture": "WEB", "organizationId": { "_ref": "org" } },
+        { "name": "Android App", "architecture": "ANDROID", "organizationId": { "_ref": "org" } },
+        { "name": "iOS App", "architecture": "IOS", "organizationId": { "_ref": "org" } }
+      ],
+      "Tag": [
+        { "name": "Critical", "color": "#DC2626", "organizationId": { "_ref": "org" } },
+        { "name": "P1 - High", "color": "#F97316", "organizationId": { "_ref": "org" } },
+        { "name": "Flaky", "color": "#EAB308", "organizationId": { "_ref": "org" } }
+      ]
     }
   }
 
@@ -293,33 +234,17 @@ Exceeds pagination thresholds. Tests pagination, sort stability, filter performa
 
   {
     "create": {
-      "Organization": [{
-        "name": "Load Test Org",
-        "slug": "load-test",
-        "members": [{ "role": "owner", "user": [{ "name": "User", "email": "load@test.com" }] }],
-        "applications": [{
-          "_alias": "app",
-          "name": "App",
-          "architecture": "WEB",
-          "tags": [
-            { "name": "Tag 1", "color": "#333" },
-            { "name": "Tag 2", "color": "#333" },
-            { "name": "Tag 3", "color": "#333" }
-          ],
-          "testPlans": [{
-            "name": "Plan",
-            "plan": "x",
-            "testGenerations": [{
-              "_alias": "gen1",
-              "conversation": "[]",
-              "applicationId": { "_ref": "app" }
-            }]
-          }],
-          "tests": [{
-            "name": "Test",
-            "testGenerationId": { "_ref": "gen1" }
-          }]
-        }]
-      }]
+      "Organization": [{ "_alias": "org", "name": "Load Test Org", "slug": "load-test" }],
+      "User": [{ "_alias": "user", "name": "User", "email": "load@test.com", "organizationId": { "_ref": "org" } }],
+      "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "user" } }],
+      "Application": [{ "_alias": "app", "name": "App", "architecture": "WEB", "organizationId": { "_ref": "org" } }],
+      "Tag": [
+        { "name": "Tag 1", "color": "#333", "organizationId": { "_ref": "org" } },
+        { "name": "Tag 2", "color": "#333", "organizationId": { "_ref": "org" } },
+        { "name": "Tag 3", "color": "#333", "organizationId": { "_ref": "org" } }
+      ],
+      "TestPlan": [{ "_alias": "plan", "name": "Plan", "plan": "x", "applicationId": { "_ref": "app" } }],
+      "TestGeneration": [{ "_alias": "gen1", "conversation": "[]", "testPlanId": { "_ref": "plan" }, "applicationId": { "_ref": "app" } }],
+      "Test": [{ "name": "Test", "testGenerationId": { "_ref": "gen1" } }]
     }
   }
