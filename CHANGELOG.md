@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/Autonoma-AI/sdk/compare/v0.2.5...v0.2.6) (2026-06-16)
+
+
+### Bug Fixes
+
+* gate endpoint on explicit allowProduction, drop NODE_ENV sniffing ([#61](https://github.com/Autonoma-AI/sdk/issues/61)) ([3cd47b9](https://github.com/Autonoma-AI/sdk/commit/3cd47b949e98938256b3bf0c9c7df3d0eb06bf7d))
+
 ## [0.2.5](https://github.com/Autonoma-AI/sdk/compare/v0.2.4...v0.2.5) (2026-04-30)
 
 
