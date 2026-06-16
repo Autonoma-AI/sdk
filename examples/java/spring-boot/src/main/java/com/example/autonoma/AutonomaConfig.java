@@ -45,6 +45,11 @@ public class AutonomaConfig {
             )
         );
 
+        // Required: the endpoint returns 404 unless this is true. The SDK never
+        // inspects JAVA_ENV/SPRING_PROFILES_ACTIVE — tie it to your own condition
+        // to keep it off in prod, e.g. !"production".equals(System.getenv("JAVA_ENV")).
+        config.setAllowProduction(true);
+
         // Every model the dashboard can create needs a factory.
         // The factory's inputClass drives both validation and discover.
         config.setFactories(Map.of(

@@ -30,6 +30,7 @@ class AutonomaHandlerTest {
     @Test
     void handleRequest_invalidSignature() {
         HandlerConfig config = new HandlerConfig("orgId", "shared", "signing", dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of());
         HandlerRequest req = new HandlerRequest(
             "{\"action\":\"discover\"}",
@@ -56,6 +57,7 @@ class AutonomaHandlerTest {
         String sig = HmacUtil.signBody(body, secret);
 
         HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
+        config.setAllowProduction(true);
         HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
         HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
         assertEquals(400, resp.status());
@@ -69,6 +71,7 @@ class AutonomaHandlerTest {
         String sig = HmacUtil.signBody(body, secret);
 
         HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
+        config.setAllowProduction(true);
         HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
         HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
         assertEquals(400, resp.status());
@@ -82,6 +85,7 @@ class AutonomaHandlerTest {
         String sig = HmacUtil.signBody(body, secret);
 
         HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
+        config.setAllowProduction(true);
         HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
         HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
         assertEquals(400, resp.status());
@@ -94,6 +98,7 @@ class AutonomaHandlerTest {
         String signingSecret = "signing-secret";
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
             (data, ctx) -> {
                 OrganizationInput input = (OrganizationInput) data;
@@ -138,6 +143,7 @@ class AutonomaHandlerTest {
         AtomicBoolean hookCalled = new AtomicBoolean(false);
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of());
         config.setBeforeDown(hookCtx -> {
             hookCalled.set(true);
@@ -169,6 +175,7 @@ class AutonomaHandlerTest {
         AtomicBoolean factoryCalled = new AtomicBoolean(false);
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
             (data, ctx) -> {
                 factoryCalled.set(true);
@@ -201,6 +208,7 @@ class AutonomaHandlerTest {
         AtomicReference<Object> receivedData = new AtomicReference<>();
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of(
             "Organization", FactoryUtil.defineFactory(
                 (data, ctx) -> {
@@ -248,6 +256,7 @@ class AutonomaHandlerTest {
         String signingSecret = "signing-secret";
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
             (data, ctx) -> {
                 Map<String, Object> r = new LinkedHashMap<>();
@@ -273,6 +282,7 @@ class AutonomaHandlerTest {
         List<String> teardownCalls = Collections.synchronizedList(new ArrayList<>());
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
             (data, ctx) -> {
                 OrganizationInput input = (OrganizationInput) data;
@@ -315,6 +325,7 @@ class AutonomaHandlerTest {
         String signingSecret = "signing-secret";
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
             (data, ctx) -> {
                 OrganizationInput input = (OrganizationInput) data;
@@ -350,6 +361,7 @@ class AutonomaHandlerTest {
         AtomicReference<FactoryContext> userCtx = new AtomicReference<>();
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of(
             "Organization", FactoryUtil.defineFactory(
                 (data, ctx) -> {
@@ -397,6 +409,7 @@ class AutonomaHandlerTest {
         String signingSecret = "signing-secret";
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of(
             "Organization", FactoryUtil.defineFactory(
                 (data, ctx) -> Map.of("id", "x"),
@@ -426,6 +439,7 @@ class AutonomaHandlerTest {
         String signingSecret = "signing-secret";
 
         HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
+        config.setAllowProduction(true);
         config.setFactories(Map.of()); // no factories
 
         String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"Org\"}]},\"testRunId\":\"run-miss\"}";
@@ -435,6 +449,38 @@ class AutonomaHandlerTest {
 
         assertEquals(400, resp.status());
         assertEquals("INVALID_BODY", resp.body().get("code"));
+    }
+
+    @Test
+    void handleRequest_productionBlockedWhenAllowProductionFalse() {
+        String body = "{\"action\":\"discover\"}";
+        String secret = "shared-secret";
+        String sig = HmacUtil.signBody(body, secret);
+
+        // Default config: allowProduction is false -> gated.
+        HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
+        config.setFactories(Map.of());
+        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+
+        assertEquals(404, resp.status());
+        assertEquals("PRODUCTION_BLOCKED", resp.body().get("code"));
+    }
+
+    @Test
+    void handleRequest_operatesWhenAllowProductionTrue() {
+        String body = "{\"action\":\"discover\"}";
+        String secret = "shared-secret";
+        String sig = HmacUtil.signBody(body, secret);
+
+        HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
+        config.setAllowProduction(true);
+        config.setFactories(Map.of());
+        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+
+        assertEquals(200, resp.status());
+        assertNotNull(resp.body().get("schema"));
     }
 
     private BiFunction<Map<String, Object>, AuthContext, AuthResult> dummyAuth() {

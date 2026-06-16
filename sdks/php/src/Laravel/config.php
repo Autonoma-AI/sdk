@@ -16,7 +16,8 @@ return [
     // Signing secret (only known by your SDK -- never share with Autonoma)
     'signing_secret' => env('AUTONOMA_SIGNING_SECRET', ''),
 
-    // Allow SDK to run in production (dangerous!)
+    // Gates the endpoint: it returns 404 unless this is true. The SDK no
+    // longer inspects APP_ENV/ENV -- this explicit flag is the only switch.
     'allow_production' => (bool) env('AUTONOMA_ALLOW_PRODUCTION', false),
 
     // Route path for the Autonoma endpoint

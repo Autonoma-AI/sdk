@@ -26,7 +26,7 @@ module Autonoma
     end
 
     def self.production_blocked
-      AutonomaError.new("Blocked in production", "PRODUCTION_BLOCKED", 404)
+      AutonomaError.new("Environment factory is disabled", "PRODUCTION_BLOCKED", 404)
     end
 
     def self.invalid_refs_token(detail)

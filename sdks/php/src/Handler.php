@@ -41,10 +41,7 @@ class Handler
             }
 
             if (!$config->allowProduction) {
-                $env = getenv('APP_ENV') ?: getenv('ENV') ?: '';
-                if ($env === 'production') {
-                    throw AutonomaError::productionBlocked();
-                }
+                throw AutonomaError::productionBlocked();
             }
 
             $signature = $req->headers['x-signature'] ?? $req->headers['X-Signature'] ?? '';

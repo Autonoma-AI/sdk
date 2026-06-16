@@ -27,10 +27,7 @@ module Autonoma
         raise Errors.same_secrets
       end
 
-      unless config.allow_production
-        env = ENV["RAILS_ENV"] || ENV["RACK_ENV"] || ENV["RUBY_ENV"] || ENV["ENV"]
-        raise Errors.production_blocked if env == "production"
-      end
+      raise Errors.production_blocked unless config.allow_production
 
       signature = req.headers["x-signature"] || req.headers["X-Signature"] || ""
 

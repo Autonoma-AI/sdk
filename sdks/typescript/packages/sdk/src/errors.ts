@@ -40,7 +40,7 @@ export const Errors = {
   },
   productionBlocked(detail?: string) {
     return new AutonomaError(
-      `Environment factory is disabled in production${detail != null ? `. ${detail}` : ""}`,
+      `Environment factory is disabled${detail != null ? `. ${detail}` : ""}`,
       "PRODUCTION_BLOCKED",
       404,
     );

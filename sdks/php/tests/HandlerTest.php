@@ -22,6 +22,7 @@ class HandlerTest extends TestCase
             signingSecret: 'test-signing-secret',
             auth: fn($user, $ctx) => ['credentials' => ['token' => 'test-token']],
             factories: $factories,
+            allowProduction: true,
         );
     }
 
@@ -119,6 +120,33 @@ class HandlerTest extends TestCase
         $this->assertSame('SAME_SECRETS', $res->body['code']);
     }
 
+    public function testBlocksWhenAllowProductionIsFalse(): void
+    {
+        $config = new HandlerConfig(
+            scopeField: 'organizationId',
+            sharedSecret: 'test-shared-secret',
+            signingSecret: 'test-signing-secret',
+            auth: fn($user, $ctx) => ['credentials' => ['token' => 'test-token']],
+            allowProduction: false,
+        );
+        $body = '{"action":"discover"}';
+        $req = $this->makeRequest($body);
+        $res = Handler::handleRequest($config, $req);
+        $this->assertSame(404, $res->status);
+        $this->assertSame('PRODUCTION_BLOCKED', $res->body['code']);
+    }
+
+    public function testOperatesWhenAllowProductionIsTrue(): void
+    {
+        // makeConfig sets allowProduction: true.
+        $config = $this->makeConfig(['Organization' => $this->orgFactory()]);
+        $body = '{"action":"discover"}';
+        $req = $this->makeRequest($body);
+        $res = Handler::handleRequest($config, $req);
+        $this->assertSame(200, $res->status);
+        $this->assertArrayHasKey('schema', $res->body);
+    }
+
     public function testRejectsMissingRefsTokenOnDown(): void
     {
         $config = $this->makeConfig();
@@ -157,6 +185,7 @@ class HandlerTest extends TestCase
             signingSecret: 'test-signing-secret',
             auth: fn($user) => ['credentials' => ['token' => 'test-token']],
             factories: ['Organization' => $this->orgFactory()],
+            allowProduction: true,
             afterUp: function (array $hookCtx, array $auth): array {
                 $auth['headers'] = ['X-Custom' => 'enriched'];
                 return $auth;
@@ -187,6 +216,7 @@ class HandlerTest extends TestCase
             signingSecret: 'test-signing-secret',
             auth: fn($user) => ['credentials' => ['token' => 'test-token']],
             factories: ['Organization' => $this->orgFactory()],
+            allowProduction: true,
             beforeDown: function (array $hookCtx) use (&$called, &$capturedScenarioName): void {
                 $called = true;
                 $capturedScenarioName = $hookCtx['scenarioName'];

@@ -21,6 +21,7 @@ def _make_config() -> HandlerConfig:
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,
         auth=lambda user, ctx: {"headers": {"Authorization": "Bearer test-token"}},
+        allow_production=True,
     )
 
 

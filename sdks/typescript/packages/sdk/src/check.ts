@@ -41,6 +41,7 @@ export async function checkScenario(
     scopeField: options?.scopeField ?? 'organizationId',
     sharedSecret,
     signingSecret,
+    allowProduction: true,
     factories,
     auth: options?.auth ?? (async () => ({ headers: { Authorization: 'Bearer check-token' } })),
   }

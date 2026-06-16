@@ -27,7 +27,7 @@ public class AutonomaError extends RuntimeException {
     }
 
     public static AutonomaError productionBlocked() {
-        return new AutonomaError("Environment factory is disabled in production", "PRODUCTION_BLOCKED", 404);
+        return new AutonomaError("Environment factory is disabled", "PRODUCTION_BLOCKED", 404);
     }
 
     public static AutonomaError invalidBody(String reason) {

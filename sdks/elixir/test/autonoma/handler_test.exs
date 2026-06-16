@@ -36,6 +36,7 @@ defmodule Autonoma.HandlerTest do
         scope_field: "organizationId",
         shared_secret: @shared_secret,
         signing_secret: @signing_secret,
+        allow_production: true,
         factories: %{"User" => user_factory()},
         auth: fn user, _ctx ->
           user_id = if user, do: user["id"], else: "anon"
@@ -187,6 +188,27 @@ defmodule Autonoma.HandlerTest do
     result = Handler.handle(config, signed_req(%{"action" => "discover"}))
     assert result.status == 500
     assert result.body["code"] == "SAME_SECRETS"
+  end
+
+  test "blocks when allow_production is absent (PRODUCTION_BLOCKED)" do
+    config = make_config() |> Map.delete(:allow_production)
+    result = Handler.handle(config, signed_req(%{"action" => "discover"}))
+    assert result.status == 404
+    assert result.body["code"] == "PRODUCTION_BLOCKED"
+  end
+
+  test "blocks when allow_production is false (PRODUCTION_BLOCKED)" do
+    config = make_config(%{allow_production: false})
+    result = Handler.handle(config, signed_req(%{"action" => "discover"}))
+    assert result.status == 404
+    assert result.body["code"] == "PRODUCTION_BLOCKED"
+  end
+
+  test "operates normally when allow_production is true" do
+    config = make_config(%{allow_production: true})
+    result = Handler.handle(config, signed_req(%{"action" => "discover"}))
+    assert result.status == 200
+    assert is_list(result.body["schema"]["models"])
   end
 
   test "rejects invalid signature" do

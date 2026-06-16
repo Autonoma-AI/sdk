@@ -192,7 +192,7 @@ async fn main() {
             );
             result
         }),
-        allow_production: false,
+        allow_production: true,
         sdk: Some(SdkMeta {
             orm: "sqlx".to_string(),
             server: "axum".to_string(),

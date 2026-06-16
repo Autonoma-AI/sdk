@@ -24,7 +24,7 @@ class AutonomaError extends \RuntimeException {
         return new self("Unknown action: {$action}", 'UNKNOWN_ACTION', 400);
     }
     public static function productionBlocked(): self {
-        return new self('Blocked in production', 'PRODUCTION_BLOCKED', 404);
+        return new self('Environment factory is disabled', 'PRODUCTION_BLOCKED', 404);
     }
     public static function invalidRefsToken(string $detail): self {
         return new self("Invalid refs token: {$detail}", 'INVALID_REFS_TOKEN', 403);
