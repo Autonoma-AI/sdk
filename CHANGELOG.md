@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.7](https://github.com/Autonoma-AI/sdk/compare/v0.2.6...v0.2.7) (2026-06-16)
+
+
+### Documentation
+
+* match docs to the shipped factory-driven SDK ([#63](https://github.com/Autonoma-AI/sdk/issues/63)) ([4b18c61](https://github.com/Autonoma-AI/sdk/commit/4b18c61700817289739bc3ac189160ccd172e734))
+
 ## [0.2.6](https://github.com/Autonoma-AI/sdk/compare/v0.2.5...v0.2.6) (2026-06-16)
 
 
