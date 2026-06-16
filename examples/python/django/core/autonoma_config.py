@@ -54,6 +54,11 @@ config = HandlerConfig(
     shared_secret=os.environ.get("AUTONOMA_SHARED_SECRET", "my-shared-secret"),
     signing_secret=os.environ.get("AUTONOMA_SIGNING_SECRET", "my-signing-secret"),
 
+    # Required: the endpoint returns 404 unless this is True. The SDK never
+    # inspects PYTHON_ENV/ENV — tie it to your own condition to keep it off in
+    # prod, e.g. allow_production=settings.DEBUG.
+    allow_production=True,
+
     factories={
         "Organization": define_factory(
             create=lambda data, ctx: organization_repo.create({"name": data.name}),

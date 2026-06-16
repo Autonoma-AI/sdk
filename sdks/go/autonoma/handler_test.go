@@ -34,8 +34,9 @@ func signedReq(body map[string]any, secret string) HandlerRequest {
 
 func TestHandleRequest_InvalidSignature(t *testing.T) {
 	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 	}
 	req := HandlerRequest{
 		Body:    `{"action":"discover"}`,
@@ -53,8 +54,9 @@ func TestHandleRequest_InvalidSignature(t *testing.T) {
 
 func TestHandleRequest_UnknownAction(t *testing.T) {
 	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 	}
 	body := `{"action":"nonexistent"}`
 	sig := SignBody(body, "shared")
@@ -93,8 +95,9 @@ func TestHandleRequest_SameSecrets(t *testing.T) {
 
 func TestHandleRequest_InvalidBody(t *testing.T) {
 	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 	}
 	body := "not json"
 	sig := SignBody(body, "shared")
@@ -114,8 +117,9 @@ func TestHandleRequest_InvalidBody(t *testing.T) {
 
 func TestHandleRequest_InvalidRefsToken(t *testing.T) {
 	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 	}
 	body := `{"action":"down","refsToken":"tampered.token.value"}`
 	sig := SignBody(body, "shared")
@@ -135,9 +139,10 @@ func TestHandleRequest_InvalidRefsToken(t *testing.T) {
 
 func TestDiscover(t *testing.T) {
 	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		ScopeField:    "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
+		ScopeField:      "organizationId",
 		Factories: FactoryRegistry{
 			"Organization": {
 				InputStruct: reflect.TypeOf(OrganizationInput{}),
@@ -191,9 +196,10 @@ func TestFactoryCreate(t *testing.T) {
 	var receivedInput interface{}
 
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 		Factories: FactoryRegistry{
 			"Organization": {
 				InputStruct: reflect.TypeOf(OrganizationInput{}),
@@ -242,9 +248,10 @@ func TestFactoryFKPreResolution(t *testing.T) {
 	var userReceivedInput interface{}
 
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 		Factories: FactoryRegistry{
 			"Organization": {
 				InputStruct: reflect.TypeOf(OrganizationInput{}),
@@ -290,9 +297,10 @@ func TestFactoryFKPreResolution(t *testing.T) {
 
 func TestFactoryMissingPK(t *testing.T) {
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 		Factories: FactoryRegistry{
 			"Organization": {
 				InputStruct: reflect.TypeOf(OrganizationInput{}),
@@ -323,9 +331,10 @@ func TestFactoryTeardown(t *testing.T) {
 	var teardownCalls []string
 
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 		Factories: FactoryRegistry{
 			"Organization": {
 				InputStruct: reflect.TypeOf(OrganizationInput{}),
@@ -383,9 +392,10 @@ func TestFactoryContextHasRefs(t *testing.T) {
 	var userCtx *FactoryContext
 
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 		Factories: FactoryRegistry{
 			"Organization": {
 				InputStruct: reflect.TypeOf(OrganizationInput{}),
@@ -439,9 +449,10 @@ func TestFactoryContextHasRefs(t *testing.T) {
 
 func TestAfterUpHook(t *testing.T) {
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 		Factories: FactoryRegistry{
 			"User": {
 				InputStruct: reflect.TypeOf(UserInput{}),
@@ -482,9 +493,10 @@ func TestBeforeDownHook(t *testing.T) {
 	var capturedScenarioName string
 
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 		Factories: FactoryRegistry{
 			"User": {
 				InputStruct: reflect.TypeOf(UserInput{}),
@@ -528,6 +540,35 @@ func TestBeforeDownHook(t *testing.T) {
 	}
 }
 
+func TestProductionGating(t *testing.T) {
+	// When AllowProduction is false (default), the endpoint must be blocked.
+	blockedConfig := &HandlerConfig{
+		SharedSecret:  "shared",
+		SigningSecret: "signing",
+	}
+	req := signedReq(map[string]any{"action": "discover"}, "shared")
+
+	resp := HandleRequest(blockedConfig, req)
+	if resp.Status != 404 {
+		t.Fatalf("expected 404 when AllowProduction is false, got %d: %v", resp.Status, resp.Body)
+	}
+	if resp.Body["code"] != "PRODUCTION_BLOCKED" {
+		t.Errorf("expected PRODUCTION_BLOCKED, got %v", resp.Body["code"])
+	}
+
+	// When AllowProduction is true, the endpoint operates normally.
+	allowedConfig := &HandlerConfig{
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
+		Factories:       FactoryRegistry{},
+	}
+	resp = HandleRequest(allowedConfig, req)
+	if resp.Status != 200 {
+		t.Fatalf("expected 200 when AllowProduction is true, got %d: %v", resp.Status, resp.Body)
+	}
+}
+
 func TestSchemaToWire(t *testing.T) {
 	schema := SchemaInfo{
 		Models: []ModelInfo{
@@ -562,10 +603,11 @@ func TestSchemaToWire(t *testing.T) {
 
 func TestNoFactoryRegistered(t *testing.T) {
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories:     FactoryRegistry{},
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
+		Factories:       FactoryRegistry{},
 	}
 
 	req := signedReq(map[string]any{
@@ -587,9 +629,10 @@ func TestTeardownWithDependencies(t *testing.T) {
 	var teardownOrder []string
 
 	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
+		ScopeField:      "organizationId",
+		SharedSecret:    "shared",
+		SigningSecret:   "signing",
+		AllowProduction: true,
 		Factories: FactoryRegistry{
 			"Organization": {
 				InputStruct: reflect.TypeOf(OrganizationInput{}),

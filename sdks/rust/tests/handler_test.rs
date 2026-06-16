@@ -44,7 +44,7 @@ fn make_config() -> HandlerConfig {
             })
         }),
         factories,
-        allow_production: false,
+        allow_production: true,
         sdk: Some(SdkMeta {
             orm: "sqlx".to_string(),
             server: "actix".to_string(),
@@ -189,4 +189,27 @@ async fn up_rejects_missing_factory() {
     assert_eq!(resp.status, 400);
     assert_eq!(resp.body["code"], "INVALID_BODY");
     assert!(resp.body["error"].as_str().unwrap().contains("no factory registered"));
+}
+
+#[tokio::test]
+async fn blocks_when_allow_production_false() {
+    let mut config = make_config();
+    config.allow_production = false;
+    let body = r#"{"action":"discover"}"#;
+    let req = signed_request(body, "shared-secret");
+
+    let resp = handle_request(&config, &req).await;
+    assert_eq!(resp.status, 404);
+    assert_eq!(resp.body["code"], "PRODUCTION_BLOCKED");
+}
+
+#[tokio::test]
+async fn operates_when_allow_production_true() {
+    let config = make_config(); // allow_production: true
+    let body = r#"{"action":"discover"}"#;
+    let req = signed_request(body, "shared-secret");
+
+    let resp = handle_request(&config, &req).await;
+    assert_eq!(resp.status, 200);
+    assert!(resp.body["schema"].is_object());
 }

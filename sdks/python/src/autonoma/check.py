@@ -51,6 +51,7 @@ async def check_scenario(
         signing_secret=signing_secret,
         auth=options.get("auth", lambda _user, _ctx: {"headers": {"Authorization": "Bearer check-token"}}),
         factories=factories,
+        allow_production=True,
     )
 
     up_body = json.dumps({"action": "up", "create": scenario.get("create", {})})

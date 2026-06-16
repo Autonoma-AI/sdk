@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-import os
 import re
 import uuid
 from typing import Any
@@ -115,13 +114,9 @@ async def handle_request(config: HandlerConfig, req: HandlerRequest) -> HandlerR
             raise same_secrets()
 
         if not config.allow_production:
-            if (
-                os.environ.get("PYTHON_ENV") == "production"
-                or os.environ.get("ENV") == "production"
-            ):
-                raise production_blocked(
-                    "allow_production config not set and PYTHON_ENV or ENV == 'production'. If you want to change this, set allow_production explicitly."
-                )
+            raise production_blocked(
+                "Set allow_production=True to enable the endpoint."
+            )
 
         signature: str = (
             req.headers.get("x-signature") or req.headers.get("X-Signature") or ""

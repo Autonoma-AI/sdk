@@ -22,6 +22,7 @@ class TestHandler < Minitest::Test
       shared_secret: "shared-secret",
       signing_secret: "signing-secret",
       auth: ->(user, _ctx) { { "headers" => { "Authorization" => "Bearer test-token-#{user ? user['id'] : 'anon'}" } } },
+      allow_production: true,
       factories: { "Users" => @user_factory }
     )
   end
@@ -80,6 +81,28 @@ class TestHandler < Minitest::Test
     assert_equal "UNKNOWN_ACTION", result.body["code"]
   end
 
+  def test_blocks_when_allow_production_absent
+    gated_config = Autonoma::HandlerConfig.new(
+      scope_field: "organizationId",
+      shared_secret: "shared-secret",
+      signing_secret: "signing-secret",
+      auth: ->(_user, _ctx) { { "headers" => {} } },
+      factories: { "Users" => @user_factory }
+    )
+    req = make_request({ "action" => "discover" })
+    result = Autonoma::Handler.handle_request(gated_config, req)
+    assert_equal 404, result.status
+    assert_equal "PRODUCTION_BLOCKED", result.body["code"]
+    assert_equal "Environment factory is disabled", result.body["error"]
+  end
+
+  def test_operates_when_allow_production_true
+    # @config already sets allow_production: true
+    req = make_request({ "action" => "discover" })
+    result = Autonoma::Handler.handle_request(@config, req)
+    assert_equal 200, result.status
+  end
+
   def test_discover_returns_sdk_meta_with_ruby
     req = make_request({ "action" => "discover" })
     result = Autonoma::Handler.handle_request(@config, req)
@@ -127,6 +150,7 @@ class TestHandler < Minitest::Test
         auth["headers"]["X-Custom"] = "enriched"
         auth
       },
+      allow_production: true,
       factories: { "Users" => user_factory }
     )
 
@@ -162,6 +186,7 @@ class TestHandler < Minitest::Test
         hook_called = true
         captured_ctx = hook_ctx
       },
+      allow_production: true,
       factories: { "Users" => user_factory }
     )
 
@@ -186,6 +211,7 @@ class TestFactories < Minitest::Test
       shared_secret: "test-secret",
       signing_secret: "test-signing-secret",
       auth: ->(_user, _ctx) { { "headers" => { "Authorization" => "Bearer token" } } },
+      allow_production: true,
       factories: {}
     }
     defaults.merge!(overrides)

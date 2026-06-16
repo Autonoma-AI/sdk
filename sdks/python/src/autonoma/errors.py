@@ -25,7 +25,8 @@ def unknown_action(action: str) -> AutonomaError:
 
 def production_blocked(detail: Optional[str] = None) -> AutonomaError:
     return AutonomaError(
-        "Blocked in production" + "" if detail is None else f". {detail}",
+        "Environment factory is disabled"
+        + ("" if detail is None else f". {detail}"),
         "PRODUCTION_BLOCKED",
         404,
     )

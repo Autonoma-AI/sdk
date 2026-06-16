@@ -6,8 +6,8 @@ Scenario data describes what database records to create. The Autonoma platform g
 
 The Environment Factory is designed with hard constraints that make it safe by construction:
 
-1. BLOCKED IN PRODUCTION
-   Endpoint returns 404 when the application is in production mode (unless explicitly opted in).
+1. EXPLICIT OPT-IN
+   The endpoint returns 404 unless allowProduction is set to true. The SDK does not inspect the environment (NODE_ENV, etc.) — this explicit flag is the only switch.
 
 2. UP CAN ONLY CREATE
    The up action calls ORM create methods. It cannot UPDATE, DELETE, DROP, TRUNCATE, or run raw SQL. The worst it can do is INSERT rows.

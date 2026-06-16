@@ -99,9 +99,9 @@ export async function handleRequest(
       );
     }
 
-    if (!config.allowProduction && process.env.NODE_ENV === "production") {
+    if (!config.allowProduction) {
       throw Errors.productionBlocked(
-        "allowProduction not set and NODE_ENV === 'production'. if you want to change this, set allowProduction explicitly.",
+        "Set allowProduction: true to enable the endpoint.",
       );
     }
 

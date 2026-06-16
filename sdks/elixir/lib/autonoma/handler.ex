@@ -57,7 +57,7 @@ defmodule Autonoma.Handler do
         raise Error.same_secrets()
       end
 
-      if !Map.get(config, :allow_production, false) && System.get_env("MIX_ENV") == "prod" do
+      unless Map.get(config, :allow_production, false) do
         raise Error.production_blocked()
       end
 

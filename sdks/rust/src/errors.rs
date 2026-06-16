@@ -52,7 +52,7 @@ pub fn unknown_action(action: &str) -> AutonomaError {
 
 pub fn production_blocked() -> AutonomaError {
     AutonomaError {
-        message: "Blocked in production".to_string(),
+        message: "Environment factory is disabled".to_string(),
         code: "PRODUCTION_BLOCKED".to_string(),
         status: 404,
     }

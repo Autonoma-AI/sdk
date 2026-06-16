@@ -42,7 +42,7 @@ fn make_config(factories: FactoryRegistry) -> HandlerConfig {
             })
         }),
         factories,
-        allow_production: false,
+        allow_production: true,
         sdk: Some(SdkMeta {
             orm: "sqlx".to_string(),
             server: "actix".to_string(),

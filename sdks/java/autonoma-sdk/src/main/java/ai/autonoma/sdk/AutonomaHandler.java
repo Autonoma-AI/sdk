@@ -56,11 +56,7 @@ public final class AutonomaHandler {
             }
 
             if (!config.isAllowProduction()) {
-                String env = System.getenv("JAVA_ENV");
-                String springProfile = System.getenv("SPRING_PROFILES_ACTIVE");
-                if ("production".equals(env) || "production".equals(springProfile) || "prod".equals(springProfile)) {
-                    throw AutonomaError.productionBlocked();
-                }
+                throw AutonomaError.productionBlocked();
             }
 
             String signature = req.headers().getOrDefault("x-signature",

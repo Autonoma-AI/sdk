@@ -22,7 +22,7 @@ defmodule Autonoma.Error do
   end
 
   def production_blocked do
-    %__MODULE__{message: "Blocked in production", code: "PRODUCTION_BLOCKED", status: 404}
+    %__MODULE__{message: "Environment factory is disabled", code: "PRODUCTION_BLOCKED", status: 404}
   end
 
   def invalid_refs_token(detail) do

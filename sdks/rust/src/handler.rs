@@ -56,11 +56,7 @@ async fn handle_request_inner(
     }
 
     if !config.allow_production {
-        if std::env::var("RUST_ENV").as_deref() == Ok("production")
-            || std::env::var("ENV").as_deref() == Ok("production")
-        {
-            return Err(production_blocked());
-        }
+        return Err(production_blocked());
     }
 
     let signature = req

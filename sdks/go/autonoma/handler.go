@@ -3,7 +3,6 @@ package autonoma
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -61,16 +60,7 @@ func handleRequestInner(config *HandlerConfig, req HandlerRequest) (*HandlerResp
 	}
 
 	if !config.AllowProduction {
-		env := os.Getenv("GO_ENV")
-		if env == "" {
-			env = os.Getenv("APP_ENV")
-		}
-		if env == "" {
-			env = os.Getenv("ENV")
-		}
-		if env == "production" {
-			return nil, ErrProductionBlocked("Either GO_ENV, APP_ENV or ENV == 'production'. Set AllowProduction explicitly to change this.")
-		}
+		return nil, ErrProductionBlocked("Set AllowProduction to true to enable the endpoint.")
 	}
 
 	signature := req.Headers["x-signature"]

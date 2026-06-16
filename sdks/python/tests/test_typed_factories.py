@@ -18,6 +18,7 @@ def _config(factories=None):
         signing_secret="signing",
         auth=lambda user, ctx: {},
         factories=factories or {},
+        allow_production=True,
     )
 
 

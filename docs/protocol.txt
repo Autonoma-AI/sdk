@@ -144,8 +144,8 @@ The token is signed by the SDK during up and verified during down. Because only 
 
 The protocol enforces hard safety constraints:
 
-1. BLOCKED IN PRODUCTION
-   The endpoint returns 404 when the application is running in production mode (unless explicitly opted in with an allowProduction flag). This prevents accidental use against production databases.
+1. EXPLICIT OPT-IN
+   The endpoint returns 404 PRODUCTION_BLOCKED unless allowProduction is set to true. The SDK does not inspect NODE_ENV (or any environment variable) — this explicit flag is the only switch. This keeps the gate explicit and visible instead of relying on implicit environment detection.
 
 2. UP CAN ONLY CREATE
    The up action uses the ORM's create operations. It cannot update, delete, drop, truncate, or execute raw SQL. The worst it can do is insert rows.
@@ -167,7 +167,7 @@ The protocol enforces hard safety constraints:
   UNKNOWN_ACTION        400          The action field is not discover, up, or down
   UNKNOWN_ENVIRONMENT   400          The requested environment name does not exist
   INVALID_REFS_TOKEN    403          The refs token is missing, malformed, or signature verification failed
-  PRODUCTION_BLOCKED    404          Endpoint is disabled in production mode
+  PRODUCTION_BLOCKED    404          Endpoint is disabled — allowProduction is not set to true
   SAME_SECRETS          500          sharedSecret and signingSecret are the same value
   INTERNAL_ERROR        500          Unexpected server error
 

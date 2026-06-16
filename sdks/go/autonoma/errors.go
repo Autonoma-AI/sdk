@@ -46,7 +46,7 @@ func ErrInvalidRefsToken(reason string) *AutonomaError {
 
 func ErrProductionBlocked(reason string) *AutonomaError {
 	return &AutonomaError{
-		Message: fmt.Sprintf("Environment factory is disabled in production. %s", reason),
+		Message: fmt.Sprintf("Environment factory is disabled. %s", reason),
 		Code:    "PRODUCTION_BLOCKED",
 		Status:  404,
 	}

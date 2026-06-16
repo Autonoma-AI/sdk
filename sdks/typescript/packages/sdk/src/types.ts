@@ -131,6 +131,12 @@ export interface HandlerConfig {
   signingSecret: string
   /** Factory definitions per model. Required: every model the dashboard sends in `create` must have one. */
   factories?: FactoryRegistry
+  /**
+   * Gates the endpoint. The endpoint returns 404 PRODUCTION_BLOCKED unless this
+   * is `true`. The SDK does not inspect NODE_ENV (or any environment variable) —
+   * this explicit flag is the only switch. Set it to `true` (optionally tied to
+   * your own condition, e.g. `process.env.NODE_ENV !== 'production'`) to enable.
+   */
   allowProduction?: boolean
   /**
    * Auth callback — called after entity creation during `up`.

@@ -344,7 +344,7 @@ curl -s -X POST "$URL" \
 
 **Expected**: A JSON response with your full schema — models, fields, edges, relations. If you see this, your endpoint is working.
 
-**If you get 404**: You're running in production mode. Set `NODE_ENV=development` or add `allowProduction: true` to the config.
+**If you get 404**: Either `allowProduction` isn't set (the endpoint returns 404 `PRODUCTION_BLOCKED` unless `allowProduction: true`), or the route isn't mounted at this path. The SDK does not inspect `NODE_ENV` or any environment variable — `allowProduction` is the only switch.
 
 **If you get 401**: The HMAC signature doesn't match. Make sure `SECRET` matches your `AUTONOMA_SHARED_SECRET` exactly.
 
@@ -512,20 +512,27 @@ result.timing  // { upMs, downMs } — performance numbers
 
 If it fails, `result.errors[0].fix` tells you exactly what to change. See the Validation page for all error types and fixes.
 
-## 7. Enable in production
+## 7. Enabling the endpoint
 
-The endpoint returns 404 in production (`NODE_ENV=production`) by default. This is a safety measure.
-
-When you're ready to use it in production, add `allowProduction: true`:
+The endpoint returns 404 `PRODUCTION_BLOCKED` unless you set `allowProduction:
+true`. This is the **only** switch — the SDK does **not** inspect `NODE_ENV` (or
+any other environment variable). Set it explicitly to enable the endpoint:
 
 ```typescript
 export const POST = createHandler({
   adapter: prismaAdapter(prisma, { scopeField: 'organizationId' }),
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  allowProduction: true,  // ← enable in production
+  allowProduction: true,  // ← required to enable the endpoint
   auth: async (user) => { /* ... */ },
 })
+```
+
+Because the flag is explicit, *you* decide the condition. To keep the endpoint
+off in production, tie it to your own check instead of letting the SDK guess:
+
+```typescript
+allowProduction: process.env.NODE_ENV !== 'production',
 ```
 
 ## 8. Connect to Autonoma

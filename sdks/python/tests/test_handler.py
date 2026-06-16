@@ -37,7 +37,13 @@ class UserInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _make_config(*, factories=None, shared="shared-secret", signing="signing-secret"):
+def _make_config(
+    *,
+    factories=None,
+    shared="shared-secret",
+    signing="signing-secret",
+    allow_production=True,
+):
     return HandlerConfig(
         scope_field="organizationId",
         shared_secret=shared,
@@ -48,6 +54,7 @@ def _make_config(*, factories=None, shared="shared-secret", signing="signing-sec
             }
         },
         factories=factories or {},
+        allow_production=allow_production,
     )
 
 
@@ -87,6 +94,20 @@ class TestHandleRequest:
         result = await handle_request(config, req)
         assert result.status == 500
         assert result.body["code"] == "SAME_SECRETS"
+
+    async def test_blocks_when_allow_production_false(self):
+        config = _make_config(allow_production=False)
+        req = _signed_request({"action": "discover"})
+        result = await handle_request(config, req)
+        assert result.status == 404
+        assert result.body["code"] == "PRODUCTION_BLOCKED"
+
+    async def test_operates_when_allow_production_true(self):
+        config = _make_config(allow_production=True)
+        req = _signed_request({"action": "discover"})
+        result = await handle_request(config, req)
+        assert result.status == 200
+        assert result.body["sdk"]["language"] == "python"
 
     async def test_returns_400_for_unknown_action(self):
         config = _make_config()
