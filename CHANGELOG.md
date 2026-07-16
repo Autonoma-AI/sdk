@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.9](https://github.com/Autonoma-AI/sdk/compare/v0.2.8...v0.2.9) (2026-07-16)
+
+
+### Features
+
+* deprecate the production gate - endpoint always enabled, guard is user code ([#68](https://github.com/Autonoma-AI/sdk/issues/68)) ([999c18e](https://github.com/Autonoma-AI/sdk/commit/999c18e8b5e582d784783997c59aef71328e5775))
+
 ## [0.2.8](https://github.com/Autonoma-AI/sdk/compare/v0.2.7...v0.2.8) (2026-07-16)
 
 
