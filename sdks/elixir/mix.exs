@@ -50,7 +50,7 @@ defmodule Autonoma.MixProject do
         "Homepage" => "https://autonoma.ai"
       },
       maintainers: ["Autonoma AI"],
-      files: ~w(lib mix.exs README.md LICENSE)
+      files: ~w(lib mix.exs README.md LICENSE docs AGENTS.md)
     ]
   end
 

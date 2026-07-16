@@ -19,7 +19,7 @@ root/
     php/                # PHP/Laravel SDK (composer)
     java/               # Java SDK (Maven multi-module)
     ruby/               # Ruby SDK (gemspec)
-    rust/               # Rust SDK (Cargo, features: actix, sqlx-postgres)
+    rust/               # Rust SDK (Cargo, features: actix, axum)
     go/                 # Go SDK (go module)
 ```
 
@@ -44,8 +44,8 @@ mix deps.get && mix test
 ```bash
 cd sdks/python
 poetry install --all-extras && poetry run pytest   # full install + test
-poetry run pytest tests/test_sqlalchemy_adapter.py  # single test file
-poetry run pytest -k "sqlalchemy"                   # tests matching pattern
+poetry run pytest tests/test_fastapi_adapter.py    # single test file
+poetry run pytest -k "fastapi"                      # tests matching pattern
 ```
 
 ### PHP/Laravel
@@ -78,7 +78,6 @@ cargo build && cargo test                     # full build + test
 cargo test -- hmac                            # tests matching a name pattern
 cargo build --features actix                  # build with Actix Web adapter
 cargo build --features axum                   # build with Axum adapter
-cargo build --features sqlx-postgres          # build with SQLx Postgres adapter
 ```
 
 ### Go
@@ -108,25 +107,24 @@ All language SDKs implement the same protocol with the same core modules:
 - **refs** — JWT-like token (header.payload.signature) for signing/verifying created entity refs
 - **graph** — Kahn's topo sort + Tarjan's SCC for FK ordering and cycle detection
 - **fingerprint** — deterministic sha256-based hash of scenario definitions
-- **factory** — optional user-defined entity factories (`defineFactory`) for models with business logic; SDK falls back to raw SQL for models without factories (hybrid mode)
-- **ORM adapter** — implements getSchema(), createEntities(), teardown() for a specific ORM
+- **factory** — required user-defined entity factories (`defineFactory`). Every model the platform can create must have one; the SDK routes every write through a factory and never runs SQL itself. Each factory carries an input schema that also drives `discover` (no database introspection).
 - **Server adapter** — converts framework-specific request/response to internal types
 
-### Entity Factories (Hybrid Mode)
+### Entity Factories
 
-The SDK supports a **hybrid** approach to entity creation. Users can register factories for models that have business logic (password hashing, external service calls, state machines, etc.) while letting the SDK handle simpler models via raw SQL.
+The SDK is **factory-driven**. Every model the platform can create must have a registered factory; there is no ORM adapter, no schema introspection, and no SQL fallback. A model with no factory cannot be created. Factories exist so test data is created through the app's real logic (password hashing, external service calls, state machines, etc.), exactly as production data is.
 
 **Key types** (reference implementation in TypeScript):
-- `FactoryDefinition` — `{ create(data, ctx), teardown?(record, ctx) }`. `create` receives pre-resolved fields (temp IDs already replaced with real FK IDs). Must return at least the PK field.
-- `FactoryContext` — `{ refs, executor, scenarioName, testRunId }`. Passed to both `create` and `teardown`.
-- `FactoryRegistry` — `Record<string, FactoryDefinition>`. Passed as `factories` on `HandlerConfig`.
+- `FactoryDefinition` — `{ inputSchema, create(data, ctx), teardown?(record, ctx), refSchema? }`. `inputSchema` (Zod in TS) validates the create payload and drives `discover`. `create` receives pre-resolved fields (temp IDs already replaced with real FK IDs) and must return at least the PK field. If `teardown` is omitted the model is not deleted on `down`.
+- `FactoryContext` — `{ refs, scenarioName, testRunId }`. Passed to both `create` and `teardown`. There is no `executor`.
+- `FactoryRegistry` — `Record<string, FactoryDefinition>`. Passed as `factories` on `HandlerConfig`; required.
 
 **How it works:**
-1. Tree resolution and topological sorting happen as before
-2. For each model in topo order: if a factory is registered, call `factory.create()` per record; otherwise use raw SQL INSERT
+1. Tree resolution and topological sorting happen from the create payload's `_alias`/`_ref` graph
+2. For each model in topo order: look up its factory (error if missing) and call `factory.create()` per record
 3. FK fields are pre-resolved before reaching the factory (Option A — factories never see `__temp_*` IDs)
-4. On teardown: if a factory defines `teardown`, call it per record in reverse order; otherwise fall back to SQL DELETE
-5. Deferred updates (circular FK cycles) always use raw SQL `updateEntity`
+4. On teardown: if a factory defines `teardown`, call it per record in reverse order; a model whose factory has no `teardown` is skipped
+5. Deferred updates for circular FK cycles are handled through the factory layer, not raw SQL
 
 **Factory return contract:** Must return at least `{ id }` (or whatever the PK field is named). All returned fields are stored in refs and passed to the test runner. Fields don't need to match DB column names — only the PK matters for FK wiring.
 
@@ -152,16 +150,18 @@ The SDK supports a **hybrid** approach to entity creation. Users can register fa
 
 ### Available Adapters
 
-| Language | ORM Adapters | Server Adapters |
-|----------|-------------|-----------------|
-| TypeScript | Prisma, Drizzle | Express, Web (Next/Hono/Deno), Node HTTP |
-| Python | SQLAlchemy, Django | FastAPI, Flask, Django |
-| Elixir | Ecto | Plug (Phoenix) |
-| PHP | Eloquent (raw SQL) | Laravel |
-| Java | JDBC | Spring Boot (Spring MVC) |
-| Ruby | ActiveRecord | Rails |
-| Rust | SQLx | Actix Web, Axum |
-| Go | database/sql | Gin |
+There are no ORM adapters. Factories talk to whatever database client the host app already has. Only server (HTTP framework) adapters are shipped:
+
+| Language | Server Adapters |
+|----------|-----------------|
+| TypeScript | Web standard (Next.js App Router / Bun / Deno), Express, Hono, Node HTTP |
+| Python | FastAPI, Flask, Django |
+| Elixir | Plug (Phoenix) |
+| PHP | Laravel |
+| Java | Spring Boot (Spring MVC) |
+| Ruby | Rails / Rack |
+| Rust | Actix Web, Axum |
+| Go | Gin |
 
 ### Protocol Versioning
 
@@ -169,7 +169,7 @@ Every response (discover/up/down) includes:
 ```json
 {
   "version": "1.0",
-  "sdk": { "language": "typescript", "orm": "prisma", "server": "express" }
+  "sdk": { "language": "typescript", "orm": "unknown", "server": "express" }
 }
 ```
 
@@ -182,6 +182,15 @@ This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PH
 - Any change to protocol behavior (handler, HMAC, refs, graph, fingerprint) **must be implemented in all eight languages**.
 - Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all eight pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
+
+### Bundled agent docs
+
+Each published package ships an agent-facing doc set (read from `node_modules` / site-packages / the JAR, etc.) plus an `AGENTS.md` pointer, so a coding agent implementing the SDK reads the version-matched, factory-driven API instead of stale training data. Single source of truth:
+
+- `docs/shared/{overview,protocol,scenarios}.md` + `docs/shared/llms.txt` — language-agnostic, copied verbatim into every package.
+- `docs/languages/<lang>/{implement,factories,validation,AGENTS}.md` — language-specific.
+
+`node scripts/build-sdk-docs.mjs` assembles these into each package's shipped `docs/` (+ `AGENTS.md`); the outputs are committed. **Re-run it after editing any doc source, and update the docs when the public API changes.** The `files`/include entries in each manifest (npm `files`, `pyproject` `include`, `mix.exs` `files`, gemspec `files`, Java Maven resources) already ship these; PHP/Rust/Go ship the whole tree.
 
 ### Breaking changes and versioning
 
@@ -200,11 +209,11 @@ This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PH
 
 - TypeScript: ESM-only, `verbatimModuleSyntax`, no `.js` extensions in imports
 - Elixir: standard mix project conventions
-- Python: src layout, Poetry (pyproject.toml), extras for adapters (`autonoma-sdk[sqlalchemy]`, `autonoma-sdk[fastapi]`, etc.)
+- Python: src layout, Poetry (pyproject.toml), distribution `autonoma-ai`, extras for server adapters (`autonoma-ai[fastapi]`, `autonoma-ai[flask]`, `autonoma-ai[django]`, `autonoma-ai[all]`)
 - PHP: PSR-4 autoloading, Composer (composer.json), Laravel service provider auto-discovery
 - Java: Maven multi-module, Java 17+, records for data types, Spring Boot 3.x for server adapter
 - Ruby: gemspec with no hard runtime dependencies (stdlib only), ActiveRecord/Rails as optional adapters
-- Rust: Cargo crate with optional feature flags (`actix`, `axum`, `sqlx-postgres`, `sqlx-mysql`), async-trait for executor abstraction
-- Go: standard Go module, `database/sql` executor adapter, Gin server adapter
+- Rust: Cargo crate with optional feature flags (`actix`, `axum`), async-trait for the factory abstraction
+- Go: standard Go module, Gin server adapter; factories use the host app's own DB client
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites
 - Protocol responses include `version` and `sdk` metadata for traceability

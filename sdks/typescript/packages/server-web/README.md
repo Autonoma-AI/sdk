@@ -86,4 +86,4 @@ auth: async (user, context) => {
 
 ## Documentation
 
-Full docs: [docs/](../../docs/) — see [setup guide](../../docs/setup.txt).
+Full docs ship inside this package under [`docs/`](./docs/) — see [`docs/implement.md`](./docs/implement.md).

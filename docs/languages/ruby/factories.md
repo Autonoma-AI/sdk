@@ -1,0 +1,106 @@
+# Writing factories (Ruby)
+
+A factory tells the SDK how to create and delete one model using your own code. You register one factory per model the platform can create, and pass them all to the handler as `factories`. This page is the exact contract; read it before writing any.
+
+## The shape
+
+```ruby
+# app/autonoma/factories.rb
+module AppFactories
+  ORGANIZATION = Autonoma::Factory.define_factory(
+    input_fields: [
+      { name: "name", type: "string", required: true },
+      { name: "slug", type: "string", required: true }
+    ],
+    create: ->(data, ctx) {
+      org = Organization.create!(name: data["name"], slug: data["slug"])
+      { "id" => org.id.to_s, "name" => org.name }
+    },
+    teardown: ->(record, ctx) {
+      Organization.find(record["id"]).destroy!
+    }
+  )
+end
+```
+
+Namespace the factory constants (here in an `AppFactories` module) so they do not shadow your ActiveRecord model classes of the same name.
+
+`Autonoma::Factory.define_factory` validates the shape at startup and returns a `FactoryDefinition` struct. The method takes three keyword arguments: `input_fields:` (required), `create:` (required), and `teardown:` (optional). `create` and `teardown` are any callables - lambdas, procs, or method objects.
+
+The SDK has no ORM adapter and no zod-style schema library; it is pure stdlib. Field validation is driven entirely by `input_fields`.
+
+## input_fields (required)
+
+An array of plain hashes describing the fields this model accepts in the create payload. Each entry has three keys:
+
+| Key | Meaning |
+|-----|---------|
+| `name` | The field name, matching the key in the create payload. |
+| `type` | One of `string`, `integer`, `number`, `boolean`, `timestamp`, `date`, `uuid`, `json`. Any other value is coerced to `string`. |
+| `required` | `true` if the SDK must reject a record missing this field. |
+
+`input_fields` does two jobs:
+
+1. Before calling `create`, the SDK strips every key not listed in `input_fields`, then fails the request with `INVALID_BODY` if a `required` field is absent.
+2. The SDK derives the discover schema from it - there is no database introspection, so this array is how the platform learns your model exists and what fields it has. The `id` field is added automatically as the primary key; do not list it.
+
+**Include every foreign key in `input_fields`, including the scope field.** Any key not declared here is stripped before `create` runs, so an undeclared FK never reaches your code. By the time `create` runs, the SDK has already resolved every `_ref` to the real ID of the referenced record, so a FK arrives as a plain value:
+
+```ruby
+# app/autonoma/factories.rb
+USER = Autonoma::Factory.define_factory(
+  input_fields: [
+    { name: "name", type: "string", required: true },
+    { name: "email", type: "string", required: true },
+    { name: "organizationId", type: "string", required: true } # real Organization id, not a _ref
+  ],
+  create: ->(data, ctx) {
+    user = create_user(name: data["name"], email: data["email"], organization_id: data["organizationId"])
+    { "id" => user.id.to_s, "email" => user.email }
+  }
+)
+```
+
+## create
+
+A callable of arity two: `->(data, ctx) { ... }`. It creates exactly one record and returns it.
+
+- `data` - a hash with **string keys**, already validated and stripped to the declared `input_fields`. FK fields are already real IDs. Read fields as `data["name"]`.
+- `ctx` - a `FactoryContext` struct with `ctx.refs`, `ctx.scenario_name`, and `ctx.test_run_id`. `refs` holds everything created so far this run, keyed by model, if you need to look something up.
+- **Return value** - a hash that must include at least the string key `"id"`. If it does not (or is not a hash-like object), the SDK fails the request with `FACTORY_MISSING_PK`. Everything you return is stored in `refs`, passed to the auth callback, and later handed to `teardown` - so return whatever teardown or auth will need (typically the id, plus fields like `"email"`).
+
+Return string keys, and stringify the id (`org.id.to_s`) so it round-trips through JSON and the refs token cleanly. An object that responds to `to_h` is accepted; the SDK calls `to_h` and then checks for `"id"`.
+
+Reuse your application's real creation path (`create_user`, `Organization.create!`, a service object). That is the entire point: the test user gets the same password hash, defaults, and side effects a real user would.
+
+## teardown (optional)
+
+A callable of arity two: `->(record, ctx) { ... }`. It deletes one record. The SDK calls it once per created record, in reverse dependency order, during `down`.
+
+- `record` - exactly the hash your `create` returned, with the same string keys.
+- `ctx` - the same `FactoryContext` shape as `create`.
+- If you omit `teardown`, the model is never deleted on `down`. Provide it for every model you create, or those rows leak.
+
+```ruby
+# app/autonoma/factories.rb
+teardown: ->(record, ctx) {
+  User.find(record["id"]).destroy!
+}
+```
+
+Because `teardown` receives the exact hash `create` returned, key everything you need for deletion in the return value - most often just `"id"`.
+
+## Registering factories
+
+Collect every factory into one hash keyed by model name - the key must match the model name the platform sends in `create`:
+
+```ruby
+# app/autonoma/factories.rb
+AUTONOMA_FACTORIES = {
+  "Organization" => AppFactories::ORGANIZATION,
+  "User" => AppFactories::USER,
+  "Member" => AppFactories::MEMBER
+}
+```
+
+Pass that hash as `factories:` when you build the `HandlerConfig` (see `implement.md`). Every model that appears in a scenario must have an entry here, or the request fails with `INVALID_BODY` ("no factory registered for model ...").

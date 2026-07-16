@@ -1,0 +1,147 @@
+# Writing factories (Rust)
+
+A factory tells the SDK how to create and delete one model using your own code. You register one factory per model the platform can create and pass them all to the handler as `factories`. This page is the exact contract; read it before writing any.
+
+## The shape
+
+```rust
+// src/factories/organization.rs
+use std::collections::HashMap;
+use std::sync::Arc;
+use serde_json::{Value, Map};
+use sqlx::PgPool;
+use autonoma_sdk::factory::define_factory;
+use autonoma_sdk::types::{FactoryContext, FactoryDefinition, FieldDef};
+
+pub fn organization_factory(pool: Arc<PgPool>) -> FactoryDefinition {
+    let create_pool = pool.clone();
+    let teardown_pool = pool.clone();
+    define_factory(
+        vec![
+            FieldDef { name: "name".into(), field_type: "string".into(), required: true },
+            FieldDef { name: "slug".into(), field_type: "string".into(), required: true },
+        ],
+        move |data: &Map<String, Value>, _ctx: &FactoryContext| {
+            let pool = create_pool.clone();
+            let data = data.clone();
+            Box::pin(async move {
+                let id = create_org(&pool, &data).await;   // your real creation code
+                let mut record = Map::new();
+                record.insert("id".into(), Value::String(id));
+                Ok(record)
+            })
+        },
+        Some(move |record: &Map<String, Value>, _ctx: &FactoryContext| {
+            let pool = teardown_pool.clone();
+            let record = record.clone();
+            Box::pin(async move {
+                let id = record["id"].as_str().unwrap();
+                delete_org(&pool, id).await;
+                Ok(())
+            })
+        }),
+        None,
+    )
+}
+```
+
+`define_factory` (defined at `sdks/rust/src/factory.rs:50`) builds a `FactoryDefinition`. `FieldDef` and `FactoryContext` come from `autonoma_sdk::types` (`sdks/rust/src/types.rs:83`, `:158`). There is no ORM adapter and no executor - your factory captures its own database pool (an `Arc<PgPool>` here) in the closure.
+
+## define_factory vs define_factory_create_only
+
+| Helper | Signature | Use when |
+|--------|-----------|----------|
+| `define_factory(input_fields, create, teardown, ref_fields)` | `teardown: Option<T>`, `ref_fields: Option<Vec<FieldDef>>` | A model you also need to delete on `down`. |
+| `define_factory_create_only(input_fields, create)` | no teardown, no ref_fields | A create-only model, or spelling out a `None` teardown type is awkward. |
+
+`define_factory_create_only` (`sdks/rust/src/factory.rs:100`) exists purely so you do not have to annotate the teardown closure type when there is none.
+
+## input_fields (required)
+
+A `Vec<FieldDef>` describing the fields this model accepts in the create payload. It does two jobs:
+
+1. The SDK validates each incoming record against it before calling `create` - it checks that every `required` field is present (`sdks/rust/src/factory.rs:125`). A missing field fails the request with `INVALID_BODY` ("validation error for ...: missing required fields ...").
+2. The SDK derives the discover schema from it - there is no database introspection, so this is how the platform learns your model exists and what fields it has (`sdks/rust/src/schema.rs:31`).
+
+Each `FieldDef` is `{ name, field_type, required }`. `field_type` is an SDK type string: `"string"`, `"integer"`, `"number"`, `"boolean"`, `"timestamp"`, `"date"`, `"uuid"`, or `"json"` (`sdks/rust/src/types.rs:80`). Only presence is validated, not the type - the string is metadata for the discover schema.
+
+**Include every foreign key in `input_fields`, including the scope field.** By the time `create` runs, the SDK has already resolved every `_ref` to the real ID of the referenced record, so a FK arrives as a plain value:
+
+```rust
+// src/factories/user.rs
+define_factory_create_only(
+    vec![
+        FieldDef { name: "name".into(), field_type: "string".into(), required: true },
+        FieldDef { name: "email".into(), field_type: "string".into(), required: true },
+        // arrives as the real Organization id, not a _ref:
+        FieldDef { name: "organizationId".into(), field_type: "string".into(), required: true },
+    ],
+    move |data, _ctx| {
+        let pool = pool.clone();
+        let data = data.clone();
+        Box::pin(async move {
+            let user = create_user(&pool, &data).await;   // reuse your real signup code
+            let mut record = Map::new();
+            record.insert("id".into(), Value::String(user.id));
+            record.insert("email".into(), Value::String(user.email));
+            Ok(record)
+        })
+    },
+)
+```
+
+## The create closure
+
+Creates exactly one record and returns it. Its type is:
+
+```rust
+// signature (from sdks/rust/src/types.rs:125)
+Fn(&Map<String, Value>, &FactoryContext)
+    -> Pin<Box<dyn Future<Output = Result<Map<String, Value>, AutonomaError>> + Send>>
+```
+
+- `data: &Map<String, Value>` - the validated input. FK fields are already real IDs, never a `_ref` object and never a `__temp_*` placeholder (`sdks/rust/src/handler.rs:161`, verified in `sdks/rust/tests/factory_test.rs:104`).
+- `ctx: &FactoryContext` - `{ refs, scenario_name, test_run_id }` (`sdks/rust/src/types.rs:158`). `refs` holds every record created so far this run, keyed by model, if you need to look one up. There is no `executor` field - get your database handle from a pool you captured in the closure.
+- **Return value** - a `Map<String, Value>` with at least an `"id"` key. If `"id"` is missing or null, the SDK fails the request with `FACTORY_MISSING_PK` (`sdks/rust/src/handler.rs:184`). Everything you return is stored in `refs`, passed to the auth callback, and later handed to `teardown` - so return whatever teardown or auth will need (typically the id, plus fields like `email`).
+
+Wrap the async body in `Box::pin(async move { ... })`. Reuse your application's real creation path so the test record gets the same password hash, defaults, and side effects a real record would.
+
+## The teardown closure (optional)
+
+Deletes one record. The SDK calls it once per created record, in reverse dependency order, during `down` (`sdks/rust/src/handler.rs:340`). Its type is:
+
+```rust
+// signature (from sdks/rust/src/types.rs:133)
+Fn(&Map<String, Value>, &FactoryContext)
+    -> Pin<Box<dyn Future<Output = Result<(), AutonomaError>> + Send>>
+```
+
+- `record` - exactly the `Map` your `create` returned.
+- If you omit teardown (pass `None`, or use `define_factory_create_only`), the model is skipped on `down` and those rows leak. Provide it for every model you create.
+- A teardown that returns `Err(...)` surfaces as `FACTORY_TEARDOWN_ERROR` (HTTP 500) (`sdks/rust/src/handler.rs:343`).
+
+## ref_fields (optional)
+
+The fourth argument to `define_factory`. When set to `Some(vec![...])`, it describes the shape of the record `create` returns and is used to validate the stored record before teardown. Pass `None` if you do not need it.
+
+## Registering factories
+
+A `FactoryRegistry` is a `HashMap<String, FactoryDefinition>` (`sdks/rust/src/types.rs:147`). The key must match the model name the platform sends in `create`:
+
+```rust
+// src/factories/mod.rs
+use std::collections::HashMap;
+use std::sync::Arc;
+use sqlx::PgPool;
+use autonoma_sdk::types::FactoryRegistry;
+
+pub fn build_factories(pool: Arc<PgPool>) -> FactoryRegistry {
+    let mut factories: FactoryRegistry = HashMap::new();
+    factories.insert("Organization".into(), organization_factory(pool.clone()));
+    factories.insert("User".into(), user_factory(pool.clone()));
+    factories.insert("Member".into(), member_factory(pool.clone()));
+    factories
+}
+```
+
+Pass that map as `factories` when you build the handler config (see `implement.md`). Every model that appears in a scenario must have an entry here, or `up` fails with `INVALID_BODY` ("no factory registered for model ...", `sdks/rust/src/handler.rs:144`).

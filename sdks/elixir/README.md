@@ -28,16 +28,16 @@ end
 ```elixir
 # In your router
 factories = %{
-  "Organization" => Autonoma.Factory.define(
-    fn data, ctx ->
+  "Organization" => Autonoma.Factory.define_factory(%{
+    create: fn data, ctx ->
       org = MyApp.Repo.insert!(%MyApp.Organization{name: data["name"]})
       %{"id" => org.id, "name" => org.name}
     end,
-    [%Autonoma.FieldInfo{name: "name", type: "string", is_required: true}],
-    fn record, ctx ->
+    input_fields: [%{name: "name", type: "string", required: true}],
+    teardown: fn record, ctx ->
       MyApp.Repo.delete!(%MyApp.Organization{id: record["id"]})
     end
-  )
+  })
 }
 
 config = %{
@@ -63,4 +63,4 @@ mix test        # run tests
 
 ## Documentation
 
-For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory. For a runnable example, see [`examples/elixir/phoenix-ecto/`](../../examples/elixir/phoenix-ecto/).
+Full agent-facing docs ship inside the Hex package under [`docs/`](./docs/) (start with [`docs/implement.md`](./docs/implement.md)); [`AGENTS.md`](./AGENTS.md) is the agent pointer. For the language-agnostic wire protocol, see the root [`protocol/`](../../protocol/) directory.

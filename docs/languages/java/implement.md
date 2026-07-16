@@ -1,0 +1,191 @@
+# Implement the endpoint (Java / Spring Boot)
+
+Follow these steps to stand up a working Environment Factory endpoint. This is written for a coding agent doing the integration; do the steps in order and do not skip the validation step.
+
+## Prerequisites
+
+- A Java 17+ backend on Spring Boot 3.x.
+- Whatever database access layer your app already uses (JPA/Hibernate, JDBC, jOOQ, MyBatis - it does not matter; your factories call it).
+- Maven or Gradle. Snippets below use Maven.
+
+## Step 1 - Add the dependencies
+
+Add the core SDK and the Spring adapter to your `pom.xml`:
+
+```xml
+<!-- pom.xml -->
+<dependency>
+  <groupId>ai.autonoma</groupId>
+  <artifactId>autonoma-sdk</artifactId>
+  <version>0.1.0</version>
+</dependency>
+<dependency>
+  <groupId>ai.autonoma</groupId>
+  <artifactId>autonoma-spring</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+Use the latest published version if one is newer than `0.1.0`. There is no ORM adapter dependency to add - the SDK is factory-driven. `autonoma-spring` expects `spring-boot-starter-web` on the classpath (it is a `provided` dependency), which a Spring MVC app already has.
+
+## Step 2 - Generate the two secrets
+
+```bash
+# shell
+openssl rand -hex 32   # AUTONOMA_SHARED_SECRET
+openssl rand -hex 32   # AUTONOMA_SIGNING_SECRET  (must be different)
+```
+
+Expose both as environment variables (or Spring properties). The SDK throws `SAME_SECRETS` (status 500) if they are equal.
+
+```properties
+# src/main/resources/application.properties
+# read from the environment; never commit real secret values
+```
+
+## Step 3 - Find the scope field
+
+Read the database schema. Find the foreign key that appears on the most models and points at a single root entity - commonly `organizationId`, `orgId`, `tenantId`, or `workspaceId`. That is the scope field. The root model itself (e.g. `Organization`) does not carry it.
+
+Confirm the field, the endpoint path, and the app's auth mechanism with the user before writing code.
+
+## Step 4 - Write a factory per model
+
+Write one factory for each model the platform will create, calling your app's real creation code. See `factories.md` for the full contract. Collect them into one `Map<String, FactoryDefinition>` keyed by model name.
+
+## Step 5 - Wire the handler
+
+Register an `AutonomaController` bean built from a `HandlerConfig`. The config's constructor takes the scope field, both secrets, and the auth callback; you attach the factory map and the gate flag with setters.
+
+```java
+// src/main/java/com/example/AutonomaConfig.java
+import ai.autonoma.sdk.types.*;
+import ai.autonoma.spring.AutonomaController;
+import java.util.Map;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class AutonomaConfig {
+
+  @Bean
+  public AutonomaController autonomaController(
+      OrganizationService orgService,
+      UserService userService,
+      SessionService sessionService) {
+
+    Map<String, FactoryDefinition> factories = Map.of(
+      "Organization", OrganizationFactory.define(orgService),
+      "User",         UserFactory.define(userService)
+    );
+
+    HandlerConfig config = new HandlerConfig(
+      "organizationId",                       // scopeField
+      System.getenv("AUTONOMA_SHARED_SECRET"),
+      System.getenv("AUTONOMA_SIGNING_SECRET"),
+      (user, ctx) -> {                        // auth callback - see Step 6
+        String token = sessionService.createSessionToken((String) user.get("id"));
+        return AuthResult.ofCookies(java.util.List.of(
+          new AuthCookie("session", token, true, "lax", "/", null, null, null)
+        ));
+      }
+    );
+    config.setFactories(factories);
+    config.setAllowProduction(true);          // see Step 7
+
+    return new AutonomaController(config);
+  }
+}
+```
+
+The controller registers a single `POST` route. The path defaults to `/api/autonoma` and is overridable with the `autonoma.endpoint` property:
+
+```properties
+# src/main/resources/application.properties
+autonoma.endpoint=/api/autonoma
+```
+
+The controller stamps the SDK metadata (`language: "java"`, `server: "spring"`) automatically.
+
+## Step 6 - Implement the auth callback
+
+This is the part that most often breaks tests, so get it right. The callback is a `BiFunction<Map<String, Object>, AuthContext, AuthResult>`. It receives the first created `User` record as a `Map` (its keys are whatever your `User` factory returned, e.g. `id`, `email`), or `null` if the scenario made no user, plus an `AuthContext` with `scopeValue()` and `refs()`. It must return **real, working credentials** using the app's actual auth mechanism. If it returns a fake or hardcoded token, every test fails at login.
+
+Return an `AuthResult`. There is no top-level `token` field - use one of the three factory methods (or the full constructor) to pick the shape that matches how your app authenticates:
+
+```java
+// src/main/java/com/example/AutonomaConfig.java
+// Session cookie (most web apps)
+(user, ctx) -> {
+  String token = sessionService.createSessionToken((String) user.get("id"));
+  return AuthResult.ofCookies(java.util.List.of(
+    new AuthCookie("session", token, true, "lax", "/", null, null, null)
+  ));
+}
+
+// JWT bearer token (APIs, SPAs) - the token goes in a header
+(user, ctx) ->
+  AuthResult.ofHeaders(Map.of(
+    "Authorization", "Bearer " + jwtService.sign((String) user.get("id"))
+  ))
+
+// Email + password (the runner logs in through the UI, e.g. mobile)
+(user, ctx) ->
+  AuthResult.ofCredentials(Map.of(
+    "email", (String) user.get("email"),
+    "password", "test-password-123"
+  ))
+```
+
+`AuthCookie` has a two-argument constructor (`name`, `value`) if you do not need to set flags; the full constructor is `(name, value, httpOnly, sameSite, path, domain, secure, maxAge)` and any of the trailing values may be `null`. For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
+
+## Step 7 - Enable the endpoint
+
+The endpoint returns `404 PRODUCTION_BLOCKED` until `allowProduction` is `true`. The SDK never inspects any environment variable - this flag is the only switch, so you own the condition:
+
+```java
+// src/main/java/com/example/AutonomaConfig.java
+config.setAllowProduction(true);                                       // always on
+config.setAllowProduction(!"production".equals(System.getenv("APP_ENV")));  // off in prod
+```
+
+## Step 8 - Validate before deploying
+
+There is no dry-run helper in the Java SDK. Validate scenarios by calling `AutonomaHandler.handleRequest` from a JUnit test against a real (test) database, running `up` then `down`. See `validation.md`. Never ship a scenario you have not validated.
+
+## Step 9 - Smoke-test with curl
+
+```bash
+# shell
+SECRET="your-shared-secret"
+BODY='{"action":"discover"}'
+SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/.*= //')
+curl -s -X POST http://localhost:8080/api/autonoma \
+  -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
+```
+
+Expected: a JSON schema listing your models and `scopeField`. A `404` means `allowProduction` is not set or the route is not mounted; a `401` means the secret does not match. The signature header is `x-signature`.
+
+## Step 10 - Report and connect
+
+Tell the user the endpoint path, confirm all scenarios pass, and hand off:
+
+1. Set `AUTONOMA_SHARED_SECRET` and `AUTONOMA_SIGNING_SECRET` in the staging/production environment.
+2. Deploy the endpoint.
+3. Paste `AUTONOMA_SHARED_SECRET` into the Autonoma dashboard when connecting the app.
+
+## Rules
+
+**Do:**
+- Reuse the app's existing services and real creation code inside factories.
+- Return real credentials from `auth` using the app's own session/JWT logic.
+- Register a factory (with a teardown) for every model any scenario creates.
+- Match the project's conventions: package layout, DI style, naming.
+- Validate every scenario against a real database before deploying.
+
+**Do not:**
+- Implement HMAC, token signing, or teardown ordering yourself - the SDK owns all of it.
+- Return a hardcoded token like `"test-token"` from `auth`.
+- Use the same value for `sharedSecret` and `signingSecret`.
+- Set `id`, defaulted fields, or auto timestamps in scenario data.
+- Expect the SDK to inject the scope field or wire any FK - you set every FK as a `_ref`.

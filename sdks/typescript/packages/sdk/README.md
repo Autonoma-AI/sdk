@@ -87,4 +87,4 @@ import { topoSort, findDeferrableEdge } from '@autonoma-ai/sdk/graph'
 
 ## Documentation
 
-Full docs: [docs/](../../docs/) — start with [overview](../../docs/overview.txt) or read [everything in one file](../../docs/llms-full.txt).
+Full docs ship inside this package under [`docs/`](./docs/) so a coding agent reads the version-matched API. Start with [`docs/implement.md`](./docs/implement.md); [`AGENTS.md`](./AGENTS.md) is the agent pointer.

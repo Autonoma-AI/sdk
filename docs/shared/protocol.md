@@ -1,0 +1,136 @@
+# Protocol
+
+The Environment Factory protocol is a request-response protocol over a single HTTP POST endpoint, authenticated with HMAC-SHA256. It is identical across every language SDK. This page is the wire contract; you rarely need it to integrate, but it is the source of truth when debugging.
+
+Protocol version: `1.0`
+
+## Transport and authentication
+
+All communication is HTTP POST to one URL that you choose. Requests and responses are JSON.
+
+Every request carries an `x-signature` header: the HMAC-SHA256 of the raw request body, keyed with the shared secret, as a hex digest. The SDK recomputes the HMAC over the exact request bytes (before any JSON parsing) and compares in constant time. A missing or wrong signature is rejected with `401`.
+
+```
+x-signature: HMAC-SHA256(raw_request_body_bytes, sharedSecret)  ->  hex
+```
+
+Because the signature is over the raw bytes, a server adapter must read the body as an untouched string before framework middleware reparses it. This is the one subtle requirement server adapters exist to satisfy.
+
+## Response metadata
+
+Every successful response includes:
+
+```json
+{
+  "version": "1.0",
+  "sdk": { "language": "typescript", "orm": "unknown", "server": "web" }
+}
+```
+
+`orm` is `"unknown"` in factory-driven mode - the SDK does not talk to an ORM. Error responses replace the payload with `{ "error": "...", "code": "..." }`.
+
+## Actions
+
+### discover
+
+```json
+// request
+{ "action": "discover" }
+```
+
+```json
+// response 200
+{
+  "version": "1.0",
+  "sdk": { "language": "typescript", "orm": "unknown", "server": "web" },
+  "schema": {
+    "models": [
+      { "name": "Organization", "tableName": "organization", "fields": [
+        { "name": "name", "type": "string", "isRequired": true, "isId": false, "hasDefault": false }
+      ] }
+    ],
+    "edges": [],
+    "relations": [],
+    "scopeField": "organizationId"
+  }
+}
+```
+
+The schema is built from your factories' input schemas, not from database introspection. `models` and `scopeField` are the meaningful parts. `edges` and `relations` are always empty arrays - the SDK does not introspect foreign keys, so it emits nothing there. Dependency order is not carried in the schema; it is derived per request from the `_alias`/`_ref` graph in the `up` payload.
+
+### up
+
+```json
+// request
+{
+  "action": "up",
+  "testRunId": "optional-uuid",
+  "create": {
+    "Organization": [{ "_alias": "org", "name": "Acme", "slug": "acme" }],
+    "User": [{ "_alias": "alice", "email": "alice@test.com", "organizationId": { "_ref": "org" } }],
+    "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "alice" } }]
+  }
+}
+```
+
+`create` is a flat map keyed by model name; each value is an array of records. Cross-model links use `_alias`/`_ref` (see [scenarios.md](scenarios.md)). If `testRunId` is omitted the SDK generates a UUID.
+
+```json
+// response 200
+{
+  "version": "1.0",
+  "sdk": { "language": "typescript", "orm": "unknown", "server": "web" },
+  "auth": { "cookies": [], "headers": {}, "credentials": {} },
+  "refs": { "Organization": [{ "id": "..." }], "User": [{ "id": "..." }] },
+  "refsToken": "header.payload.signature"
+}
+```
+
+- `auth` - whatever your auth callback returned: `cookies`, `headers`, and/or `credentials`. There is no top-level `token` field; a bearer token goes in `headers` (e.g. `{ "Authorization": "Bearer ..." }`).
+- `refs` - every created record, keyed by model, exactly as each factory returned it.
+- `refsToken` - a signed token encoding the created IDs, passed back on `down`.
+
+### down
+
+```json
+// request
+{ "action": "down", "refsToken": "header.payload.signature" }
+```
+
+```json
+// response 200
+{ "version": "1.0", "sdk": { ... }, "ok": true }
+```
+
+The SDK verifies the token, then calls each factory's `teardown` in reverse dependency order. A model whose factory defines no teardown is skipped.
+
+## The refs token
+
+The refs token is a JWT-like structure (`header.payload.signature`) signed with your signing secret. It carries the scope value, every created record ID keyed by model, and the alias dependency graph needed to reverse the create order. Because only your backend knows the signing secret, neither the platform nor any third party can forge or alter it. This is what guarantees `down` can only delete what `up` created.
+
+## Safety model
+
+The protocol enforces five hard constraints:
+
+1. **Explicit opt-in.** The endpoint returns `404 PRODUCTION_BLOCKED` unless `allowProduction` is `true`. The SDK does not read `NODE_ENV`, `MIX_ENV`, or any environment variable - the flag is the only switch. You decide the condition.
+2. **Up can only create.** Every record routes through a factory's `create`. The SDK never updates, deletes, drops, truncates, or runs SQL of its own.
+3. **Down can only delete what up created.** The signed token names the exact record IDs. `down` verifies it before deleting and touches nothing else.
+4. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401`.
+5. **Factory-driven writes.** There is no executor and no SQL fallback. A factory body may run a raw insert internally, but that code is yours, not the SDK's.
+
+## Error codes
+
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `INVALID_SIGNATURE` | 401 | HMAC signature missing or does not match the shared secret. |
+| `INVALID_BODY` | 400 | Body is not valid JSON, is missing `action`/`create`, or references an unknown alias. |
+| `UNKNOWN_ACTION` | 400 | `action` is not `discover`, `up`, or `down`. |
+| `UNKNOWN_ENVIRONMENT` | 400 | The requested environment name does not exist. |
+| `INVALID_REFS_TOKEN` | 403 | The refs token is missing, malformed, or failed signature verification. |
+| `PRODUCTION_BLOCKED` | 404 | Endpoint disabled - `allowProduction` is not `true`. |
+| `UNRESOLVED_TOKEN` | 400 | A literal `{{...}}` placeholder reached the SDK unresolved. |
+| `FACTORY_MISSING_PK` | 500 | A factory's `create` returned a record without its primary key. |
+| `SAME_SECRETS` | 500 | `sharedSecret` and `signingSecret` are the same value. |
+| `INTERNAL_ERROR` | 500 | Unexpected error, or a create payload failed a factory's input schema. |
+
+These are the shared codes. A given language may surface an extra, more specific code for a failure another language folds into `INTERNAL_ERROR` (for example, some SDKs emit `FACTORY_TEARDOWN_ERROR` when a factory's teardown throws). See your language's `validation.md` for any language-specific codes.
