@@ -26,6 +26,11 @@ jobs:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
+    # `gh workflow run` dispatches another workflow, which requires the
+    # actions:write scope on GITHUB_TOKEN. Without it the dispatch fails with
+    # "HTTP 403: Resource not accessible by integration" and nothing publishes.
+    permissions:
+      actions: write
     steps:
       - name: Dispatch publish.yml
         env:
