@@ -107,11 +107,6 @@ config = HandlerConfig(
     # deletes what was created.
     signing_secret=os.environ.get("AUTONOMA_SIGNING_SECRET", "my-signing-secret"),
 
-    # Required: the endpoint returns 404 unless this is True. The SDK never
-    # inspects PYTHON_ENV/ENV — tie it to your own condition to keep it off in
-    # prod, e.g. allow_production=os.environ.get("PYTHON_ENV") != "production".
-    allow_production=True,
-
     # One factory per model. The factory's `input_model` drives both the
     # discover schema and create-time validation; `data` arrives as a
     # validated Pydantic instance.

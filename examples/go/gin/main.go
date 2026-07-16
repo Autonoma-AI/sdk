@@ -108,14 +108,9 @@ func main() {
 	}
 
 	config := &autonoma.HandlerConfig{
-		ScopeField:   "organization_id",
-		SharedSecret: sharedSecret,
+		ScopeField:    "organization_id",
+		SharedSecret:  sharedSecret,
 		SigningSecret: signingSecret,
-
-		// Required: the endpoint returns 404 unless this is true. The SDK never
-		// inspects GO_ENV/ENV — tie it to your own condition to keep it off in
-		// prod, e.g. os.Getenv("GO_ENV") != "production".
-		AllowProduction: true,
 
 		// Every model the dashboard can create needs a factory.
 		// The factory's InputStruct drives both validation and discover.

@@ -66,11 +66,6 @@ app.post(
     // deletes what was created.
     signingSecret: process.env.AUTONOMA_SIGNING_SECRET ?? 'my-signing-secret',
 
-    // Required: the endpoint returns 404 unless this is true. The SDK never
-    // inspects NODE_ENV — tie it to your own condition to keep it off in prod,
-    // e.g. `process.env.NODE_ENV !== 'production'`.
-    allowProduction: true,
-
     // One factory per model the dashboard can create. Each declares an
     // `inputSchema` (required) plus a `create` (and optional `teardown`).
     factories: {

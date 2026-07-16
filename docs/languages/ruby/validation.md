@@ -21,7 +21,6 @@ class ScenarioValidationTest < ActiveSupport::TestCase
       scope_field: "organizationId",
       shared_secret: SHARED,
       signing_secret: SIGNING,
-      allow_production: true,
       factories: AUTONOMA_FACTORIES, # your real registry, pointed at the test DB
       auth: ->(user, _ctx) { { "headers" => { "Authorization" => "Bearer #{user && user['id']}" } } }
     )

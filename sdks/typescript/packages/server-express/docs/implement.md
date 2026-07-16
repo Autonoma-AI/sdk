@@ -59,7 +59,7 @@ export const factories = { Organization, User, Member, Application /* ... */ }
 
 ## Step 5 - Wire the handler
 
-Create the config once and pass it to your adapter's handler function. The config carries the scope field, both secrets, the factory registry, the gate flag, and the auth callback.
+Create the config once and pass it to your adapter's handler function. The config carries the scope field, both secrets, the factory registry, and the auth callback.
 
 ```typescript
 // app/api/autonoma/route.ts  (Next.js App Router)
@@ -72,7 +72,6 @@ export const POST = createHandler({
   sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
   signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
   factories,
-  allowProduction: true,   // see Step 7
   auth: async (user, ctx) => {
     const session = await createSession(user!.id as string)
     return {
@@ -125,13 +124,17 @@ auth: async (user) => ({
 
 For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
 
-## Step 7 - Enable the endpoint
+## Step 7 - Production gating (optional)
 
-The endpoint returns `404 PRODUCTION_BLOCKED` until `allowProduction` is `true`. The SDK never inspects `NODE_ENV` or any environment variable - this flag is the only switch, so you own the condition:
+The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The old `allowProduction` flag is deprecated and ignored. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate it in your handler with your own condition:
 
 ```typescript
-allowProduction: true,                              // always on
-allowProduction: process.env.NODE_ENV !== 'production',   // off in prod
+// app/api/autonoma/route.ts
+const handler = createHandler({ /* ... */ })
+export const POST = (req: Request) =>
+  process.env.NODE_ENV === 'production'
+    ? new Response('Not Found', { status: 404 })
+    : handler(req)
 ```
 
 ## Step 8 - Validate before deploying
@@ -148,7 +151,7 @@ curl -s -X POST http://localhost:3000/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means `allowProduction` is not set or the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 

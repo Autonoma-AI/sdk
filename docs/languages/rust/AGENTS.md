@@ -20,10 +20,10 @@ Key facts that differ from older docs:
 - The crate is `autonoma-sdk`; import it as `autonoma_sdk`. It is **factory-driven** - register factories with `autonoma_sdk::factory::define_factory` / `define_factory_create_only`. There is no `sqlx`/ORM adapter and no SQL fallback; a model with no factory cannot be created.
 - The only Cargo features are `actix` and `axum`. There are no `sqlx-postgres`/`sqlx-mysql` features on this crate.
 - The core entry point is `autonoma_sdk::handler::handle_request(&HandlerConfig, &HandlerRequest).await`, wrapped by a server adapter: `autonoma_sdk::axum::create_axum_handler` (feature `axum`) or `autonoma_sdk::actix::create_actix_handler` (feature `actix`).
-- Config is a `HandlerConfig` struct: `scope_field`, `shared_secret`, `signing_secret`, `factories` (a `HashMap<String, FactoryDefinition>`), `allow_production`, `auth`, and optional `sdk`/`before_down`/`after_up`.
+- Config is a `HandlerConfig` struct: `scope_field`, `shared_secret`, `signing_secret`, `factories` (a `HashMap<String, FactoryDefinition>`), `allow_production` (deprecated no-op, still a required field - set it to `false`), `auth`, and optional `sdk`/`before_down`/`after_up`.
 - Factories are closures, not traits: `create` receives a `Map<String, Value>` with FKs already resolved to real IDs and must return a `Map` containing `"id"`; `teardown` is an optional closure.
 - The auth callback returns a `HashMap<String, Value>` - populate it with `cookies`, `headers`, and/or `credentials`. There is no top-level `token` field.
-- The endpoint is gated by `allow_production: bool` only. The SDK reads no environment variable; it returns `404 PRODUCTION_BLOCKED` until the flag is `true`.
+- The endpoint is always enabled - HMAC signing is the gate. The old `allow_production: bool` is deprecated and ignored; `PRODUCTION_BLOCKED` is never returned.
 - There is no `check_scenario` helper. Validate by calling `handle_request` in a `#[tokio::test]`, or with curl.
 
 <!-- END:autonoma-agent-rules -->

@@ -82,7 +82,6 @@ return [
     'scope_field'      => env('AUTONOMA_SCOPE_FIELD', 'organizationId'),
     'shared_secret'    => env('AUTONOMA_SHARED_SECRET', ''),
     'signing_secret'   => env('AUTONOMA_SIGNING_SECRET', ''),
-    'allow_production' => (bool) env('AUTONOMA_ALLOW_PRODUCTION', false),   // see Step 7
     'path'             => env('AUTONOMA_PATH', 'api/autonoma'),
     'middleware'       => [],
     'factories'        => require base_path('app/Autonoma/factories.php'),
@@ -113,7 +112,6 @@ $config = new HandlerConfig(
     signingSecret: getenv('AUTONOMA_SIGNING_SECRET'),
     auth: fn(?array $user, array $ctx) => ['headers' => ['Authorization' => 'Bearer ' . issueToken($user['id'])]],
     factories: require __DIR__ . '/../app/Autonoma/factories.php',
-    allowProduction: true,
 );
 
 $req = new HandlerRequest(
@@ -158,16 +156,9 @@ The return array is one of `['cookies' => ...]`, `['headers' => ...]`, or `['cre
 
 For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds. `$ctx['scope_value']` holds the detected scope value (e.g. the organization id) if you need it.
 
-## Step 7 - Enable the endpoint
+## Step 7 - The endpoint is always enabled
 
-The endpoint returns `404 PRODUCTION_BLOCKED` until `allowProduction` is `true` (`allow_production` in `config/autonoma.php`, driven by `AUTONOMA_ALLOW_PRODUCTION`). The SDK never inspects `APP_ENV` or any environment variable - this flag is the only switch, so you own the condition:
-
-```env
-# .env
-AUTONOMA_ALLOW_PRODUCTION=true
-```
-
-To tie it to your own condition in plain PHP, pass a boolean expression: `allowProduction: getenv('APP_ENV') !== 'production'`.
+There is no on/off switch: HMAC signing is the gate, so the endpoint serves only requests signed with your shared secret. The old `allowProduction` flag (`allow_production` in `config/autonoma.php`, driven by `AUTONOMA_ALLOW_PRODUCTION`) is deprecated and ignored - the key is still accepted so existing configs keep working. On Autonoma previews (`AUTONOMA_PREVIEWKIT` is set) no guard is needed. If you deploy the factory in your own environments and want it dark in production, gate it manually in your handler, e.g. return `404` before calling `Handler::handleRequest` when `getenv('APP_ENV') === 'production'`.
 
 ## Step 8 - Validate before deploying
 
@@ -184,7 +175,7 @@ curl -s -X POST http://localhost:8000/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means `allow_production` is not set or the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 

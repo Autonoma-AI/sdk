@@ -40,10 +40,6 @@ class Handler
                 throw AutonomaError::sameSecrets();
             }
 
-            if (!$config->allowProduction) {
-                throw AutonomaError::productionBlocked();
-            }
-
             $signature = $req->headers['x-signature'] ?? $req->headers['X-Signature'] ?? '';
 
             if (!Hmac::verifySignature($req->body, $signature, $config->sharedSecret)) {

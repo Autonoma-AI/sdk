@@ -50,6 +50,7 @@ pub fn unknown_action(action: &str) -> AutonomaError {
     }
 }
 
+#[deprecated(note = "the SDK no longer gates on production; this error is never returned")]
 pub fn production_blocked() -> AutonomaError {
     AutonomaError {
         message: "Environment factory is disabled".to_string(),

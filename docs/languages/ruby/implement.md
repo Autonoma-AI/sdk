@@ -53,7 +53,7 @@ AUTONOMA_FACTORIES = {
 
 ## Step 5 - Wire the endpoint
 
-Build one `Autonoma::HandlerConfig` and hand it to the Rails controller mixin. The config carries the scope field, both secrets, the factory hash, the gate flag, and the auth callback.
+Build one `Autonoma::HandlerConfig` and hand it to the Rails controller mixin. The config carries the scope field, both secrets, the factory hash, and the auth callback.
 
 ```ruby
 # config/routes.rb
@@ -81,7 +81,6 @@ class AutonomaController < ApplicationController
       shared_secret: ENV.fetch("AUTONOMA_SHARED_SECRET"),
       signing_secret: ENV.fetch("AUTONOMA_SIGNING_SECRET"),
       factories: AUTONOMA_FACTORIES,
-      allow_production: true, # see Step 7
       auth: ->(user, ctx) {
         session = create_session(user["id"]) # your app's real session code
         { "cookies" => [{ "name" => "session", "value" => session.token, "httpOnly" => true, "sameSite" => "lax", "path" => "/" }] }
@@ -104,7 +103,7 @@ end
 | `signing_secret` | yes | Signs the teardown token. Private to you. Must differ from `shared_secret`. |
 | `auth` | yes | Callable returning real login credentials (see Step 6). |
 | `factories` | effectively yes | Hash of model name to `FactoryDefinition`. `up` fails if empty. |
-| `allow_production` | no (default `false`) | The gate flag (see Step 7). |
+| `allow_production` | no | Deprecated - ignored; the endpoint is always enabled (see Step 7). |
 | `before_down` / `after_up` | no | Optional hooks. `after_up` receives `(ctx, auth)` and returns the (possibly modified) auth; `before_down` receives `(ctx)`. |
 | `sdk` | no | Metadata hash; the Rails adapter sets `server` to `"rails"`. |
 
@@ -121,7 +120,6 @@ config = Autonoma::HandlerConfig.new(
   shared_secret: ENV.fetch("AUTONOMA_SHARED_SECRET"),
   signing_secret: ENV.fetch("AUTONOMA_SIGNING_SECRET"),
   factories: AUTONOMA_FACTORIES,
-  allow_production: true,
   auth: ->(user, ctx) { { "headers" => { "Authorization" => "Bearer #{issue_jwt(user['id'])}" } } }
 )
 
@@ -159,15 +157,19 @@ auth: ->(user, ctx) {
 
 For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
 
-## Step 7 - Enable the endpoint
+## Step 7 - The endpoint is always enabled
 
-The endpoint returns `404 PRODUCTION_BLOCKED` until `allow_production` is `true`. The SDK never inspects `RAILS_ENV` or any environment variable - this flag is the only switch, so you own the condition:
+There is no on/off switch: HMAC signing is the gate, so unsigned or tampered requests get `401` no matter where the endpoint runs. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no extra guard is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate it in your handler with your own condition:
 
 ```ruby
 # app/controllers/autonoma_controller.rb
-allow_production: true,                          # always on
-allow_production: !Rails.env.production?,        # off in prod
+def handle
+  head :not_found and return if Rails.env.production?
+  autonoma_handle(autonoma_config)
+end
 ```
+
+The old `allow_production` config key is deprecated and ignored - passing it changes nothing.
 
 ## Step 8 - Validate before deploying
 
@@ -185,7 +187,7 @@ curl -s -X POST http://localhost:3000/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means `allow_production` is not set or the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 

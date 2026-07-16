@@ -16,8 +16,9 @@ return [
     // Signing secret (only known by your SDK -- never share with Autonoma)
     'signing_secret' => env('AUTONOMA_SIGNING_SECRET', ''),
 
-    // Gates the endpoint: it returns 404 unless this is true. The SDK no
-    // longer inspects APP_ENV/ENV -- this explicit flag is the only switch.
+    // Deprecated - ignored; the endpoint is always enabled and HMAC signing is
+    // the gate. On Autonoma previews (AUTONOMA_PREVIEWKIT set) no guard is
+    // needed; gate manually in your handler for your own production deployments.
     'allow_production' => (bool) env('AUTONOMA_ALLOW_PRODUCTION', false),
 
     // Route path for the Autonoma endpoint

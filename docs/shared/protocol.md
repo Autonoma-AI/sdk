@@ -110,14 +110,13 @@ The refs token is a JWT-like structure (`header.payload.signature`) signed with 
 
 ## Safety model
 
-The protocol enforces four hard constraints:
+The protocol enforces five hard constraints:
 
-1. **Up can only create.** Every record routes through a factory's `create`. The SDK never updates, deletes, drops, truncates, or runs SQL of its own.
-2. **Down can only delete what up created.** The signed token names the exact record IDs. `down` verifies it before deleting and touches nothing else.
-3. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401`. This is the gate on the endpoint - it serves no unauthenticated caller, so it needs no separate on/off switch.
-4. **Factory-driven writes.** There is no executor and no SQL fallback. A factory body may run a raw insert internally, but that code is yours, not the SDK's.
-
-Running on Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set)? Nothing more to do - previews are isolated and never production. Deploying the factory in your own environments and want it dark in production anyway? Gate it in your handler with your own condition (for example, return `404` when `NODE_ENV` is `production`). The old `allowProduction` option is deprecated and ignored.
+1. **The production guard is yours.** The SDK has no on/off switch - on Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no guard is needed, previews are isolated and never production. In your own deployments, mount the route only outside production with a condition you own (for example, register the endpoint only when `NODE_ENV` is not `production`). The old `allowProduction` option is deprecated and ignored.
+2. **Up can only create.** Every record routes through a factory's `create`. The SDK never updates, deletes, drops, truncates, or runs SQL of its own.
+3. **Down can only delete what up created.** The signed token names the exact record IDs. `down` verifies it before deleting and touches nothing else.
+4. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401` - the endpoint serves no unauthenticated caller.
+5. **Factory-driven writes.** There is no executor and no SQL fallback. A factory body may run a raw insert internally, but that code is yours, not the SDK's.
 
 ## Error codes
 

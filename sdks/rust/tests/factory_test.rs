@@ -31,6 +31,9 @@ fn teardown_fn(
     }
 }
 
+// allow_production is a required struct field, so it must be set; it is a
+// deprecated no-op and the endpoint serves regardless of its value.
+#[allow(deprecated)]
 fn make_config(factories: FactoryRegistry) -> HandlerConfig {
     HandlerConfig {
         scope_field: "organizationId".to_string(),
@@ -42,7 +45,7 @@ fn make_config(factories: FactoryRegistry) -> HandlerConfig {
             })
         }),
         factories,
-        allow_production: true,
+        allow_production: false,
         sdk: Some(SdkMeta {
             orm: "sqlx".to_string(),
             server: "actix".to_string(),

@@ -57,10 +57,6 @@ defmodule Autonoma.Handler do
         raise Error.same_secrets()
       end
 
-      unless Map.get(config, :allow_production, false) do
-        raise Error.production_blocked()
-      end
-
       signature =
         Map.get(req.headers, "x-signature") ||
           Map.get(req.headers, "X-Signature") ||

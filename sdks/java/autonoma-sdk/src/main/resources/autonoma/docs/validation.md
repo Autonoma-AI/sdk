@@ -30,7 +30,6 @@ class ScenarioValidationTest {
       "organizationId", SHARED, SIGNING,
       (user, ctx) -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer test"))
     );
-    config.setAllowProduction(true);
     config.setFactories(MyFactories.all());   // real factories, real test DB
     return config;
   }

@@ -17,6 +17,7 @@ public class HandlerConfig {
     private final String signingSecret;
     private final BiFunction<Map<String, Object>, AuthContext, AuthResult> auth;
     private Map<String, FactoryDefinition> factories;
+    /** Deprecated - ignored; see {@link #setAllowProduction(boolean)}. */
     private boolean allowProduction = false;
     private SdkInfo sdk;
     private Consumer<HookContext> beforeDown;
@@ -33,6 +34,13 @@ public class HandlerConfig {
     public String getScopeField() { return scopeField; }
     public String getSharedSecret() { return sharedSecret; }
     public String getSigningSecret() { return signingSecret; }
+    /**
+     * @deprecated Ignored; the endpoint is always enabled and HMAC signing is
+     * the gate. On Autonoma previews ({@code AUTONOMA_PREVIEWKIT} set) no guard
+     * is needed; gate manually in your handler for your own production
+     * deployments.
+     */
+    @Deprecated
     public boolean isAllowProduction() { return allowProduction; }
     public BiFunction<Map<String, Object>, AuthContext, AuthResult> getAuth() { return auth; }
     public SdkInfo getSdk() { return sdk; }
@@ -40,6 +48,13 @@ public class HandlerConfig {
     public Consumer<HookContext> getBeforeDown() { return beforeDown; }
     public BiFunction<HookContext, AuthResult, AuthResult> getAfterUp() { return afterUp; }
 
+    /**
+     * @deprecated Ignored; the endpoint is always enabled and HMAC signing is
+     * the gate. On Autonoma previews ({@code AUTONOMA_PREVIEWKIT} set) no guard
+     * is needed; gate manually in your handler for your own production
+     * deployments.
+     */
+    @Deprecated
     public HandlerConfig setAllowProduction(boolean allowProduction) { this.allowProduction = allowProduction; return this; }
     public HandlerConfig setSdk(SdkInfo sdk) { this.sdk = sdk; return this; }
     public HandlerConfig setFactories(Map<String, FactoryDefinition> factories) { this.factories = factories; return this; }

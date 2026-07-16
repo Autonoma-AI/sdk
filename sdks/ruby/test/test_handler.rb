@@ -22,7 +22,6 @@ class TestHandler < Minitest::Test
       shared_secret: "shared-secret",
       signing_secret: "signing-secret",
       auth: ->(user, _ctx) { { "headers" => { "Authorization" => "Bearer test-token-#{user ? user['id'] : 'anon'}" } } },
-      allow_production: true,
       factories: { "Users" => @user_factory }
     )
   end
@@ -81,25 +80,19 @@ class TestHandler < Minitest::Test
     assert_equal "UNKNOWN_ACTION", result.body["code"]
   end
 
-  def test_blocks_when_allow_production_absent
-    gated_config = Autonoma::HandlerConfig.new(
+  def test_serves_even_when_allow_production_is_false
+    # allow_production is a deprecated no-op: even an explicit false must not
+    # block the endpoint. HMAC signing is the gate. (@config leaves it unset.)
+    ungated_config = Autonoma::HandlerConfig.new(
       scope_field: "organizationId",
       shared_secret: "shared-secret",
       signing_secret: "signing-secret",
       auth: ->(_user, _ctx) { { "headers" => {} } },
+      allow_production: false,
       factories: { "Users" => @user_factory }
     )
     req = make_request({ "action" => "discover" })
-    result = Autonoma::Handler.handle_request(gated_config, req)
-    assert_equal 404, result.status
-    assert_equal "PRODUCTION_BLOCKED", result.body["code"]
-    assert_equal "Environment factory is disabled", result.body["error"]
-  end
-
-  def test_operates_when_allow_production_true
-    # @config already sets allow_production: true
-    req = make_request({ "action" => "discover" })
-    result = Autonoma::Handler.handle_request(@config, req)
+    result = Autonoma::Handler.handle_request(ungated_config, req)
     assert_equal 200, result.status
   end
 
@@ -150,7 +143,6 @@ class TestHandler < Minitest::Test
         auth["headers"]["X-Custom"] = "enriched"
         auth
       },
-      allow_production: true,
       factories: { "Users" => user_factory }
     )
 
@@ -186,7 +178,6 @@ class TestHandler < Minitest::Test
         hook_called = true
         captured_ctx = hook_ctx
       },
-      allow_production: true,
       factories: { "Users" => user_factory }
     )
 
@@ -211,7 +202,6 @@ class TestFactories < Minitest::Test
       shared_secret: "test-secret",
       signing_secret: "test-signing-secret",
       auth: ->(_user, _ctx) { { "headers" => { "Authorization" => "Bearer token" } } },
-      allow_production: true,
       factories: {}
     }
     defaults.merge!(overrides)

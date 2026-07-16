@@ -96,6 +96,9 @@ defmodule Autonoma.Types do
           required(:signing_secret) => String.t(),
           required(:auth) => (map() | nil, map() -> map()),
           optional(:factories) => factory_registry(),
+          # Deprecated - ignored; the endpoint is always enabled and HMAC signing
+          # is the gate. On Autonoma previews (AUTONOMA_PREVIEWKIT set) no guard is
+          # needed; gate manually in your handler for your own production deployments.
           optional(:allow_production) => boolean(),
           optional(:sdk) => map(),
           optional(:before_down) => (hook_context() -> any()),

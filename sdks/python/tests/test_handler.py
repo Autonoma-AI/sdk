@@ -42,7 +42,6 @@ def _make_config(
     factories=None,
     shared="shared-secret",
     signing="signing-secret",
-    allow_production=True,
 ):
     return HandlerConfig(
         scope_field="organizationId",
@@ -54,7 +53,6 @@ def _make_config(
             }
         },
         factories=factories or {},
-        allow_production=allow_production,
     )
 
 
@@ -95,15 +93,11 @@ class TestHandleRequest:
         assert result.status == 500
         assert result.body["code"] == "SAME_SECRETS"
 
-    async def test_blocks_when_allow_production_false(self):
-        config = _make_config(allow_production=False)
-        req = _signed_request({"action": "discover"})
-        result = await handle_request(config, req)
-        assert result.status == 404
-        assert result.body["code"] == "PRODUCTION_BLOCKED"
-
-    async def test_operates_when_allow_production_true(self):
-        config = _make_config(allow_production=True)
+    async def test_serves_even_when_allow_production_is_false(self):
+        # allow_production is a deprecated no-op: even an explicit False must
+        # not block the endpoint. HMAC signing is the gate.
+        config = _make_config()
+        config.allow_production = False
         req = _signed_request({"action": "discover"})
         result = await handle_request(config, req)
         assert result.status == 200

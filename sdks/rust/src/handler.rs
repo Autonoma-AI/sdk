@@ -55,10 +55,6 @@ async fn handle_request_inner(
         return Err(same_secrets());
     }
 
-    if !config.allow_production {
-        return Err(production_blocked());
-    }
-
     let signature = req
         .headers
         .get("x-signature")

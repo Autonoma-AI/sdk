@@ -29,11 +29,6 @@ class AutonomaController < ApplicationController
       # Private to your server — signs the refs token so teardown only deletes what was created
       signing_secret: ENV.fetch("AUTONOMA_SIGNING_SECRET", "my-signing-secret"),
 
-      # Required: the endpoint returns 404 unless this is true. The SDK never
-      # inspects RAILS_ENV/RACK_ENV — tie it to your own condition to keep it off
-      # in prod, e.g. allow_production: !Rails.env.production?.
-      allow_production: true,
-
       # Every model the dashboard can create needs a factory.
       # The factory's input_fields drives both validation and discover.
       factories: {

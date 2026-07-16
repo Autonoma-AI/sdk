@@ -138,6 +138,9 @@ class HandlerConfig:
         Callable[[dict[str, Any] | None, AuthContext], Any],  # async callables
     ]
     factories: FactoryRegistry = field(default_factory=dict)
+    # Deprecated - ignored; the endpoint is always enabled and HMAC signing is
+    # the gate. On Autonoma previews (AUTONOMA_PREVIEWKIT set) no guard is
+    # needed; gate manually in your handler for your own production deployments.
     allow_production: bool = False
     sdk: dict[str, str] | None = None
     before_down: Callable[[HookContext], Any] | None = None

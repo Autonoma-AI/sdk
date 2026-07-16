@@ -63,7 +63,7 @@ pub fn autonoma_config(pool: Arc<PgPool>) -> HandlerConfig {
         shared_secret: std::env::var("AUTONOMA_SHARED_SECRET").unwrap(),
         signing_secret: std::env::var("AUTONOMA_SIGNING_SECRET").unwrap(),
         factories: build_factories(pool.clone()),
-        allow_production: true,   // see Step 7
+        allow_production: false,  // deprecated no-op, but the struct still requires it - see Step 8
         auth: Box::new(move |user: Option<&Map<String, Value>>, _ctx: &AuthContext| {
             let pool = pool.clone();
             let user = user.cloned();
@@ -144,14 +144,15 @@ out.insert("credentials".into(), json!({ "email": email, "password": "test-passw
 
 For the email/password shape, the `User` factory must create the record with a matching password hash so a real login succeeds.
 
-## Step 8 - Enable the endpoint
+## Step 8 - Production gating (optional)
 
-The endpoint returns `404 PRODUCTION_BLOCKED` until `allow_production` is `true` (`sdks/rust/src/handler.rs:58`). The SDK never inspects an environment variable - this flag is the only switch, so you own the condition:
+The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The old `allow_production` field is deprecated and ignored (it is still a required struct field, so set it to `false` and move on). On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate the route registration with your own condition:
 
 ```rust
 // src/autonoma.rs
-allow_production: true,                                        // always on
-allow_production: std::env::var("APP_ENV").as_deref() != Ok("production"),  // off in prod
+if std::env::var("APP_ENV").as_deref() != Ok("production") {
+    app = app.route("/api/autonoma", post(create_axum_handler(config)));
+}
 ```
 
 ## Step 9 - Validate before deploying
@@ -171,7 +172,7 @@ curl -s -X POST http://localhost:3000/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means `allow_production` is not `true` or the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 11 - Report and connect
 

@@ -55,10 +55,6 @@ public final class AutonomaHandler {
                 throw AutonomaError.sameSecrets();
             }
 
-            if (!config.isAllowProduction()) {
-                throw AutonomaError.productionBlocked();
-            }
-
             String signature = req.headers().getOrDefault("x-signature",
                 req.headers().getOrDefault("X-Signature", ""));
 

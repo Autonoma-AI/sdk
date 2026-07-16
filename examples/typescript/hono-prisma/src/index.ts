@@ -49,11 +49,6 @@ app.post(
     sharedSecret: process.env.AUTONOMA_SHARED_SECRET ?? 'my-shared-secret',
     signingSecret: process.env.AUTONOMA_SIGNING_SECRET ?? 'my-signing-secret',
 
-    // Required: the endpoint returns 404 unless this is true. The SDK never
-    // inspects NODE_ENV — tie it to your own condition to keep it off in prod,
-    // e.g. `process.env.NODE_ENV !== 'production'`.
-    allowProduction: true,
-
     factories: {
       Organization: defineFactory({
         inputSchema: OrganizationInput,

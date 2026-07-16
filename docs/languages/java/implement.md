@@ -91,7 +91,6 @@ public class AutonomaConfig {
       }
     );
     config.setFactories(factories);
-    config.setAllowProduction(true);          // see Step 7
 
     return new AutonomaController(config);
   }
@@ -139,15 +138,9 @@ Return an `AuthResult`. There is no top-level `token` field - use one of the thr
 
 `AuthCookie` has a two-argument constructor (`name`, `value`) if you do not need to set flags; the full constructor is `(name, value, httpOnly, sameSite, path, domain, secure, maxAge)` and any of the trailing values may be `null`. For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
 
-## Step 7 - Enable the endpoint
+## Step 7 - The endpoint is always enabled
 
-The endpoint returns `404 PRODUCTION_BLOCKED` until `allowProduction` is `true`. The SDK never inspects any environment variable - this flag is the only switch, so you own the condition:
-
-```java
-// src/main/java/com/example/AutonomaConfig.java
-config.setAllowProduction(true);                                       // always on
-config.setAllowProduction(!"production".equals(System.getenv("APP_ENV")));  // off in prod
-```
+There is no on/off switch: HMAC signing is the gate, so the endpoint serves only requests signed with your shared secret. The old `setAllowProduction(...)` flag is deprecated and ignored. On Autonoma previews (`AUTONOMA_PREVIEWKIT` is set) no guard is needed. If you deploy the factory in your own environments and want it dark in production, gate it manually in your handler, e.g. return `404` before calling `AutonomaHandler.handleRequest` when `"production".equals(System.getenv("APP_ENV"))`.
 
 ## Step 8 - Validate before deploying
 
@@ -164,7 +157,7 @@ curl -s -X POST http://localhost:8080/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means `allowProduction` is not set or the route is not mounted; a `401` means the secret does not match. The signature header is `x-signature`.
+Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match. The signature header is `x-signature`.
 
 ## Step 10 - Report and connect
 

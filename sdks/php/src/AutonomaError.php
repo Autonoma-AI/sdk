@@ -23,6 +23,7 @@ class AutonomaError extends \RuntimeException {
     public static function unknownAction(string $action): self {
         return new self("Unknown action: {$action}", 'UNKNOWN_ACTION', 400);
     }
+    /** @deprecated The SDK no longer gates on production; this is never returned. */
     public static function productionBlocked(): self {
         return new self('Environment factory is disabled', 'PRODUCTION_BLOCKED', 404);
     }

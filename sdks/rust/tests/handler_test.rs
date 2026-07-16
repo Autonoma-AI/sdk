@@ -9,6 +9,10 @@ use autonoma_sdk::types::{
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+// allow_production is a required struct field, so it must be set; it is a
+// deprecated no-op, and setting it to false doubles as proof that the
+// endpoint serves regardless of the flag.
+#[allow(deprecated)]
 fn make_config() -> HandlerConfig {
     let mut factories: FactoryRegistry = HashMap::new();
     factories.insert(
@@ -44,7 +48,7 @@ fn make_config() -> HandlerConfig {
             })
         }),
         factories,
-        allow_production: true,
+        allow_production: false,
         sdk: Some(SdkMeta {
             orm: "sqlx".to_string(),
             server: "actix".to_string(),
@@ -192,20 +196,9 @@ async fn up_rejects_missing_factory() {
 }
 
 #[tokio::test]
-async fn blocks_when_allow_production_false() {
-    let mut config = make_config();
-    config.allow_production = false;
-    let body = r#"{"action":"discover"}"#;
-    let req = signed_request(body, "shared-secret");
-
-    let resp = handle_request(&config, &req).await;
-    assert_eq!(resp.status, 404);
-    assert_eq!(resp.body["code"], "PRODUCTION_BLOCKED");
-}
-
-#[tokio::test]
-async fn operates_when_allow_production_true() {
-    let config = make_config(); // allow_production: true
+async fn serves_even_when_allow_production_false() {
+    // The deprecated flag is ignored: even explicitly false must not block.
+    let config = make_config(); // allow_production: false
     let body = r#"{"action":"discover"}"#;
     let req = signed_request(body, "shared-secret");
 

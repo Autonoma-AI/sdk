@@ -21,7 +21,6 @@ class AutonomaServiceProvider extends ServiceProvider
                 signingSecret: $config['signing_secret'],
                 auth: $config['auth'] ?? throw new \RuntimeException('Autonoma SDK requires an "auth" callback in config/autonoma.php'),
                 factories: $config['factories'] ?? [],
-                allowProduction: $config['allow_production'] ?? false,
                 sdk: ['orm' => 'eloquent'],
             );
         });

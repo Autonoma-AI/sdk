@@ -62,7 +62,7 @@ factories = {"Organization": Organization, "User": User, "Member": Member}
 
 ## Step 5 - Wire the handler
 
-Create one `HandlerConfig` and pass it to your adapter's handler function. The config carries the scope field, both secrets, the factory registry, the gate flag, and the auth callback. All config fields are `snake_case`.
+Create one `HandlerConfig` and pass it to your adapter's handler function. The config carries the scope field, both secrets, the factory registry, and the auth callback. All config fields are `snake_case`.
 
 ```python
 # app/autonoma_endpoint.py  (FastAPI)
@@ -77,7 +77,6 @@ config = HandlerConfig(
     shared_secret=os.environ["AUTONOMA_SHARED_SECRET"],
     signing_secret=os.environ["AUTONOMA_SIGNING_SECRET"],
     factories=factories,
-    allow_production=True,   # see Step 7
     auth=lambda user, ctx: {
         "cookies": [
             {"name": "session", "value": create_session(user["id"]),
@@ -142,15 +141,17 @@ def auth(user, ctx):
 
 For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
 
-## Step 7 - Enable the endpoint
+## Step 7 - The endpoint is always enabled
 
-The endpoint returns `404 PRODUCTION_BLOCKED` until `allow_production` is `True`. The SDK never inspects `PYTHON_ENV`, `DJANGO_SETTINGS_MODULE`, or any environment variable - this flag is the only switch, so you own the condition:
+There is no on/off switch: HMAC signing is the gate, so unsigned or tampered requests get `401` no matter where the endpoint runs. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no extra guard is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate it in your handler with your own condition:
 
 ```python
-# app/autonoma_endpoint.py
-allow_production=True,                                    # always on
-allow_production=os.environ.get("APP_ENV") != "production",   # off in prod
+# app/autonoma_endpoint.py  (your route, before delegating to the SDK)
+if os.environ.get("APP_ENV") == "production":
+    raise HTTPException(status_code=404)   # or your framework's 404
 ```
+
+The old `allow_production` config option is deprecated and ignored - passing it changes nothing.
 
 ## Step 8 - Validate before deploying
 
@@ -167,7 +168,7 @@ curl -s -X POST http://localhost:8000/api/autonoma/ \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means `allow_production` is not set or the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 

@@ -105,9 +105,12 @@ type FactoryRegistry map[string]FactoryDefinition
 
 // HandlerConfig is the configuration for the Autonoma request handler.
 type HandlerConfig struct {
-	ScopeField      string
-	SharedSecret    string
-	SigningSecret   string
+	ScopeField    string
+	SharedSecret  string
+	SigningSecret string
+	// Deprecated: ignored; the endpoint is always enabled and HMAC signing is
+	// the gate. On Autonoma previews (AUTONOMA_PREVIEWKIT set) no guard is
+	// needed; gate manually in your handler for your own production deployments.
 	AllowProduction bool
 	Auth            func(user map[string]any, ctx AuthContext) (map[string]any, error)
 	SDK             *SdkInfo

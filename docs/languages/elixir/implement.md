@@ -77,7 +77,7 @@ end
 
 ## Step 5 - Build the config and wire the handler
 
-The config is a plain map. It carries the scope field, both secrets, the factory map, the gate flag, and the auth callback. Build it at runtime and hand it to `Autonoma.Plug.Handler`.
+The config is a plain map. It carries the scope field, both secrets, the factory map, and the auth callback. Build it at runtime and hand it to `Autonoma.Plug.Handler`.
 
 Because `Autonoma.Plug.Handler.call/2` reads the config from its second argument at request time, the reliable way to mount it - and to keep secrets out of compile time - is a thin wrapper plug that builds the config in its own `call/2`:
 
@@ -102,7 +102,6 @@ defmodule MyAppWeb.Autonoma.Plug do
       shared_secret: secrets[:shared_secret],
       signing_secret: secrets[:signing_secret],
       factories: MyAppWeb.Autonoma.Factories.all(),
-      allow_production: true,   # see Step 7
       auth: fn user, _ctx ->
         {:ok, token} = MyApp.Accounts.create_session_token(user["id"])
         %{"headers" => %{"Authorization" => "Bearer #{token}"}}
@@ -130,7 +129,7 @@ In a plain `Plug.Router` app, forward to the same wrapper the same way. `Autonom
 | `:signing_secret` | yes | Signs the teardown token. Must differ from `:shared_secret`. |
 | `:auth` | yes | `fn user, ctx -> map end`. Returns login credentials. |
 | `:factories` | yes in practice | `%{"Model" => factory}`. `up`/`discover` need it. |
-| `:allow_production` | no (default `false`) | The gate. `false` returns `404`. |
+| `:allow_production` | no | Deprecated - ignored; the endpoint is always enabled and HMAC signing is the gate. |
 | `:sdk` | no | Extra `sdk` metadata; the Plug sets `server` to `"plug"`. |
 | `:after_up` | no | `fn ctx, auth -> auth end`. Post-process the auth map. |
 | `:before_down` | no | `fn ctx -> any end`. Runs before teardown. |
@@ -166,15 +165,19 @@ end
 
 For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
 
-## Step 7 - Enable the endpoint
+## Step 7 - Production gating (optional)
 
-The endpoint returns `404 PRODUCTION_BLOCKED` until `:allow_production` is `true`. The SDK never inspects `MIX_ENV` or any environment variable - this flag is the only switch, so you own the condition:
+The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The old `:allow_production` flag is deprecated and ignored. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate it in your wrapper plug with your own condition:
 
 ```elixir
 # lib/my_app_web/autonoma/plug.ex
-allow_production: true,                          # always on
-allow_production: Mix.env() != :prod,            # off in prod (compile-time)
-allow_production: Application.get_env(:my_app, :autonoma_enabled, false)   # runtime toggle
+def call(conn, _opts) do
+  if Application.get_env(:my_app, :autonoma_enabled, true) do
+    Autonoma.Plug.Handler.call(conn, config())
+  else
+    conn |> Plug.Conn.send_resp(404, "Not Found") |> Plug.Conn.halt()
+  end
+end
 ```
 
 ## Step 8 - Validate before deploying
@@ -192,7 +195,7 @@ curl -s -X POST http://localhost:4000/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means `:allow_production` is not `true` or the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 

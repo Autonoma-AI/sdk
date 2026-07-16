@@ -69,11 +69,10 @@ import (
 
 func mountAutonoma(r *gin.Engine) {
 	config := &autonoma.HandlerConfig{
-		ScopeField:      "organizationId",
-		SharedSecret:    os.Getenv("AUTONOMA_SHARED_SECRET"),
-		SigningSecret:   os.Getenv("AUTONOMA_SIGNING_SECRET"),
-		Factories:       factories.Registry,
-		AllowProduction: true, // see Step 7
+		ScopeField:    "organizationId",
+		SharedSecret:  os.Getenv("AUTONOMA_SHARED_SECRET"),
+		SigningSecret: os.Getenv("AUTONOMA_SIGNING_SECRET"),
+		Factories:     factories.Registry,
 		Auth: func(user map[string]any, ctx autonoma.AuthContext) (map[string]any, error) {
 			session, err := auth.CreateSession(user["id"].(string)) // your app's real session code
 			if err != nil {
@@ -157,14 +156,15 @@ return map[string]any{
 
 For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
 
-## Step 7 - Enable the endpoint
+## Step 7 - Production gating (optional)
 
-The handler returns `404 PRODUCTION_BLOCKED` until `AllowProduction` is `true`. The SDK never inspects `GO_ENV`, `NODE_ENV`, or any environment variable - this flag is the only switch, so you own the condition:
+The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The old `AllowProduction` flag is deprecated and ignored. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate it in your route registration with your own condition:
 
 ```go
 // gate.go
-AllowProduction: true,                              // always on
-AllowProduction: os.Getenv("APP_ENV") != "production", // off in prod
+if os.Getenv("APP_ENV") != "production" {
+	r.POST("/api/autonoma", autonoma.GinHandler(config))
+}
 ```
 
 ## Step 8 - Validate before deploying
@@ -182,7 +182,7 @@ curl -s -X POST http://localhost:8080/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means `AllowProduction` is not set or the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 
