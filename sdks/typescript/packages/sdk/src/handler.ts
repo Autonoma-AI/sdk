@@ -86,11 +86,22 @@ function buildSdkMeta(config: HandlerConfig): {
   };
 }
 
+// One-shot runtime signal for plain-JS users who never see the @deprecated
+// JSDoc on the config type.
+let warnedDeprecatedAllowProduction = false;
+
 export async function handleRequest(
   config: HandlerConfig,
   req: HandlerRequest,
 ): Promise<HandlerResponse> {
   try {
+    if (config.allowProduction !== undefined && !warnedDeprecatedAllowProduction) {
+      warnedDeprecatedAllowProduction = true;
+      console.warn(
+        "[autonoma] allowProduction is deprecated and ignored - the endpoint is always enabled",
+      );
+    }
+
     if (config.sharedSecret === config.signingSecret) {
       throw new AutonomaError(
         "sharedSecret and signingSecret must be different. The shared secret is known by Autonoma; the signing secret must be private.",

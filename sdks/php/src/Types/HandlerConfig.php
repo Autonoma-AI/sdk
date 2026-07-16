@@ -23,5 +23,12 @@ class HandlerConfig
         public readonly mixed $beforeDown = null,
         /** @var callable(array{scenarioName: string, refs: array}, array): array|null */
         public readonly mixed $afterUp = null,
-    ) {}
+    ) {
+        if ($allowProduction) {
+            trigger_error(
+                'allowProduction is deprecated and ignored - the endpoint is always enabled',
+                E_USER_DEPRECATED,
+            );
+        }
+    }
 }
