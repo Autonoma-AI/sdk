@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.8](https://github.com/Autonoma-AI/sdk/compare/v0.2.7...v0.2.8) (2026-07-16)
+
+
+### Features
+
+* bundle agent-facing docs into every SDK package ([#65](https://github.com/Autonoma-AI/sdk/issues/65)) ([3036483](https://github.com/Autonoma-AI/sdk/commit/303648374324e5b15c5a6ea1b3081c36359b046b))
+
 ## [0.2.7](https://github.com/Autonoma-AI/sdk/compare/v0.2.6...v0.2.7) (2026-06-16)
 
 
