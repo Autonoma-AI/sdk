@@ -99,12 +99,6 @@ export async function handleRequest(
       );
     }
 
-    if (!config.allowProduction) {
-      throw Errors.productionBlocked(
-        "Set allowProduction: true to enable the endpoint.",
-      );
-    }
-
     const signature =
       req.headers["x-signature"] ?? req.headers["X-Signature"] ?? "";
     if (!verifySignature(req.body, signature, config.sharedSecret)) {

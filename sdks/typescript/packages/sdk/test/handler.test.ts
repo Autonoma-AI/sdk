@@ -16,7 +16,6 @@ function createConfig(overrides?: Partial<HandlerConfig>): HandlerConfig {
     scopeField: 'organizationId',
     sharedSecret: 'test-secret',
     signingSecret: 'test-signing-secret',
-    allowProduction: true,
     auth: async (user) => ({ headers: { Authorization: `Bearer jwt-${user?.id ?? 'anon'}` } }),
     ...overrides,
   }
@@ -39,20 +38,13 @@ const UserInput = z.object({
 
 describe('handleRequest', () => {
   describe('environment gating', () => {
-    it('returns 404 PRODUCTION_BLOCKED when allowProduction is not set', async () => {
-      const config = createConfig({ allowProduction: false })
-      const req = signedRequest({ action: 'discover' }, config.sharedSecret)
-      const res = await handleRequest(config, req)
-      expect(res.status).toBe(404)
-      expect(res.body.code).toBe('PRODUCTION_BLOCKED')
-    })
-
-    it('serves when allowProduction is true, ignoring NODE_ENV=production', async () => {
+    it('serves without allowProduction and ignores the deprecated flag, even under NODE_ENV=production', async () => {
       const original = process.env.NODE_ENV
       process.env.NODE_ENV = 'production'
       try {
         const config = createConfig({
-          allowProduction: true,
+          // Deprecated no-op: even an explicit false must not block the endpoint.
+          allowProduction: false,
           factories: {
             Organization: defineFactory({
               create: async (data) => ({ id: 'o1', name: data.name }),

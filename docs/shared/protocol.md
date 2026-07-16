@@ -110,13 +110,14 @@ The refs token is a JWT-like structure (`header.payload.signature`) signed with 
 
 ## Safety model
 
-The protocol enforces five hard constraints:
+The protocol enforces four hard constraints:
 
-1. **Explicit opt-in.** The endpoint returns `404 PRODUCTION_BLOCKED` unless `allowProduction` is `true`. The SDK does not read `NODE_ENV`, `MIX_ENV`, or any environment variable - the flag is the only switch. You decide the condition.
-2. **Up can only create.** Every record routes through a factory's `create`. The SDK never updates, deletes, drops, truncates, or runs SQL of its own.
-3. **Down can only delete what up created.** The signed token names the exact record IDs. `down` verifies it before deleting and touches nothing else.
-4. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401`.
-5. **Factory-driven writes.** There is no executor and no SQL fallback. A factory body may run a raw insert internally, but that code is yours, not the SDK's.
+1. **Up can only create.** Every record routes through a factory's `create`. The SDK never updates, deletes, drops, truncates, or runs SQL of its own.
+2. **Down can only delete what up created.** The signed token names the exact record IDs. `down` verifies it before deleting and touches nothing else.
+3. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401`. This is the gate on the endpoint - it serves no unauthenticated caller, so it needs no separate on/off switch.
+4. **Factory-driven writes.** There is no executor and no SQL fallback. A factory body may run a raw insert internally, but that code is yours, not the SDK's.
+
+Running on Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set)? Nothing more to do - previews are isolated and never production. Deploying the factory in your own environments and want it dark in production anyway? Gate it in your handler with your own condition (for example, return `404` when `NODE_ENV` is `production`). The old `allowProduction` option is deprecated and ignored.
 
 ## Error codes
 
@@ -127,7 +128,6 @@ The protocol enforces five hard constraints:
 | `UNKNOWN_ACTION` | 400 | `action` is not `discover`, `up`, or `down`. |
 | `UNKNOWN_ENVIRONMENT` | 400 | The requested environment name does not exist. |
 | `INVALID_REFS_TOKEN` | 403 | The refs token is missing, malformed, or failed signature verification. |
-| `PRODUCTION_BLOCKED` | 404 | Endpoint disabled - `allowProduction` is not `true`. |
 | `UNRESOLVED_TOKEN` | 400 | A literal `{{...}}` placeholder reached the SDK unresolved. |
 | `FACTORY_MISSING_PK` | 500 | A factory's `create` returned a record without its primary key. |
 | `SAME_SECRETS` | 500 | `sharedSecret` and `signingSecret` are the same value. |
