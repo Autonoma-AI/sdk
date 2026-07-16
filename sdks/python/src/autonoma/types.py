@@ -19,6 +19,7 @@ The types in this module fall into two groups:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Union
 
@@ -138,10 +139,21 @@ class HandlerConfig:
         Callable[[dict[str, Any] | None, AuthContext], Any],  # async callables
     ]
     factories: FactoryRegistry = field(default_factory=dict)
+    # Deprecated - ignored; the endpoint is always enabled and HMAC signing is
+    # the gate. On Autonoma previews (AUTONOMA_PREVIEWKIT set) no guard is
+    # needed; gate manually in your handler for your own production deployments.
     allow_production: bool = False
     sdk: dict[str, str] | None = None
     before_down: Callable[[HookContext], Any] | None = None
     after_up: Callable[[HookContext, dict[str, Any]], dict[str, Any]] | None = None
+
+    def __post_init__(self) -> None:
+        if self.allow_production:
+            warnings.warn(
+                "allow_production is deprecated and ignored - the endpoint is always enabled",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
 
 @dataclass

@@ -21,7 +21,6 @@ defmodule Autonoma.Check do
       scope_field: Keyword.get(opts, :scope_field, "organizationId"),
       shared_secret: shared_secret,
       signing_secret: signing_secret,
-      allow_production: Keyword.get(opts, :allow_production, true),
       sdk: Keyword.get(opts, :sdk, %{}),
       factories: Keyword.get(opts, :factories, %{}),
       auth:

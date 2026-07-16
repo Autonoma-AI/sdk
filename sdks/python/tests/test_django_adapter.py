@@ -45,7 +45,6 @@ def handler_view():
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,
         auth=lambda user, ctx: {"headers": {"Authorization": "Bearer test-token"}},
-        allow_production=True,
     )
     return create_django_handler(config)
 

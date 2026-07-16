@@ -176,6 +176,10 @@ async fn main() {
         ),
     );
 
+    // allow_production is a required struct field kept for backward
+    // compatibility; it is a deprecated no-op - the endpoint is always
+    // enabled and HMAC signing is the gate.
+    #[allow(deprecated)]
     let config = HandlerConfig {
         scope_field: "organization_id".to_string(),
         shared_secret,

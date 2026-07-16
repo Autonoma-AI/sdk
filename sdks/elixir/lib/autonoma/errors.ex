@@ -21,6 +21,7 @@ defmodule Autonoma.Error do
     %__MODULE__{message: "Unknown action: #{action}", code: "UNKNOWN_ACTION", status: 400}
   end
 
+  @deprecated "The SDK no longer gates on production; this error is never returned."
   def production_blocked do
     %__MODULE__{message: "Environment factory is disabled", code: "PRODUCTION_BLOCKED", status: 404}
   end

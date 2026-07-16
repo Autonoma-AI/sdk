@@ -51,7 +51,6 @@ async fn validates_all_scenarios() {
     let mut config = autonoma_config(pool);
     config.shared_secret = SHARED.into();
     config.signing_secret = "test-signing-secret".into();
-    config.allow_production = true;
 
     for entry in std::fs::read_dir("scenarios").unwrap() {
         let path = entry.unwrap().path();

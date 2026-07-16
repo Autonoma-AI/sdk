@@ -27,8 +27,6 @@ module Autonoma
         raise Errors.same_secrets
       end
 
-      raise Errors.production_blocked unless config.allow_production
-
       signature = req.headers["x-signature"] || req.headers["X-Signature"] || ""
 
       unless Hmac.verify_signature(req.body, signature, config.shared_secret)

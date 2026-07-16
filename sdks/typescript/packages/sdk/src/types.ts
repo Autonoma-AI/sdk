@@ -132,10 +132,11 @@ export interface HandlerConfig {
   /** Factory definitions per model. Required: every model the dashboard sends in `create` must have one. */
   factories?: FactoryRegistry
   /**
-   * Gates the endpoint. The endpoint returns 404 PRODUCTION_BLOCKED unless this
-   * is `true`. The SDK does not inspect NODE_ENV (or any environment variable) —
-   * this explicit flag is the only switch. Set it to `true` (optionally tied to
-   * your own condition, e.g. `process.env.NODE_ENV !== 'production'`) to enable.
+   * @deprecated Ignored - the endpoint is always enabled; HMAC signing is the
+   * gate. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no
+   * extra guard is needed. If you deploy the factory in your own environments
+   * and want it dark in production, gate it in your handler, e.g. return 404
+   * when `process.env.NODE_ENV === 'production'`.
    */
   allowProduction?: boolean
   /**

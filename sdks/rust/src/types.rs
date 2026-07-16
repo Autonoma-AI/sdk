@@ -197,6 +197,9 @@ pub struct HandlerConfig {
             + Sync,
     >,
     pub factories: FactoryRegistry,
+    #[deprecated(
+        note = "ignored; the endpoint is always enabled and HMAC signing is the gate. On Autonoma previews (AUTONOMA_PREVIEWKIT set) no guard is needed; gate manually in your handler for your own production deployments"
+    )]
     pub allow_production: bool,
     pub sdk: Option<SdkMeta>,
     /// Optional hook called before teardown in `down`.

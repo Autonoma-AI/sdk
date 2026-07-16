@@ -38,6 +38,7 @@ export const Errors = {
       403,
     );
   },
+  /** @deprecated The SDK no longer gates on production; this is never thrown. */
   productionBlocked(detail?: string) {
     return new AutonomaError(
       `Environment factory is disabled${detail != null ? `. ${detail}` : ""}`,

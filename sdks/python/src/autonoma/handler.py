@@ -22,7 +22,6 @@ from autonoma.errors import (
     invalid_body,
     invalid_refs_token,
     invalid_signature,
-    production_blocked,
     same_secrets,
     unknown_action,
 )
@@ -112,11 +111,6 @@ async def handle_request(config: HandlerConfig, req: HandlerRequest) -> HandlerR
     try:
         if config.shared_secret == config.signing_secret:
             raise same_secrets()
-
-        if not config.allow_production:
-            raise production_blocked(
-                "Set allow_production=True to enable the endpoint."
-            )
 
         signature: str = (
             req.headers.get("x-signature") or req.headers.get("X-Signature") or ""

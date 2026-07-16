@@ -112,10 +112,10 @@ The refs token is a JWT-like structure (`header.payload.signature`) signed with 
 
 The protocol enforces five hard constraints:
 
-1. **Explicit opt-in.** The endpoint returns `404 PRODUCTION_BLOCKED` unless `allowProduction` is `true`. The SDK does not read `NODE_ENV`, `MIX_ENV`, or any environment variable - the flag is the only switch. You decide the condition.
+1. **The production guard is yours.** The SDK has no on/off switch - on Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no guard is needed, previews are isolated and never production. In your own deployments, mount the route only outside production with a condition you own (for example, register the endpoint only when `NODE_ENV` is not `production`). The old `allowProduction` option is deprecated and ignored.
 2. **Up can only create.** Every record routes through a factory's `create`. The SDK never updates, deletes, drops, truncates, or runs SQL of its own.
 3. **Down can only delete what up created.** The signed token names the exact record IDs. `down` verifies it before deleting and touches nothing else.
-4. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401`.
+4. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401` - the endpoint serves no unauthenticated caller.
 5. **Factory-driven writes.** There is no executor and no SQL fallback. A factory body may run a raw insert internally, but that code is yours, not the SDK's.
 
 ## Error codes
@@ -127,7 +127,6 @@ The protocol enforces five hard constraints:
 | `UNKNOWN_ACTION` | 400 | `action` is not `discover`, `up`, or `down`. |
 | `UNKNOWN_ENVIRONMENT` | 400 | The requested environment name does not exist. |
 | `INVALID_REFS_TOKEN` | 403 | The refs token is missing, malformed, or failed signature verification. |
-| `PRODUCTION_BLOCKED` | 404 | Endpoint disabled - `allowProduction` is not `true`. |
 | `UNRESOLVED_TOKEN` | 400 | A literal `{{...}}` placeholder reached the SDK unresolved. |
 | `FACTORY_MISSING_PK` | 500 | A factory's `create` returned a record without its primary key. |
 | `SAME_SECRETS` | 500 | `sharedSecret` and `signingSecret` are the same value. |

@@ -31,6 +31,9 @@ module Autonoma
     :scope_field,
     :shared_secret,
     :signing_secret,
+    # Deprecated - ignored; the endpoint is always enabled and HMAC signing is
+    # the gate. On Autonoma previews (AUTONOMA_PREVIEWKIT set) no guard is
+    # needed; gate manually in your handler for your own production deployments.
     :allow_production,
     :auth,
     :sdk,
@@ -42,6 +45,9 @@ module Autonoma
     def initialize(scope_field:, shared_secret:, signing_secret:, auth:,
                    allow_production: false, sdk: nil,
                    before_down: nil, after_up: nil, factories: nil)
+      if allow_production
+        warn "[autonoma] allow_production is deprecated and ignored - the endpoint is always enabled"
+      end
       super
     end
   end

@@ -59,7 +59,7 @@ public class AutonomaConfig {
             (user, context) -> AuthResult.ofHeaders(
                 Map.of("Authorization", "Bearer " + createToken(user))
             )
-        ).setFactories(factories).setAllowProduction(true);
+        ).setFactories(factories);
 
         return new AutonomaController(config);
     }

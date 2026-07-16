@@ -59,10 +59,6 @@ func handleRequestInner(config *HandlerConfig, req HandlerRequest) (*HandlerResp
 		return nil, ErrSameSecrets()
 	}
 
-	if !config.AllowProduction {
-		return nil, ErrProductionBlocked("Set AllowProduction to true to enable the endpoint.")
-	}
-
 	signature := req.Headers["x-signature"]
 	if signature == "" {
 		signature = req.Headers["X-Signature"]

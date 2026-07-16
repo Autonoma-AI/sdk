@@ -23,7 +23,6 @@ defmodule Autonoma.Plug.HandlerTest do
       scope_field: "organizationId",
       shared_secret: @shared_secret,
       signing_secret: @signing_secret,
-      allow_production: true,
       factories: %{"User" => user_factory()},
       auth: fn user, _ctx ->
         user_id = if user, do: user["id"], else: "anon"

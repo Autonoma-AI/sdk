@@ -74,11 +74,10 @@ import (
 
 func TestScenarios(t *testing.T) {
 	config := &autonoma.HandlerConfig{
-		ScopeField:      "organizationId",
-		SharedSecret:    "test-shared-secret",
-		SigningSecret:   "test-signing-secret", // must differ from shared
-		AllowProduction: true,
-		Factories:       factories.Registry, // points at DATABASE_URL for the test DB
+		ScopeField:    "organizationId",
+		SharedSecret:  "test-shared-secret",
+		SigningSecret: "test-signing-secret", // must differ from shared
+		Factories:     factories.Registry, // points at DATABASE_URL for the test DB
 	}
 
 	files, _ := filepath.Glob("../scenarios/*.json")

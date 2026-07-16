@@ -146,7 +146,7 @@ The SDK is **factory-driven**. Every model the platform can create must have a r
 | `INVALID_REFS_TOKEN` | The `refsToken` in a `down` request could not be verified | The token was signed with a different `signingSecret` or was tampered with. Ensure the same config is used for `up` and `down`. |
 | `UNKNOWN_ACTION` | Request body has an unrecognized `action` value | Valid actions are `discover`, `up`, and `down`. |
 | `INVALID_BODY` | Request body is not valid JSON or is missing required fields | Check that the request body is valid JSON and includes `action`. For `up`, include `create`; for `down`, include `refsToken`. |
-| `PRODUCTION_BLOCKED` | The endpoint is disabled. It returns 404 unless `allowProduction` is set to `true`. The SDK no longer inspects any environment variable (`NODE_ENV`/`PYTHON_ENV`/`MIX_ENV`/etc.) — `allowProduction` is the only switch. | Set `allowProduction: true` to enable the endpoint (optionally tie it to your own condition, e.g. `process.env.NODE_ENV !== 'production'`). |
+| `PRODUCTION_BLOCKED` | Deprecated - never returned. The endpoint is always enabled; HMAC signing is the gate. The `allowProduction` option is an ignored no-op kept only for backward compatibility. | Nothing to set. On Autonoma previews (`AUTONOMA_PREVIEWKIT` set) no guard is needed; gate manually in your handler if you want the endpoint dark in your own production deployments. |
 
 ### Available Adapters
 

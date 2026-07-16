@@ -26,6 +26,8 @@ public class AutonomaError extends RuntimeException {
         return new AutonomaError("Invalid refs token: " + reason, "INVALID_REFS_TOKEN", 403);
     }
 
+    /** @deprecated The SDK no longer gates on production; this is never returned. */
+    @Deprecated
     public static AutonomaError productionBlocked() {
         return new AutonomaError("Environment factory is disabled", "PRODUCTION_BLOCKED", 404);
     }

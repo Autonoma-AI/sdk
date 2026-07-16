@@ -21,7 +21,6 @@ return [
     'shared_secret' => env('AUTONOMA_SHARED_SECRET', 'my-shared-secret'),
     // Private to your server — signs the refs token so teardown only deletes what was created
     'signing_secret' => env('AUTONOMA_SIGNING_SECRET', 'my-signing-secret'),
-    'allow_production' => true,
     'path' => 'api/autonoma',
     'middleware' => [],
 

@@ -25,6 +25,7 @@ module Autonoma
       AutonomaError.new("Unknown action: #{action}", "UNKNOWN_ACTION", 400)
     end
 
+    # Deprecated - the SDK no longer gates on production; this is never raised.
     def self.production_blocked
       AutonomaError.new("Environment factory is disabled", "PRODUCTION_BLOCKED", 404)
     end

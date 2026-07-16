@@ -40,7 +40,6 @@ end
 | `:auth` | a stub returning a bearer header | Override to exercise your real auth callback. |
 | `:shared_secret` | `"autonoma-check-shared"` | Rarely overridden for a dry run. |
 | `:signing_secret` | `"autonoma-check-signing"` | Must differ from the shared secret. |
-| `:allow_production` | `true` | Left on so the dry run is not gated. |
 | `:sdk` | `%{}` | Extra `sdk` metadata. |
 
 ### The result
@@ -103,7 +102,6 @@ config = %{
   scope_field: "organizationId",
   shared_secret: "shared-secret-a",
   signing_secret: "signing-secret-b",
-  allow_production: true,
   factories: MyAppWeb.Autonoma.Factories.all(),
   auth: fn user, _ctx -> %{"headers" => %{"Authorization" => "Bearer #{user["id"]}"}} end
 }

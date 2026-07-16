@@ -53,12 +53,10 @@ defmodule Autonoma.Handler do
 
   def handle(config, req) do
     try do
+      warn_deprecated_allow_production(config)
+
       if config.shared_secret == config.signing_secret do
         raise Error.same_secrets()
-      end
-
-      unless Map.get(config, :allow_production, false) do
-        raise Error.production_blocked()
       end
 
       signature =
@@ -97,6 +95,18 @@ defmodule Autonoma.Handler do
   # ---------------------------------------------------------------------------
   # discover
   # ---------------------------------------------------------------------------
+
+  # One-shot runtime signal - the config-key deprecation is invisible at
+  # runtime otherwise. :persistent_term keeps it to one warning per VM.
+  defp warn_deprecated_allow_production(config) do
+    if Map.get(config, :allow_production, false) and
+         not :persistent_term.get({__MODULE__, :warned_allow_production}, false) do
+      :persistent_term.put({__MODULE__, :warned_allow_production}, true)
+      IO.warn("allow_production is deprecated and ignored - the endpoint is always enabled")
+    end
+
+    :ok
+  end
 
   defp handle_discover(config) do
     factories = Map.get(config, :factories) || %{}

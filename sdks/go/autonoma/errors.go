@@ -44,6 +44,7 @@ func ErrInvalidRefsToken(reason string) *AutonomaError {
 	}
 }
 
+// Deprecated: the SDK no longer gates on production; this error is never returned.
 func ErrProductionBlocked(reason string) *AutonomaError {
 	return &AutonomaError{
 		Message: fmt.Sprintf("Environment factory is disabled. %s", reason),
