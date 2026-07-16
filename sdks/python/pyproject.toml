@@ -27,6 +27,12 @@ packages = [
     { include = "autonoma_fastapi", from = "src" },
     { include = "autonoma_django", from = "src" },
 ]
+# Bundle the agent-facing docs (Markdown) as package data inside `autonoma`, so
+# they land at site-packages/autonoma/docs/ on install.
+include = [
+    { path = "src/autonoma/docs/**/*", format = ["sdist", "wheel"] },
+    { path = "src/autonoma/AGENTS.md", format = ["sdist", "wheel"] },
+]
 
 [tool.poetry.extras]
 flask = ["flask"]

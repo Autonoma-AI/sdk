@@ -32,15 +32,23 @@ Add to your `pom.xml`:
 ### Spring Boot
 
 ```java
+// AutonomaConfig.java
 @Configuration
 public class AutonomaConfig {
+    // An input class describes a model's create fields; the SDK derives the
+    // discover schema from it by reflection, so there is no FieldInfo list.
+    public static class OrganizationInput { public String name; }
+
     @Bean
     public AutonomaController autonomaController() {
         Map<String, FactoryDefinition> factories = Map.of(
-            "Organization", Factory.define(
-                (data, ctx) -> Map.of("id", UUID.randomUUID().toString(), "name", data.get("name")),
-                List.of(new FieldInfo("name", "string", true)),
-                (record, ctx) -> deleteOrganization(record.get("id"))
+            "Organization", FactoryUtil.defineFactory(
+                (data, ctx) -> {
+                    OrganizationInput input = (OrganizationInput) data;
+                    return Map.of("id", createOrganization(input.name), "name", input.name);
+                },
+                OrganizationInput.class,
+                (record, ctx) -> deleteOrganization((String) record.get("id"))
             )
         );
 
@@ -50,9 +58,9 @@ public class AutonomaConfig {
             System.getenv("AUTONOMA_SIGNING_SECRET"),
             (user, context) -> AuthResult.ofHeaders(
                 Map.of("Authorization", "Bearer " + createToken(user))
-            ),
-            factories
-        );
+            )
+        ).setFactories(factories).setAllowProduction(true);
+
         return new AutonomaController(config);
     }
 }
@@ -71,4 +79,4 @@ mvn package -DskipTests        # build JARs
 
 ## Documentation
 
-For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory.
+Full agent-facing docs are bundled into the `autonoma-sdk` JAR under `autonoma/docs/` (and mirrored in this repo at [`autonoma-sdk/src/main/resources/autonoma/docs/`](./autonoma-sdk/src/main/resources/autonoma/docs/)); start with `implement.md`. For the language-agnostic wire protocol, see the root [`protocol/`](../../protocol/) directory.

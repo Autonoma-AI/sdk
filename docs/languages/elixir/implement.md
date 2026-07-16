@@ -1,0 +1,219 @@
+# Implement the endpoint (Elixir)
+
+Follow these steps to stand up a working Environment Factory endpoint. This is written for a coding agent doing the integration; do the steps in order and do not skip the validation step.
+
+## Prerequisites
+
+- An Elixir app on Elixir 1.14+ (Phoenix or a plain Plug app).
+- The database access layer your app already uses (Ecto contexts, raw queries - it does not matter; your factories call it).
+
+## Step 1 - Add the dependency
+
+The SDK ships as one Hex package, `autonoma`. The Plug server adapter (`Autonoma.Plug.Handler`) lives inside it but depends on `:plug`, which is an optional dependency - add `:plug` yourself unless Phoenix already pulls it in (it does).
+
+```elixir
+# mix.exs
+defp deps do
+  [
+    # ... your existing deps
+    {:autonoma, "~> 0.2"},
+    {:plug, "~> 1.14"}   # already present in Phoenix apps
+  ]
+end
+```
+
+```bash
+# shell
+mix deps.get
+```
+
+There is no ORM adapter package to install - the SDK is factory-driven.
+
+## Step 2 - Generate the two secrets
+
+```bash
+# shell
+openssl rand -hex 32   # AUTONOMA_SHARED_SECRET
+openssl rand -hex 32   # AUTONOMA_SIGNING_SECRET  (must be different)
+```
+
+Read them at runtime, normally in `config/runtime.exs` or straight from `System.get_env/1`. The SDK raises `SAME_SECRETS` if the two values match.
+
+```elixir
+# config/runtime.exs
+config :my_app, :autonoma,
+  shared_secret: System.get_env("AUTONOMA_SHARED_SECRET"),
+  signing_secret: System.get_env("AUTONOMA_SIGNING_SECRET")
+```
+
+## Step 3 - Find the scope field
+
+Read your Ecto schemas. Find the foreign key that appears on the most models and points at a single root entity - commonly `organization_id`, `org_id`, `tenant_id`, or `workspace_id`. That is the scope field. The root model itself (e.g. `Organization`) does not carry it.
+
+Use the exact column name the platform sends in the create payload (often the camelCase `organizationId`; match whatever your scenarios use). Confirm the field, the endpoint path, and the app's auth mechanism with the user before writing code.
+
+## Step 4 - Write a factory per model
+
+Write one factory for each model the platform will create, calling your app's real creation code. See `factories.md` for the full contract. Collect them into one map keyed by model name:
+
+```elixir
+# lib/my_app_web/autonoma/factories.ex
+defmodule MyAppWeb.Autonoma.Factories do
+  alias Autonoma.Factory
+
+  def all do
+    %{
+      "Organization" => organization(),
+      "User" => user(),
+      "Member" => member()
+    }
+  end
+
+  defp organization, do: Factory.define_factory(%{ ... })
+  defp user, do: Factory.define_factory(%{ ... })
+  defp member, do: Factory.define_factory(%{ ... })
+end
+```
+
+## Step 5 - Build the config and wire the handler
+
+The config is a plain map. It carries the scope field, both secrets, the factory map, the gate flag, and the auth callback. Build it at runtime and hand it to `Autonoma.Plug.Handler`.
+
+Because `Autonoma.Plug.Handler.call/2` reads the config from its second argument at request time, the reliable way to mount it - and to keep secrets out of compile time - is a thin wrapper plug that builds the config in its own `call/2`:
+
+```elixir
+# lib/my_app_web/autonoma/plug.ex
+defmodule MyAppWeb.Autonoma.Plug do
+  @behaviour Plug
+
+  @impl true
+  def init(opts), do: opts
+
+  @impl true
+  def call(conn, _opts) do
+    Autonoma.Plug.Handler.call(conn, config())
+  end
+
+  defp config do
+    secrets = Application.fetch_env!(:my_app, :autonoma)
+
+    %{
+      scope_field: "organizationId",
+      shared_secret: secrets[:shared_secret],
+      signing_secret: secrets[:signing_secret],
+      factories: MyAppWeb.Autonoma.Factories.all(),
+      allow_production: true,   # see Step 7
+      auth: fn user, _ctx ->
+        {:ok, token} = MyApp.Accounts.create_session_token(user["id"])
+        %{"headers" => %{"Authorization" => "Bearer #{token}"}}
+      end
+    }
+  end
+end
+```
+
+Mount it in your Phoenix router with `forward`:
+
+```elixir
+# lib/my_app_web/router.ex
+forward "/api/autonoma", MyAppWeb.Autonoma.Plug
+```
+
+In a plain `Plug.Router` app, forward to the same wrapper the same way. `Autonoma.Plug.Handler` reads the raw request body itself, computes the HMAC over the exact bytes, and JSON-encodes the response - you do not add a body parser in front of it.
+
+### Config keys
+
+| Key | Required | Meaning |
+|-----|----------|---------|
+| `:scope_field` | yes | Column name that isolates a test run's data. |
+| `:shared_secret` | yes | Verifies incoming request signatures (HMAC). |
+| `:signing_secret` | yes | Signs the teardown token. Must differ from `:shared_secret`. |
+| `:auth` | yes | `fn user, ctx -> map end`. Returns login credentials. |
+| `:factories` | yes in practice | `%{"Model" => factory}`. `up`/`discover` need it. |
+| `:allow_production` | no (default `false`) | The gate. `false` returns `404`. |
+| `:sdk` | no | Extra `sdk` metadata; the Plug sets `server` to `"plug"`. |
+| `:after_up` | no | `fn ctx, auth -> auth end`. Post-process the auth map. |
+| `:before_down` | no | `fn ctx -> any end`. Runs before teardown. |
+
+## Step 6 - Implement the auth callback
+
+This is the part that most often breaks tests, so get it right. The callback is a 2-arity function `fn user, ctx -> map end`:
+
+- `user` - the first created `User` record (a map with string keys, `user["id"]`), or `nil` if the scenario made none.
+- `ctx` - a map with **string keys**: `%{"scope_value" => ..., "refs" => ...}`.
+
+It must return **real, working credentials** using the app's actual auth mechanism. If it returns a fake or hardcoded token, every test fails at login. The return is a map with any of `"cookies"`, `"headers"`, `"credentials"` - there is no top-level `token` field. Pick the shape that matches how your app authenticates:
+
+```elixir
+# lib/my_app_web/autonoma/plug.ex
+# Session cookie (most web apps)
+auth: fn user, _ctx ->
+  {:ok, session} = MyApp.Accounts.create_session(user["id"])
+  %{"cookies" => [%{"name" => "session", "value" => session.token, "httpOnly" => true, "sameSite" => "lax", "path" => "/"}]}
+end
+
+# JWT bearer token (APIs, SPAs) - the token goes in a header
+auth: fn user, _ctx ->
+  {:ok, token, _claims} = MyApp.Guardian.encode_and_sign(user["id"])
+  %{"headers" => %{"Authorization" => "Bearer #{token}"}}
+end
+
+# Email + password (the runner logs in through the UI, e.g. mobile)
+auth: fn user, _ctx ->
+  %{"credentials" => %{"email" => user["email"], "password" => "test-password-123"}}
+end
+```
+
+For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
+
+## Step 7 - Enable the endpoint
+
+The endpoint returns `404 PRODUCTION_BLOCKED` until `:allow_production` is `true`. The SDK never inspects `MIX_ENV` or any environment variable - this flag is the only switch, so you own the condition:
+
+```elixir
+# lib/my_app_web/autonoma/plug.ex
+allow_production: true,                          # always on
+allow_production: Mix.env() != :prod,            # off in prod (compile-time)
+allow_production: Application.get_env(:my_app, :autonoma_enabled, false)   # runtime toggle
+```
+
+## Step 8 - Validate before deploying
+
+Dry-run your scenarios against a real (test) database with `Autonoma.Check.check_scenario/2` and iterate until they pass. See `validation.md`. Never ship a scenario you have not validated.
+
+## Step 9 - Smoke-test with curl
+
+```bash
+# shell
+SECRET="your-shared-secret"
+BODY='{"action":"discover"}'
+SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/.*= //')
+curl -s -X POST http://localhost:4000/api/autonoma \
+  -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
+```
+
+Expected: a JSON schema listing your models and `scopeField`. A `404` means `:allow_production` is not `true` or the route is not mounted; a `401` means the secret does not match.
+
+## Step 10 - Report and connect
+
+Tell the user the endpoint path, confirm all scenarios pass, and hand off:
+
+1. Set `AUTONOMA_SHARED_SECRET` and `AUTONOMA_SIGNING_SECRET` in staging/production env.
+2. Deploy the endpoint.
+3. Paste `AUTONOMA_SHARED_SECRET` into the Autonoma dashboard when connecting the app.
+
+## Rules
+
+**Do:**
+- Reuse the app's existing Ecto contexts and real creation code inside factories.
+- Return real credentials from `:auth` using the app's own session/JWT logic.
+- Register a factory (with a `teardown`) for every model any scenario creates.
+- Match the project's conventions: module layout, naming, context boundaries.
+- Validate every scenario with `Autonoma.Check.check_scenario/2` before deploying.
+
+**Do not:**
+- Implement HMAC, token signing, or teardown ordering yourself - the SDK owns all of it.
+- Return a hardcoded token like `"test-token"` from `:auth`.
+- Use the same value for `:shared_secret` and `:signing_secret`.
+- Set `id`, defaulted fields, or auto timestamps in scenario data.
+- Expect the SDK to inject the scope field or wire any FK - you set every FK as a `_ref`.

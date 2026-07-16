@@ -16,7 +16,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "docs",
+    "AGENTS.md"
   ],
   "publishConfig": {
     "access": "public"

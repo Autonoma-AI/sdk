@@ -42,12 +42,12 @@ class AutonomaController < ApplicationController
       shared_secret: ENV["AUTONOMA_SHARED_SECRET"],
       signing_secret: ENV["AUTONOMA_SIGNING_SECRET"],
       factories: {
-        "Organization" => Autonoma::Factory.define(
+        "Organization" => Autonoma::Factory.define_factory(
           create: ->(data, ctx) {
             org = Organization.create!(name: data["name"])
             { "id" => org.id.to_s, "name" => org.name }
           },
-          input_fields: [Autonoma::FieldInfo.new("name", "string", true)],
+          input_fields: [{ name: "name", type: "string", required: true }],
           teardown: ->(record, ctx) { Organization.find(record["id"]).destroy! }
         ),
       },
@@ -69,4 +69,4 @@ ruby -Ilib -Itest test/test_handler.rb          # run a single test file
 
 ## Documentation
 
-For protocol-level documentation, see the root [`protocol/`](../../protocol/) directory.
+Full agent-facing docs ship inside the gem under [`docs/`](./docs/) (start with [`docs/implement.md`](./docs/implement.md)); [`AGENTS.md`](./AGENTS.md) is the agent pointer. For the language-agnostic wire protocol, see the root [`protocol/`](../../protocol/) directory.
