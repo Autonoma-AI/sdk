@@ -12,5 +12,5 @@ require_relative "autonoma/factory"
 require_relative "autonoma/handler"
 
 module Autonoma
-  VERSION = "0.2.0"
+  VERSION = "0.2.5"
 end

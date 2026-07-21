@@ -2,7 +2,7 @@
 
 Gem::Specification.new do |spec|
   spec.name          = "autonoma-ai"
-  spec.version       = "0.2.0"
+  spec.version       = "0.2.5"
   spec.authors       = ["Autonoma AI"]
   spec.email         = ["eng@autonoma.ai"]
 
