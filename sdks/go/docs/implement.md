@@ -13,10 +13,12 @@ Follow these steps to stand up a working Environment Factory endpoint. This is w
 
 ```bash
 # shell
-go get github.com/autonoma-ai/sdk-go/autonoma
+go get github.com/autonoma-ai/sdk/sdks/go/autonoma
 ```
 
-Import it as `github.com/autonoma-ai/sdk-go/autonoma`. There is no ORM adapter package to install - the SDK is factory-driven. The only server adapter that ships is Gin (`autonoma.GinHandler`); everything else uses `autonoma.HandleRequest` directly.
+The SDK lives inside the Autonoma monorepo (`github.com/autonoma-ai/sdk`) as a submodule under `sdks/go/`, so the module path is `github.com/autonoma-ai/sdk/sdks/go` and you import the package as `github.com/autonoma-ai/sdk/sdks/go/autonoma`. To pin a release, use the plain version - `go get github.com/autonoma-ai/sdk/sdks/go/autonoma@v0.2.9` - even though the underlying git tag is `sdks/go/v0.2.9` (the subdirectory prefix is how Go versions a submodule; you never type the prefix).
+
+There is no ORM adapter package to install - the SDK is factory-driven. The only server adapter that ships is Gin (`autonoma.GinHandler`); everything else (Echo, Fiber, Chi, `net/http`, ...) uses `autonoma.HandleRequest` directly - see Step 5.
 
 ## Step 2 - Generate the two secrets
 
@@ -42,7 +44,7 @@ Write one factory for each model the platform will create, calling your app's re
 // factories/registry.go
 package factories
 
-import "github.com/autonoma-ai/sdk-go/autonoma"
+import "github.com/autonoma-ai/sdk/sdks/go/autonoma"
 
 var Registry = autonoma.FactoryRegistry{
 	"Organization": Organization,
@@ -62,7 +64,7 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/autonoma-ai/sdk-go/autonoma"
+	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
 	"myapp/auth"
 	"myapp/factories"
 )
@@ -92,9 +94,41 @@ func mountAutonoma(r *gin.Engine) {
 
 `GinHandler` reads the raw body, forwards the `x-signature` header, and sets `sdk.server` to `"gin"` for you.
 
-### Without Gin: wire HandleRequest by hand
+### Any other framework (Echo, Fiber, Chi, net/http): wire HandleRequest by hand
 
-There is no `net/http` adapter, but `autonoma.HandleRequest` is the framework-agnostic entry point. Read the raw body untouched, pass the headers, and write the returned status and JSON body:
+Gin is the only framework with a bundled adapter. For everything else there is no adapter to import - and you do not need one. `autonoma.HandleRequest(config, req) HandlerResponse` is the framework-agnostic entry point; a server adapter is nothing more than a ~10-line wrapper that (1) reads the raw request body untouched, (2) copies the headers into a `map[string]string` with lowercased keys, (3) calls `HandleRequest`, and (4) writes the returned `Status` and JSON `Body`. Do that in your framework's handler idiom.
+
+**Echo:**
+
+```go
+// autonoma_echo.go
+import (
+	"github.com/labstack/echo/v4"
+	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
+)
+
+func autonomaHandler(config *autonoma.HandlerConfig) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		body, err := io.ReadAll(c.Request().Body)
+		if err != nil {
+			return err
+		}
+		headers := map[string]string{}
+		for k := range c.Request().Header {
+			headers[strings.ToLower(k)] = c.Request().Header.Get(k)
+		}
+		resp := autonoma.HandleRequest(config, autonoma.HandlerRequest{
+			Body:    string(body),
+			Headers: headers,
+		})
+		return c.JSON(resp.Status, resp.Body)
+	}
+}
+
+// mount: e.POST("/api/autonoma", autonomaHandler(config))
+```
+
+**Plain net/http** (the same shape, for reference):
 
 ```go
 // autonoma_nethttp.go
@@ -116,7 +150,7 @@ func autonomaHandler(config *autonoma.HandlerConfig) http.HandlerFunc {
 }
 ```
 
-The HMAC is computed over the exact request bytes, so read the body as a raw string before any middleware reparses it.
+The HMAC is computed over the exact request bytes, so read the body as a raw string **before** any middleware reparses it (e.g. before Echo's `BodyDump` or a JSON bind). `sdk.server` will report `"unknown"` for a hand-wired adapter, which is expected.
 
 ## Step 6 - Implement the auth callback
 

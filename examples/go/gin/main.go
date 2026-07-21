@@ -17,7 +17,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/autonoma-ai/sdk-go/autonoma"
+	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 )

@@ -13,7 +13,7 @@ package factories
 import (
 	"reflect"
 
-	"github.com/autonoma-ai/sdk-go/autonoma"
+	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
 	"myapp/db"
 )
 
@@ -167,7 +167,7 @@ Collect every factory into a `FactoryRegistry` (a `map[string]autonoma.FactoryDe
 // factories/registry.go
 package factories
 
-import "github.com/autonoma-ai/sdk-go/autonoma"
+import "github.com/autonoma-ai/sdk/sdks/go/autonoma"
 
 var Registry = autonoma.FactoryRegistry{
 	"Organization": Organization,
