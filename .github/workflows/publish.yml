@@ -230,3 +230,53 @@ jobs:
         run: gem push autonoma-ai-${{ steps.gem_check.outputs.version }}.gem
         env:
           GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # Go → git tag
+  #
+  # Go has no registry upload: the module proxy pulls straight from a git tag.
+  # The Go module lives at github.com/autonoma-ai/sdk/sdks/go (a submodule of
+  # this monorepo), so its version tag MUST carry the subdirectory prefix
+  # `sdks/go/` — a plain vX.Y.Z tag would resolve the (non-existent) root
+  # module. Consumers still write `@vX.Y.Z`; Go maps it to the prefixed tag.
+  # ---------------------------------------------------------------------------
+  go-tag:
+    name: Tag Go submodule
+    needs: guard
+    if: ${{ !cancelled() && (needs.guard.result == 'success' || needs.guard.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push sdks/go/vX.Y.Z tag
+        run: |
+          VERSION=$(jq -r '.["."]' .release-please-manifest.json)
+          GO_TAG="sdks/go/v${VERSION}"
+          git fetch --tags origin
+          if git ls-remote --tags origin "refs/tags/${GO_TAG}" | grep -q "${GO_TAG}"; then
+            echo "::notice::${GO_TAG} already exists — skipping Go tag."
+            exit 0
+          fi
+          # Anchor the Go tag to the exact commit of the release tag vX.Y.Z so
+          # it matches the other SDKs' release; fall back to HEAD if that tag
+          # is absent (e.g. a manual dispatch outside the release flow).
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            COMMIT=$(git rev-list -n1 "v${VERSION}")
+          else
+            COMMIT=$(git rev-parse HEAD)
+          fi
+          git tag "${GO_TAG}" "${COMMIT}"
+          git push origin "${GO_TAG}"
+          echo "::notice::Pushed ${GO_TAG} -> ${COMMIT}"
+
+      - name: Warm the Go module proxy (best effort)
+        continue-on-error: true
+        run: |
+          VERSION=$(jq -r '.["."]' .release-please-manifest.json)
+          curl -fsS "https://proxy.golang.org/github.com/autonoma-ai/sdk/sdks/go/@v/v${VERSION}.info" \
+            && echo "::notice::proxy.golang.org cached github.com/autonoma-ai/sdk/sdks/go@v${VERSION}" \
+            || echo "::notice::proxy warm skipped — it will fetch on first go get."

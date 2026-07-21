@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/autonoma-ai/sdk-go/autonoma"
+	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
 )
 
 type bridgeInput struct {

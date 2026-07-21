@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/autonoma-ai/sdk-go/autonoma"
+	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
 )
 
 // checkScenario runs up then down through the handler and returns the first error.
@@ -69,7 +69,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/autonoma-ai/sdk-go/autonoma"
+	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
 	"myapp/factories"
 )
 
