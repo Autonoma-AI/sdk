@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.10](https://github.com/Autonoma-AI/sdk/compare/v0.2.9...v0.2.10) (2026-07-21)
+
+
+### Features
+
+* automate Ruby SDK publishing to RubyGems ([#60](https://github.com/Autonoma-AI/sdk/issues/60)) ([381cc5b](https://github.com/Autonoma-AI/sdk/commit/381cc5b81b3fa8f4419a892fa5f80b1937f18c65))
+
 ## [0.2.9](https://github.com/Autonoma-AI/sdk/compare/v0.2.8...v0.2.9) (2026-07-16)
 
 
