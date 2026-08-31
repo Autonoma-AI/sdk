@@ -2,13 +2,13 @@
 
 Gem::Specification.new do |spec|
   spec.name          = "autonoma-ai"
-  spec.version       = "0.2.5"
+  spec.version       = "0.2.5" # x-release-please-version
   spec.authors       = ["Autonoma AI"]
   spec.email         = ["eng@autonoma.ai"]
 
   spec.summary       = "Autonoma SDK — automate the Autonoma Environment Factory endpoint"
-  spec.description   = "Ruby SDK for the Autonoma Environment Factory. Handles HMAC verification, " \
-                        "JWT refs, template resolution, factory-driven entity creation, and scoped teardown."
+  spec.description   = "Ruby SDK for Scenario v2. Handles HMAC verification, named scenarios, " \
+                        "signed teardown tokens, and bounded test-facing data."
   spec.homepage      = "https://autonoma.ai"
   spec.license       = "MIT"
 

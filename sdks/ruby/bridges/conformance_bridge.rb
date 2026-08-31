@@ -1,6 +1,13 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
+# Conformance test bridge for the Ruby SDK.
+#
+# Reads a JSON test case from stdin, dispatches to the appropriate SDK function,
+# and writes the result to stdout. Scenario-v2 dropped the create-graph
+# interpreter and fingerprint(), so the Ruby SDK conforms only on the unchanged
+# hmac and refs primitives.
+
 $LOAD_PATH.unshift(File.join(__dir__, "..", "lib"))
 
 require "json"
@@ -14,10 +21,6 @@ begin
   inp = data["input"]
 
   result = case [mod, fn]
-           when ["graph", "topoSort"]
-             Autonoma::Graph.topo_sort(inp["nodes"], inp["edges"])
-           when ["graph", "findDeferrableEdge"]
-             Autonoma::Graph.find_deferrable_edge(inp["cycle"], inp["edges"])
            when ["hmac", "signBody"]
              Autonoma::Hmac.sign_body(inp["body"], inp["secret"])
            when ["hmac", "verifySignature"]
@@ -25,9 +28,12 @@ begin
            when ["refs", "signRefs"]
              Autonoma::Refs.sign_refs(inp["payload"], inp["secret"])
            when ["refs", "verifyRefs"]
-             Autonoma::Refs.verify_refs(inp["token"], inp["secret"])
-           when ["fingerprint", "fingerprint"]
-             Autonoma::Fingerprint.fingerprint(inp["value"])
+             payload = Autonoma::Refs.verify_refs(inp["token"], inp["secret"])
+             {
+               "refs" => payload["refs"],
+               "testRunId" => payload["testRunId"],
+               "environment" => payload["environment"]
+             }
            else
              raise "Unknown module/function: #{mod}.#{fn}"
            end

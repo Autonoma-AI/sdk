@@ -26,6 +26,12 @@
       "args": [],
       "cwd": ".",
       "modules": ["hmac", "refs"]
+    },
+    "ruby": {
+      "command": "ruby",
+      "args": ["-Ilib", "bridges/conformance_bridge.rb"],
+      "cwd": "../sdks/ruby",
+      "modules": ["hmac", "refs"]
     }
   }
 }
