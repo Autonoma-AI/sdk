@@ -8,12 +8,6 @@ result =
 
     value =
       case {mod, func} do
-        {"graph", "topoSort"} ->
-          Autonoma.Graph.topo_sort(inp["nodes"], inp["edges"])
-
-        {"graph", "findDeferrableEdge"} ->
-          Autonoma.Graph.find_deferrable_edge(inp["cycle"], inp["edges"])
-
         {"hmac", "signBody"} ->
           Autonoma.HMAC.sign_body(inp["body"], inp["secret"])
 
@@ -25,9 +19,6 @@ result =
 
         {"refs", "verifyRefs"} ->
           Autonoma.Refs.verify!(inp["token"], inp["secret"])
-
-        {"fingerprint", "fingerprint"} ->
-          Autonoma.Fingerprint.compute(inp["value"])
 
         _ ->
           raise "Unknown function: #{mod}.#{func}"

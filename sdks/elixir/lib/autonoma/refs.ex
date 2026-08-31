@@ -1,6 +1,10 @@
 defmodule Autonoma.Refs do
   @moduledoc """
-  JWT-like refs token: header.payload.signature using HMAC-SHA256.
+  JWT-like signing primitive: `header.payload.signature` using HMAC-SHA256.
+
+  The handler signs `%{"refs" => teardown, "testRunId" => ..., "environment" => name}`
+  into the teardown token on `up` and verifies it back on `down`. The primitive
+  itself is payload-agnostic and unchanged across the v2 migration.
   """
 
   @doc """
@@ -8,14 +12,15 @@ defmodule Autonoma.Refs do
   """
   def sign(payload, secret) do
     header = base64url_encode(Jason.encode!(%{"alg" => "HS256", "typ" => "REFS"}))
-    # Bug 7: sanitize payload before JSON encoding to handle DateTime, NaiveDateTime, Decimal, etc.
+    # Sanitize before encoding so DateTime / NaiveDateTime / Decimal handles a
+    # scenario may carry in `teardown` survive the JSON round-trip.
     body = base64url_encode(Jason.encode!(sanitize_for_json(payload)))
     signature = hmac_sign("#{header}.#{body}", secret)
     "#{header}.#{body}.#{signature}"
   end
 
   @doc """
-  Verify and decode a refs token. Returns the payload map or raises.
+  Verify and decode a teardown token. Returns the payload map or raises.
   """
   def verify!(token, secret) do
     parts = String.split(token, ".")
