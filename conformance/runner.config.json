@@ -20,6 +20,12 @@
       "args": [],
       "cwd": "../sdks/go",
       "modules": ["hmac", "refs"]
+    },
+    "rust": {
+      "command": "../sdks/rust/target/release/conformance_bridge",
+      "args": [],
+      "cwd": ".",
+      "modules": ["hmac", "refs"]
     }
   }
 }

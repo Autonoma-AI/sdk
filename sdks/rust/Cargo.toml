@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Autonoma SDK for Rust — automates the Autonoma Environment Factory endpoint"
 license = "MIT"
+repository = "https://github.com/Autonoma-AI/sdk"
+homepage = "https://autonoma.ai"
+documentation = "https://docs.rs/autonoma-sdk"
+keywords = ["testing", "e2e", "scenario", "automation"]
+categories = ["development-tools::testing", "web-programming"]
 
 [features]
 default = []
@@ -35,3 +40,10 @@ axum = { version = "0.8", optional = true }
 [[bin]]
 name = "conformance_bridge"
 path = "bridges/conformance_bridge.rs"
+
+# Protocol-suite server: boots the SDK's Axum adapter with the shared
+# `standard` + `empty` scenarios. Built by protocol/run-suites.mjs.
+[[bin]]
+name = "protocol-server"
+path = "../../protocol/servers/rust-server.rs"
+required-features = ["axum"]
