@@ -5,12 +5,11 @@ Follow these steps to stand up a working Environment Factory endpoint. This is w
 ## Prerequisites
 
 - A TypeScript backend on Node.js 18+.
-- A database and the client your app already uses (Prisma, Drizzle, Kysely, raw `pg` - it does not matter; your factories call it).
-- `zod` (a peer dependency of the SDK).
+- A database and the client your app already uses (Prisma, Drizzle, Kysely, raw `pg` - it does not matter; your scenario code calls it).
 
 ## Step 1 - Detect the stack and pick packages
 
-Install the core package, `zod`, and the one server adapter that matches the app's HTTP framework:
+Install the core package and the one server adapter that matches the app's HTTP framework:
 
 | Framework | Server adapter package | Handler export |
 |-----------|------------------------|----------------|
@@ -21,10 +20,10 @@ Install the core package, `zod`, and the one server adapter that matches the app
 
 ```bash
 # example: Next.js App Router
-pnpm add @autonoma-ai/sdk @autonoma-ai/server-web zod
+pnpm add @autonoma-ai/sdk @autonoma-ai/server-web
 ```
 
-Use the project's package manager (pnpm, npm, yarn, bun). There is no ORM adapter package to install - the SDK is factory-driven.
+Use the project's package manager (pnpm, npm, yarn, bun). There is no ORM adapter package to install - scenarios call your app's own code directly.
 
 ## Step 2 - Generate the two secrets
 
@@ -41,46 +40,69 @@ AUTONOMA_SHARED_SECRET=...   # shared with Autonoma
 AUTONOMA_SIGNING_SECRET=...  # private, never shared
 ```
 
-## Step 3 - Find the scope field
+## Step 3 - Confirm the endpoint path and auth mechanism
 
-Read the database schema. Find the foreign key that appears on the most models and points at a single root entity - commonly `organizationId`, `orgId`, `tenantId`, or `workspaceId`. That is the scope field. The root model itself (e.g. `Organization`) does not carry it.
+There is no scope field to find in v2. Instead, confirm two things with the user before writing code:
 
-Confirm the field, the endpoint path, and the app's auth mechanism with the user before writing code.
+- The endpoint path you will mount (for example `/api/autonoma`).
+- How the app authenticates a request (session cookie, JWT bearer, or email + password), so your scenarios' `up` can return real, working credentials.
 
-## Step 4 - Write a factory per model
+## Step 4 - Write scenarios
 
-Write one factory for each model the platform will create, calling your app's real creation code. See `factories.md` for the full contract. Collect them into one registry:
-
-```typescript
-// factories/index.ts
-export const factories = { Organization, User, Member, Application /* ... */ }
-```
-
-## Step 5 - Wire the handler
-
-Create the config once and pass it to your adapter's handler function. The config carries the scope field, both secrets, the factory registry, and the auth callback.
+A scenario is named code that provisions an environment. Author each with `defineScenario`: a `name`, a `description`, an `up`, and an optional `down`. `up` runs whatever provisioning code you would write by hand and returns `{ auth?, teardown? }`. See `scenarios.md` for the authoring rules.
 
 ```typescript
-// app/api/autonoma/route.ts  (Next.js App Router)
-import { createHandler } from '@autonoma-ai/server-web'
-import { factories } from '@/factories'
-import { createSession } from '@/lib/auth'   // your app's real session code
+// scenarios/single-user.ts
+import { defineScenario, uniqueEmail } from '@autonoma-ai/sdk'
+import { db } from '@/lib/db'
+import { createSession } from '@/lib/auth'
 
-export const POST = createHandler({
-  scopeField: 'organizationId',
-  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
-  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
-  factories,
-  auth: async (user, ctx) => {
-    const session = await createSession(user!.id as string)
+export const singleUser = defineScenario({
+  name: 'single-user',
+  description: 'One verified user in a fresh org',
+  up: async ({ testRunId }) => {
+    const email = uniqueEmail(testRunId)
+    const user = await db.user.create({ data: { email, verified: true } })
+    const session = await createSession(user.id)
     return {
-      cookies: [{ name: 'session', value: session.token, httpOnly: true, sameSite: 'lax', path: '/' }],
+      auth: { cookies: [{ name: 'session', value: session.token, httpOnly: true, sameSite: 'lax', path: '/' }] },
+      teardown: { userId: user.id },
     }
+  },
+  down: async ({ teardown }) => {
+    await db.user.delete({ where: { id: teardown.userId } })
   },
 })
 ```
 
-Other frameworks use the same config object, only the mounting differs:
+Collect them into one array:
+
+```typescript
+// scenarios/index.ts
+import { singleUser } from './single-user'
+import { standard } from './standard'
+import { large } from './large'
+
+export const scenarios = [singleUser, standard, large]
+```
+
+## Step 5 - Wire the handler
+
+Create the config once and pass it to your adapter's handler function. The config carries the two secrets and the scenario array. There is no `scopeField`, no `factories`, and no top-level `auth` callback.
+
+```typescript
+// app/api/autonoma/route.ts  (Next.js App Router)
+import { createHandler } from '@autonoma-ai/server-web'
+import { scenarios } from '@/scenarios'
+
+export const POST = createHandler({
+  sharedSecret: process.env.AUTONOMA_SHARED_SECRET!,
+  signingSecret: process.env.AUTONOMA_SIGNING_SECRET!,
+  scenarios,
+})
+```
+
+Other frameworks use the same config object; only the mounting differs:
 
 ```typescript
 // Express
@@ -96,32 +118,24 @@ import { createNodeHandler } from '@autonoma-ai/server-node'
 http.createServer(createNodeHandler(config)).listen(3000)
 ```
 
-## Step 6 - Implement the auth callback
+## Step 6 - Return real credentials from `up`
 
-This is the part that most often breaks tests, so get it right. The callback receives the first created `User` record (or `null` if the scenario made none) and `ctx` with `scopeValue` and `refs`. It must return **real, working credentials** using the app's actual auth mechanism. If it returns a fake or hardcoded token, every test fails at login.
-
-The return type is `{ cookies?, headers?, credentials? }` - there is no top-level `token` field. Pick the shape that matches how your app authenticates:
+The `auth` a scenario's `up` returns is the part that most often breaks tests, so get it right. It must be **real, working credentials** produced by the app's actual auth mechanism. A fake or hardcoded token makes every test fail at login. The shape is `{ cookies?, headers?, credentials? }` - there is no top-level `token` field.
 
 ```typescript
 // Session cookie (most web apps)
-auth: async (user) => {
-  const session = await createSession(user!.id as string)
-  return { cookies: [{ name: 'session', value: session.token, httpOnly: true, sameSite: 'lax', path: '/' }] }
-}
+const session = await createSession(user.id)
+return { auth: { cookies: [{ name: 'session', value: session.token, httpOnly: true, sameSite: 'lax', path: '/' }] }, /* ... */ }
 
 // JWT bearer token (APIs, SPAs) - the token goes in a header
-auth: async (user) => {
-  const token = jwt.sign({ sub: user!.id }, process.env.JWT_SECRET!, { expiresIn: '1h' })
-  return { headers: { Authorization: `Bearer ${token}` } }
-}
+const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET!, { expiresIn: '1h' })
+return { auth: { headers: { Authorization: `Bearer ${token}` } }, /* ... */ }
 
 // Email + password (the runner logs in through the UI, e.g. mobile)
-auth: async (user) => ({
-  credentials: { email: user!.email as string, password: 'test-password-123' },
-})
+return { auth: { credentials: { email: user.email, password: 'test-password-123' } }, /* ... */ }
 ```
 
-For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
+For the email/password shape, the scenario must create the user with a matching password hash so a real login succeeds.
 
 ## Step 7 - Production gating (optional)
 
@@ -138,7 +152,7 @@ export const POST = (req: Request) =>
 
 ## Step 8 - Validate before deploying
 
-Dry-run your scenarios against a real database with `checkScenario` and iterate until they pass. See `validation.md`. Never ship a scenario you have not validated.
+Dry-run every scenario against a real database with `checkScenario` and iterate until they pass. See `validation.md`. Never ship a scenario you have not validated.
 
 ## Step 9 - Smoke-test with curl
 
@@ -150,7 +164,7 @@ curl -s -X POST http://localhost:3000/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON body listing your scenarios as `{ name, description }`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 
@@ -163,15 +177,14 @@ Tell the user the endpoint path, confirm all scenarios pass, and hand off:
 ## Rules
 
 **Do:**
-- Reuse the app's existing DB client and real creation code inside factories.
+- Reuse the app's existing DB client and real creation code inside `up`.
 - Return real credentials from `auth` using the app's own session/JWT logic.
-- Register a factory (with a `teardown`) for every model any scenario creates.
+- Seed every unique value from `testRunId` with the `unique*` helpers.
 - Match the project's conventions: import style, file layout, naming.
 - Validate every scenario with `checkScenario` before deploying.
 
 **Do not:**
-- Implement HMAC, token signing, or teardown ordering yourself - the SDK owns all of it.
+- Implement HMAC, token signing, or expiry yourself - the SDK owns all of it.
 - Return a hardcoded token like `"test-token"` from `auth`.
 - Use the same value for `sharedSecret` and `signingSecret`.
-- Set `id`, defaulted fields, or auto timestamps in scenario data.
-- Expect the SDK to inject the scope field or wire any FK - you set every FK as a `_ref`.
+- Reach for a random UUID or `Date.now()` for a unique value - it breaks the determinism `down` and debugging rely on.

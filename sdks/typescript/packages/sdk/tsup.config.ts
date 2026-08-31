@@ -12,7 +12,6 @@ const protocolVersion = readFileSync(
 export default defineConfig({
   entry: [
     'src/index.ts',
-    'src/graph.ts',
   ],
   format: ['esm'],
   dts: true,

@@ -1,14 +1,14 @@
 # Autonoma Environment Factory SDK
 
-> This package implements the Autonoma Environment Factory: a single backend endpoint that creates isolated, factory-driven test data before an end-to-end test run and tears it down afterward. These docs are bundled inside the installed package so a coding agent can read the API that matches this exact version, instead of relying on training data.
+> This package implements the Autonoma Environment Factory: a single backend endpoint that provisions isolated test data before an end-to-end test run and tears it down afterward. You author named scenarios in your own code with `defineScenario` (or your language's equivalent); the SDK owns HMAC authentication, the signed teardown token, and expiry. These docs are bundled inside the installed package so a coding agent reads the API that matches this exact version, instead of relying on training data.
 
 If you are setting up the endpoint, read `implement.md` and follow it step by step. The other files are reference.
 
 ## Reading order
 
-1. overview.md - What the Environment Factory is, the three actions (discover/up/down), the scope field, the two secrets, and why it is factory-driven. Start here.
-2. implement.md - Step-by-step setup for this language: install, register factories, wire the handler, implement the auth callback, enable the endpoint, and validate. This is the doc to follow when integrating.
-3. factories.md - How to write a factory in this language: the `create`/`teardown` contract, the input schema, and what `create` receives and must return.
-4. scenarios.md - The `create` data format: the flat map, `_alias`/`_ref` links, the scope field, and the three standard scenarios. Language-agnostic.
-5. protocol.md - The HTTP wire protocol: authentication, the three actions, the refs token, the safety model, and every error code. Language-agnostic. Reach for this when debugging.
-6. validation.md - How to dry-run a scenario against a real database in this language before deploying.
+1. overview.md - What the Environment Factory is, the three actions (discover/up/down), scenarios as ordinary code, what `up` returns, and the two secrets. Start here.
+2. implement.md - Step-by-step setup for this language: install, author scenarios, wire the handler, return real credentials from `up`, and validate. This is the doc to follow when integrating.
+3. scenarios.md - How to author scenarios: `name`/`description`/`up`/`down`, the `{ auth, teardown }` return, seeding unique values, the `unique*` helpers, and how to choose journey-based scenario names. Language-agnostic.
+4. factories.md - Legacy SDK v1 factory compatibility for migrations. Not v2 authoring guidance and not wired to the v2 protocol.
+5. protocol.md - The HTTP wire protocol: authentication, the three actions, the teardown token, the safety model, and every error code. Language-agnostic. Reach for this when debugging.
+6. validation.md - How to dry-run a scenario in this language before deploying.
