@@ -9,28 +9,22 @@
       "cwd": ".",
       "modules": ["hmac", "refs"]
     },
+    "elixir": {
+      "command": "mix",
+      "args": ["run", "bridges/conformance_bridge.exs"],
+      "cwd": "../sdks/elixir",
+      "modules": ["hmac", "refs"]
+    },
     "python": {
       "command": "python3",
       "args": ["bridges/conformance_bridge.py"],
       "cwd": "../sdks/python",
       "modules": ["hmac", "refs"]
     },
-    "go": {
-      "command": "./bridges/conformance_bridge",
-      "args": [],
-      "cwd": "../sdks/go",
-      "modules": ["hmac", "refs"]
-    },
-    "rust": {
-      "command": "../sdks/rust/target/release/conformance_bridge",
-      "args": [],
-      "cwd": ".",
-      "modules": ["hmac", "refs"]
-    },
-    "ruby": {
-      "command": "ruby",
-      "args": ["-Ilib", "bridges/conformance_bridge.rb"],
-      "cwd": "../sdks/ruby",
+    "php": {
+      "command": "php",
+      "args": ["bridges/conformance_bridge.php"],
+      "cwd": "../sdks/php",
       "modules": ["hmac", "refs"]
     },
     "java": {
@@ -39,10 +33,22 @@
       "cwd": "../sdks/java",
       "modules": ["hmac", "refs"]
     },
-    "php": {
-      "command": "php",
-      "args": ["bridges/conformance_bridge.php"],
-      "cwd": "../sdks/php",
+    "ruby": {
+      "command": "ruby",
+      "args": ["-Ilib", "bridges/conformance_bridge.rb"],
+      "cwd": "../sdks/ruby",
+      "modules": ["hmac", "refs"]
+    },
+    "rust": {
+      "command": "../sdks/rust/target/release/conformance_bridge",
+      "args": [],
+      "cwd": ".",
+      "modules": ["hmac", "refs"]
+    },
+    "go": {
+      "command": "./bridges/conformance_bridge",
+      "args": [],
+      "cwd": "../sdks/go",
       "modules": ["hmac", "refs"]
     }
   }

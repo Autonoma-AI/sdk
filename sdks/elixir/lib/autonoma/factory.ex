@@ -1,14 +1,19 @@
 defmodule Autonoma.Factory do
   @moduledoc """
-  Define a factory for creating entities via user code.
+  Optional factory helper library.
 
-  The factory's `create` function receives a validated map of fields
-  (with unknown keys stripped and required fields checked) and a
-  `FactoryContext`, and must return a record map that includes at
-  least `"id"`.
+  Factories are **not** wired to the wire protocol in v2 - the platform only
+  calls a scenario's `up` and `down`. A scenario's `up`/`down` may use factories
+  internally to create and tear down entities through the app's real logic
+  (password hashing, external service calls, state machines), exactly as
+  production data is created.
 
-  `input_fields` is **required** because the SDK derives the discover
-  schema from it (no DB introspection).
+  The factory's `create` function receives a validated map of fields (with
+  unknown keys stripped and required fields checked) and a `FactoryContext`, and
+  must return a record map that includes at least `"id"`.
+
+  `input_fields` declares the fields the factory accepts; `validate_input/2`
+  uses it for the host's own create-payload validation.
   """
 
   @doc """

@@ -1,73 +1,17 @@
-# Writing factories (Elixir)
+# Legacy factory compatibility (Elixir migration)
 
-A factory tells the SDK how to create and delete one model using your own code. You register one factory per model the platform can create and pass them all to the handler as `factories`. This page is the exact contract; read it before writing any.
+Scenario v2 does not use factories. Author new integrations with ordinary Elixir inside `Autonoma.Scenario.define_scenario/1` as described in `implement.md` and `scenarios.md`.
 
-## The shape
+This page exists only for projects migrating older customer code that already calls `Autonoma.Factory.define_factory/1`. The helper is not registered with the handler, is not discoverable, and is never invoked by the v2 protocol. Do not introduce it in a new v2 integration.
 
 ```elixir
-# lib/my_app_web/autonoma/factories.ex
 alias Autonoma.Factory
 
-organization =
+user_factory =
   Factory.define_factory(%{
-    input_fields: [
-      %{name: "name", type: :string, required: true},
-      %{name: "slug", type: :string, required: true}
-    ],
+    input_fields: [%{name: "email", type: :string, required: true}],
     create: fn data, _ctx ->
-      org = MyApp.Organizations.create_organization!(%{name: data["name"], slug: data["slug"]})
-      %{"id" => org.id, "name" => org.name}
-    end,
-    teardown: fn record, _ctx ->
-      MyApp.Organizations.delete_organization!(record["id"])
-    end
-  })
-```
-
-`Autonoma.Factory.define_factory/1` takes a single map and validates its shape at call time. It raises `ArgumentError` if `create` is not a 2-arity function or if `input_fields` is missing, so a bad factory fails loudly when your app boots.
-
-## The definition map
-
-| Key | Required | Value |
-|-----|----------|-------|
-| `:create` | yes | `fn data, ctx -> record end` - a 2-arity function. |
-| `:input_fields` | yes | A list of field maps. Drives validation and the discover schema. |
-| `:teardown` | no | `fn record, ctx -> any end` - a 2-arity function. |
-| `:ref_fields` | no | Field maps describing the record `create` returns. |
-
-## input_fields (required)
-
-A list of maps describing the fields this model accepts in the create payload. Each entry is `%{name: string, type: atom, required: boolean}`. It does two jobs:
-
-1. The SDK validates each incoming record against it before calling `create` - unknown keys are stripped, and a missing required field fails the request with `INVALID_BODY`.
-2. The SDK derives the discover schema from it. There is no database introspection, so this list is how the platform learns your model exists and what fields it has.
-
-`type` is one of these atoms; anything else is treated as `:string`:
-
-| Atom | Wire type |
-|------|-----------|
-| `:string` | `string` |
-| `:integer` | `integer` |
-| `:number` | `number` |
-| `:boolean` | `boolean` |
-| `:timestamp` | `timestamp` |
-| `:date` | `date` |
-| `:uuid` | `uuid` |
-| `:json` | `json` |
-
-**Include every foreign key in `input_fields`, including the scope field.** By the time `create` runs, the SDK has already resolved every `_ref` to the real ID of the referenced record, so a FK arrives as a plain value:
-
-```elixir
-# lib/my_app_web/autonoma/factories.ex
-user =
-  Factory.define_factory(%{
-    input_fields: [
-      %{name: "name", type: :string, required: true},
-      %{name: "email", type: :string, required: true},
-      %{name: "organizationId", type: :string, required: true}   # real Organization id, not a _ref
-    ],
-    create: fn data, _ctx ->
-      {:ok, user} = MyApp.Accounts.register_user(data)   # reuse your real signup code
+      user = MyApp.Accounts.create_verified_user!(data["email"])
       %{"id" => user.id, "email" => user.email}
     end,
     teardown: fn record, _ctx ->
@@ -76,58 +20,22 @@ user =
   })
 ```
 
-## create(data, ctx)
-
-Creates exactly one record and returns it.
-
-- `data` - the validated input as a map with **string keys** (`data["email"]`). FK fields are already real IDs, not `_ref` objects and not `__temp_*` placeholders.
-- `ctx` - a map with **atom keys**: `%{refs: ..., scenario_name: ..., test_run_id: ...}`. `refs` holds every record created so far this run, keyed by model name, if you need to look one up (e.g. `ctx.refs["Organization"]`).
-- **Return value** - must be a map that includes at least the primary key `"id"`. If it does not, the SDK fails the request with `FACTORY_MISSING_PK`. Everything you return is stored in `refs`, passed to the auth callback, and later handed to `teardown` - so return whatever teardown or auth will need (typically the id, plus fields like `"email"`).
-
-Reuse your application's real creation path (a context function like `MyApp.Accounts.register_user/1`). That is the entire point: the test user gets the same password hash, defaults, and side effects a real user would.
-
-## teardown(record, ctx) - optional
-
-Deletes one record. The SDK calls it once per created record, in reverse dependency order, during `down`.
-
-- `record` - exactly the map your `create` returned (string keys).
-- `ctx` - the same atom-keyed context shape `create` receives.
-- If you omit `teardown`, the model is never deleted on `down`. Provide it for every model you create, or those rows leak.
+Call the helper yourself from scenario code and return only the state `down` needs:
 
 ```elixir
-# lib/my_app_web/autonoma/factories.ex
-teardown: fn record, _ctx ->
-  MyApp.Accounts.delete_user!(record["id"])
-end
+Scenario.define_scenario(
+  name: "single-user",
+  description: "One verified user",
+  up: fn ctx ->
+    factory_ctx = %{refs: %{}, scenario_name: "single-user", test_run_id: ctx.test_run_id}
+    user = user_factory.create.(%{"email" => Unique.unique_email(ctx.test_run_id)}, factory_ctx)
+
+    %{
+      teardown: %{"userId" => user["id"]}
+    }
+  end,
+  down: fn ctx -> MyApp.Accounts.delete_user!(ctx.teardown["userId"]) end
+)
 ```
 
-## ref_fields - optional
-
-Field maps (same `%{name:, type:, required:}` shape as `input_fields`) describing the record `create` returns. It documents the teardown record's shape and is the Elixir analog of the TypeScript `refSchema`. `teardown` always receives the exact map `create` returned, so `ref_fields` is optional and you can skip it.
-
-```elixir
-# lib/my_app_web/autonoma/factories.ex
-Factory.define_factory(%{
-  input_fields: [%{name: "email", type: :string, required: true}],
-  ref_fields: [%{name: "id", type: :string, required: true}],
-  create: fn data, _ctx -> ... end,
-  teardown: fn record, _ctx -> ... end
-})
-```
-
-## Registering factories
-
-Collect every factory into one map keyed by model name. The key must match the model name the platform sends in `create`:
-
-```elixir
-# lib/my_app_web/autonoma/factories.ex
-def all do
-  %{
-    "Organization" => organization(),
-    "User" => user(),
-    "Member" => member()
-  }
-end
-```
-
-Pass that map as `:factories` on the handler config (see `implement.md`). Every model that appears in a scenario must have an entry here, or the request fails with `INVALID_BODY` ("no factory registered for model ...").
+Prefer direct context calls unless the helper makes repeated creation logic clearer. The wire protocol sees only the scenario's `up` result and signed teardown token.

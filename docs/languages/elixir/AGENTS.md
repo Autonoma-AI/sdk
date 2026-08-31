@@ -2,19 +2,17 @@
 
 # Autonoma SDK: read the bundled docs before wiring the endpoint
 
-This package implements the **Autonoma Environment Factory** - a backend endpoint that creates and tears down isolated test data. If you are integrating it, the accurate, version-matched docs ship inside this package. Read them before writing code; your training data may describe an older, adapter-based API that no longer exists.
+This package implements the **Autonoma Environment Factory**. Read the version-matched docs in `deps/autonoma/docs/`; older material may describe the removed factory-driven protocol.
 
-**Start here:** `docs/implement.md` (in `deps/autonoma/docs/implement.md` once the Hex dependency is fetched).
+Read in this order:
 
-Reading order:
+1. `docs/overview.md` - scenarios-as-code and the ownership model.
+2. `docs/implement.md` - dependency, scenarios, Plug handler, auth, and deployment.
+3. `docs/scenarios.md` - the `name`/`description`/`up`/`down` contract.
+4. `docs/validation.md` - direct ExUnit validation through the real handler.
+5. `docs/protocol.md` - HTTP bodies, teardown tokens, and errors.
+6. `docs/factories.md` - legacy factory migration reference; do not use it for new v2 integrations.
 
-1. `docs/overview.md` - what the Environment Factory is and why it is factory-driven.
-2. `docs/implement.md` - step-by-step setup: deps, factories, handler, auth, validate.
-3. `docs/factories.md` - the `Autonoma.Factory.define_factory/1` contract in Elixir.
-4. `docs/scenarios.md` - the `create` data format (`_alias`/`_ref`).
-5. `docs/protocol.md` - the HTTP wire protocol and error codes.
-6. `docs/validation.md` - dry-running scenarios with `Autonoma.Check.check_scenario/2`.
-
-Key facts that differ from older docs: the SDK is **factory-driven** (register factories with `Autonoma.Factory.define_factory/1`; there is no Ecto adapter and no SQL fallback). The Hex package is `autonoma`; add `{:autonoma, "~> 0.2"}` to `mix.exs`. The main entry is `Autonoma.Handler.handle/2`, wrapped by the server adapter `Autonoma.Plug.Handler` (a Plug with `init/1` + `call/2`; `:plug` is an optional dependency). The config is a plain map with `:scope_field`, `:shared_secret`, `:signing_secret`, `:factories`, and `:auth`. The auth callback is `fn user, ctx -> map end` returning a map with any of `"cookies"`, `"headers"`, `"credentials"` - there is no top-level `token` field. The endpoint is always enabled and HMAC signing is the gate; the old `:allow_production` flag is deprecated and ignored.
+Scenario v2 uses protocol `2.0`. Define scenarios with `Autonoma.Scenario.define_scenario/1`; `up` returns `%{auth: ..., teardown: ...}` and `down` receives the verified teardown state. Put the list under `:scenarios` with distinct `:shared_secret` and `:signing_secret`. There is no scope field, factory registry, create graph, or top-level auth callback. `Autonoma.Handler.handle/2` is the core entry point and `Autonoma.Plug.Handler` is the Plug adapter.
 
 <!-- END:autonoma-agent-rules -->
