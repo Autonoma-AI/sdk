@@ -1,90 +1,80 @@
-"""Type definitions for Autonoma SDK.
+"""Type definitions for the Autonoma SDK (Scenario v2).
 
-The SDK is factory-driven: every model is owned by a registered factory whose
-input is described by a Pydantic v2 model. There is no SQL introspection, no
-executor protocol, and no dialect machinery — those concepts belonged to an
-earlier design where the SDK reached into the host database directly.
+A customer authors named **scenarios** with :func:`autonoma.define_scenario`.
+The platform calls ``up`` with only a scenario name + ``testRunId``; the
+scenario's ``up`` runs free-form async code and returns optional
+``auth``/``teardown``. The SDK owns the envelope: ``teardownToken`` signing,
+expiry defaults, and the protocol ``version`` field.
 
-The types in this module fall into two groups:
-
-* **Wire-shape types** (``SchemaInfo``, ``ModelInfo``, ``FieldInfo``,
-  ``FKEdge``, ``SchemaRelation``) — the JSON the SDK emits in
-  ``discover``/``up``/``down`` responses. ``FKEdge`` and ``SchemaRelation``
-  are kept because the dashboard tolerates them as empty arrays; emitting
-  them keeps the wire format bit-identical to v1.
-
-* **Host-API types** (``HandlerConfig``, ``FactoryDefinition``,
-  ``FactoryContext``) — what host code touches when wiring up the SDK.
+``FactoryDefinition``/``FactoryContext`` below survive as an optional library
+a scenario's ``up``/``down`` may use internally (see :mod:`autonoma.factory`);
+they are no longer wired to the wire protocol.
 """
 
 from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
-from typing import Any, Callable, Union
+from typing import Any, Callable
+
+
+# ---------------------------------------------------------------------------
+# Scenario authoring surface
+# ---------------------------------------------------------------------------
 
 
 @dataclass
-class FieldInfo:
+class ScenarioUpContext:
+    """Context passed to a scenario's ``up``."""
+
+    test_run_id: str
+
+
+@dataclass
+class ScenarioUpResult:
+    """What a scenario's ``up`` returns. All fields optional.
+
+    ``auth`` holds credentials; ``teardown`` is any JSON handle needed for
+    teardown.
+    """
+
+    auth: dict[str, Any] | None = None
+    teardown: dict[str, Any] | None = None
+
+
+@dataclass
+class ScenarioDownContext:
+    """Context passed to a scenario's ``down``."""
+
     name: str
-    type: str
-    is_required: bool
-    is_id: bool
-    has_default: bool
+    teardown: dict[str, Any]
+    test_run_id: str
+
+
+# A scenario's ``up`` may return a ``ScenarioUpResult`` or a plain dict with
+# ``auth``/``teardown`` keys; both sync and async are accepted.
+ScenarioUp = Callable[[ScenarioUpContext], Any]
+ScenarioDown = Callable[[ScenarioDownContext], Any]
 
 
 @dataclass
-class ModelInfo:
+class ScenarioDefinition:
+    """A named scenario.
+
+    ``up`` provisions an isolated environment a test needs; the optional
+    ``down`` tears it back down. Register with
+    ``HandlerConfig(scenarios=[define_scenario(...)])``.
+    """
+
     name: str
-    table_name: str
-    fields: list[FieldInfo]
+    description: str
+    up: ScenarioUp
+    down: ScenarioDown | None = None
 
 
-@dataclass
-class FKEdge:
-    """Wire-shape only. Always emitted as an empty list in factory-driven
-    setups — the alias/_ref graph carried by the create payload is the
-    real dependency information."""
-
-    from_model: str
-    to_model: str
-    local_field: str
-    foreign_field: str
-    nullable: bool
-
-
-@dataclass
-class SchemaRelation:
-    """Wire-shape only — same rationale as ``FKEdge``."""
-
-    parent_model: str
-    child_model: str
-    parent_field: str
-    child_field: str
-
-
-@dataclass
-class SchemaInfo:
-    models: list[ModelInfo]
-    edges: list[FKEdge]
-    relations: list[SchemaRelation]
-    scope_field: str
-
-
-@dataclass
-class HookContext:
-    """Context passed to handler hooks."""
-
-    scenario_name: str
-    refs: dict[str, list[dict[str, Any]]]
-
-
-@dataclass
-class AuthContext:
-    """Context passed to the auth callback alongside the user record."""
-
-    scope_value: str
-    refs: dict[str, list[dict[str, Any]]]
+# ---------------------------------------------------------------------------
+# Optional factory library (not wired to the wire protocol in v2)
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -92,9 +82,7 @@ class FactoryContext:
     """Context passed to factory create/teardown functions.
 
     Factories that need a database connection get it from the host (their
-    own SQLAlchemy session, Django ORM, etc.) — the SDK does not ship
-    one. ``refs`` and ``test_run_id`` are the only things the SDK can
-    legitimately add.
+    own SQLAlchemy session, Django ORM, etc.) - the SDK does not ship one.
     """
 
     refs: dict[str, list[dict[str, Any]]]
@@ -106,16 +94,9 @@ class FactoryContext:
 class FactoryDefinition:
     """A factory for creating entities via user code.
 
-    ``input_model`` is **required**: the SDK validates the resolved field
-    dict through ``input_model.model_validate(fields)`` before invoking
-    ``create``, and uses the same model to build the discover schema.
-    ``ref_model`` is optional; when provided, the SDK validates the
-    stored record through ``ref_model.model_validate(record)`` before
-    invoking ``teardown``.
-
-    The SDK relies only on the Pydantic v2-style ``model_validate`` /
-    ``model_dump`` protocol — any class exposing those methods works,
-    though Pydantic v2 is the supported reference.
+    ``input_model`` is a Pydantic v2 class used to validate the create input.
+    ``ref_model`` is optional; when provided, the SDK validates the stored
+    record through it before calling ``teardown``.
     """
 
     create: Callable[..., Any]
@@ -127,25 +108,25 @@ class FactoryDefinition:
 FactoryRegistry = dict[str, FactoryDefinition]
 
 
+# ---------------------------------------------------------------------------
+# Handler config + wire types
+# ---------------------------------------------------------------------------
+
+
 @dataclass
 class HandlerConfig:
     """Configuration for the Autonoma request handler."""
 
-    scope_field: str
     shared_secret: str
     signing_secret: str
-    auth: Union[
-        Callable[[dict[str, Any] | None, AuthContext], dict[str, Any]],
-        Callable[[dict[str, Any] | None, AuthContext], Any],  # async callables
-    ]
-    factories: FactoryRegistry = field(default_factory=dict)
+    scenarios: list[ScenarioDefinition] = field(default_factory=list)
+    # Token/environment lifetime returned on ``up`` as ``expiresInSeconds``.
+    # Defaults to one hour when None.
+    expires_in_seconds: int | None = None
     # Deprecated - ignored; the endpoint is always enabled and HMAC signing is
-    # the gate. On Autonoma previews (AUTONOMA_PREVIEWKIT set) no guard is
-    # needed; gate manually in your handler for your own production deployments.
+    # the gate. Gate manually in your handler for your own production deploys.
     allow_production: bool = False
     sdk: dict[str, str] | None = None
-    before_down: Callable[[HookContext], Any] | None = None
-    after_up: Callable[[HookContext, dict[str, Any]], dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         if self.allow_production:
@@ -170,7 +151,7 @@ class HandlerResponse:
 
 @dataclass
 class CreateOp:
-    """A create operation produced by the payload topo resolver."""
+    """A create operation produced by the optional payload topo resolver."""
 
     model: str
     fields: dict[str, Any]

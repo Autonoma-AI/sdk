@@ -5,171 +5,189 @@ Follow these steps to stand up a working Environment Factory endpoint. This is w
 
 ## Prerequisites
 
-- A Python 3.10+ backend on FastAPI, Flask, or Django.
-- The database client your app already uses (SQLAlchemy, Django ORM, raw `psycopg` - it does not matter; your factories call it).
-- Pydantic v2. It ships as a hard dependency of the SDK, so it installs automatically.
+- A Python backend on Python 3.10+.
+- A database and the client your app already uses (SQLAlchemy, Django ORM, raw `psycopg` - it does not matter; your scenario code calls it).
 
 ## Step 1 - Detect the stack and pick packages
 
-Install the core distribution `autonoma-ai` with the extra that matches the app's HTTP framework. There is no ORM adapter package to install - the SDK is factory-driven.
+The core package is `autonoma-ai` (imported as `autonoma`). Each server adapter ships as an extra on the same distribution and is imported as its own top-level package:
 
-| Framework | Install command | Handler module | Handler function |
-|-----------|-----------------|----------------|------------------|
-| FastAPI | `pip install "autonoma-ai[fastapi]"` | `autonoma_fastapi` | `create_fastapi_handler` |
-| Flask | `pip install "autonoma-ai[flask]"` | `autonoma_flask` | `create_flask_handler` |
-| Django | `pip install "autonoma-ai[django]"` | `autonoma_django` | `create_django_handler` |
+| Framework | Install | Adapter package | Handler factory |
+|-----------|---------|-----------------|-----------------|
+| FastAPI | `autonoma-ai[fastapi]` | `autonoma_fastapi` | `create_fastapi_handler` |
+| Flask | `autonoma-ai[flask]` | `autonoma_flask` | `create_flask_handler` |
+| Django | `autonoma-ai[django]` | `autonoma_django` | `create_django_handler` |
 
 ```bash
-# terminal - example: FastAPI
+# example: FastAPI (use [all] to pull every adapter)
 pip install "autonoma-ai[fastapi]"
 ```
 
-The import package is `autonoma` (plus the framework module), even though the distribution is named `autonoma-ai`. Use the project's package manager (pip, poetry, uv) as appropriate; `pip install "autonoma-ai[all]"` pulls every adapter.
+Use the project's tool (pip, Poetry, uv). There is no ORM adapter to install - scenarios call your app's own code directly.
 
 ## Step 2 - Generate the two secrets
 
 ```bash
-# terminal
 openssl rand -hex 32   # AUTONOMA_SHARED_SECRET
 openssl rand -hex 32   # AUTONOMA_SIGNING_SECRET  (must be different)
 ```
 
-Add both to your environment (and placeholders to `.env.example` if it exists). The SDK raises `SAME_SECRETS` if they match.
+Add both to `.env` (and placeholders to `.env.example` if it exists). The handler returns `SAME_SECRETS` (HTTP 500) if the two values match.
 
-```bash
+```env
 # .env
 AUTONOMA_SHARED_SECRET=...   # shared with Autonoma
 AUTONOMA_SIGNING_SECRET=...  # private, never shared
 ```
 
-## Step 3 - Find the scope field
+## Step 3 - Confirm the endpoint path and auth mechanism
 
-Read the database schema. Find the foreign key that appears on the most models and points at a single root entity - commonly `organizationId`, `orgId`, `tenantId`, or `workspaceId`. That is the scope field. The root model itself (e.g. `Organization`) does not carry it.
+There is no scope field to find in v2. Instead, confirm two things with the user before writing code:
 
-Confirm the field, the endpoint path, and the app's auth mechanism with the user before writing code.
+- The endpoint path you will mount (for example `/api/autonoma`).
+- How the app authenticates a request (session cookie, JWT bearer, or email + password), so your scenarios' `up` can return real, working credentials.
 
-## Step 4 - Write a factory per model
+## Step 4 - Write scenarios
 
-Write one factory for each model the platform will create, calling your app's real creation code. See `factories.md` for the full contract. Collect them into one registry keyed by model name:
+A scenario is named code that provisions an environment. Author each with `define_scenario`: a `name`, a `description`, an `up`, and an optional `down`. `up` and `down` are plain callables and may be sync or async. `up` runs whatever provisioning code you would write by hand and returns a `ScenarioUpResult` (or a plain dict) with optional `auth` and `teardown`. See `scenarios.md` for the authoring rules.
 
 ```python
-# factories/__init__.py
-from factories.organization import Organization
-from factories.user import User
-from factories.member import Member
+# scenarios/single_user.py
+from autonoma import define_scenario, unique_email, ScenarioUpResult
+from myapp.db import db
+from myapp.auth import create_session
 
-factories = {"Organization": Organization, "User": User, "Member": Member}
+
+def up(ctx):
+    email = unique_email(ctx.test_run_id)
+    user = db.users.create(email=email, verified=True)
+    session = create_session(user.id)
+    return ScenarioUpResult(
+        auth={"cookies": [{"name": "session", "value": session.token, "httpOnly": True, "sameSite": "lax", "path": "/"}]},
+        teardown={"user_id": user.id},
+    )
+
+
+def down(ctx):
+    db.users.delete(ctx.teardown["user_id"])
+
+
+single_user = define_scenario(
+    name="single-user",
+    description="One verified user in a fresh org",
+    up=up,
+    down=down,
+)
+```
+
+`up` may also return a plain dict with `auth`/`teardown` keys - a short scenario reads well as a lambda:
+
+```python
+from autonoma import define_scenario, unique_email
+
+define_scenario(
+    name="single-user",
+    description="One verified user in a fresh org",
+    up=lambda ctx: {
+        "auth": {"headers": {"Authorization": f"Bearer {mint(ctx.test_run_id)}"}},
+        "teardown": {"user_id": create_user(ctx.test_run_id)},
+    },
+    down=lambda ctx: delete_user(ctx.teardown["user_id"]),
+)
+```
+
+Collect them into one list:
+
+```python
+# scenarios/__init__.py
+from .single_user import single_user
+from .standard import standard
+from .large import large
+
+scenarios = [single_user, standard, large]
 ```
 
 ## Step 5 - Wire the handler
 
-Create one `HandlerConfig` and pass it to your adapter's handler function. The config carries the scope field, both secrets, the factory registry, and the auth callback. All config fields are `snake_case`.
+Build a `HandlerConfig` once and pass it to your adapter's handler factory. The config carries the two secrets and the scenario list. There is no `scope_field`, no `factories`, and no top-level `auth` callback.
 
 ```python
-# app/autonoma_endpoint.py  (FastAPI)
+# main.py  (FastAPI)
 import os
+from fastapi import FastAPI
 from autonoma import HandlerConfig
 from autonoma_fastapi import create_fastapi_handler
-from factories import factories
-from app.auth import create_session   # your app's real session code
+from scenarios import scenarios
+
+app = FastAPI()
 
 config = HandlerConfig(
-    scope_field="organizationId",
     shared_secret=os.environ["AUTONOMA_SHARED_SECRET"],
     signing_secret=os.environ["AUTONOMA_SIGNING_SECRET"],
-    factories=factories,
-    auth=lambda user, ctx: {
-        "cookies": [
-            {"name": "session", "value": create_session(user["id"]),
-             "httpOnly": True, "sameSite": "lax", "path": "/"}
-        ],
-    },
+    scenarios=scenarios,
 )
 
-router = create_fastapi_handler(config)
-app.include_router(router, prefix="/api/autonoma")
+app.include_router(create_fastapi_handler(config), prefix="/api/autonoma")
 ```
 
-Other frameworks use the same `config` object; only the mounting differs:
+Other frameworks use the same `HandlerConfig`; only the mounting differs. Each adapter's route lives at `/`, so the prefix you mount under is the endpoint path:
 
 ```python
-# app/autonoma_endpoint.py  (Flask)
+# Flask - create_flask_handler returns a Blueprint
 from autonoma_flask import create_flask_handler
+app.register_blueprint(create_flask_handler(config), url_prefix="/api/autonoma")
 
-bp = create_flask_handler(config)
-app.register_blueprint(bp, url_prefix="/api/autonoma")
-```
-
-```python
-# urls.py  (Django)
+# Django - create_django_handler returns a view; wire it in urls.py
 from django.urls import path
 from autonoma_django import create_django_handler
-from app.autonoma_endpoint import config
-
-urlpatterns = [
-    path("api/autonoma", create_django_handler(config)),
-]
+urlpatterns = [path("api/autonoma", create_django_handler(config))]
 ```
 
-The Flask and FastAPI adapters register their route at `/`, so with a `/api/autonoma` prefix the live path is `/api/autonoma/` (trailing slash). With Django you control the exact path in `urls.py`.
+## Step 6 - Return real credentials from `up`
 
-FastAPI also accepts `create_fastapi_handler(config_factory=make_config)` - a zero-arg callable that returns a fresh `HandlerConfig` per request, useful when a factory needs per-request state such as a database session.
-
-## Step 6 - Implement the auth callback
-
-This is the part that most often breaks tests, so get it right. The callback receives the first created `User` record as a `dict` (or `None` if the scenario made none) and an `AuthContext` with `scope_value` and `refs`. It must return **real, working credentials** using the app's actual auth mechanism. If it returns a fake or hardcoded token, every test fails at login. The callback may be sync or async (`async def`).
-
-The return type is a dict with any of `cookies`, `headers`, `credentials` - there is no top-level `token` field. Pick the shape that matches how your app authenticates:
+The `auth` a scenario's `up` returns is the part that most often breaks tests, so get it right. It must be **real, working credentials** produced by the app's actual auth mechanism. A fake or hardcoded token makes every test fail at login. `auth` is a free-form dict; the conventional keys are `cookies`, `headers`, and `credentials`. There is no top-level `token` field.
 
 ```python
-# app/autonoma_endpoint.py
 # Session cookie (most web apps)
-def auth(user, ctx):
-    token = create_session(user["id"])
-    return {"cookies": [
-        {"name": "session", "value": token, "httpOnly": True, "sameSite": "lax", "path": "/"}
-    ]}
+session = create_session(user.id)
+return ScenarioUpResult(auth={"cookies": [{"name": "session", "value": session.token, "httpOnly": True, "sameSite": "lax", "path": "/"}]})
 
 # JWT bearer token (APIs, SPAs) - the token goes in a header
-def auth(user, ctx):
-    token = jwt.encode({"sub": user["id"]}, os.environ["JWT_SECRET"], algorithm="HS256")
-    return {"headers": {"Authorization": f"Bearer {token}"}}
+token = jwt.encode({"sub": user.id}, os.environ["JWT_SECRET"], algorithm="HS256")
+return ScenarioUpResult(auth={"headers": {"Authorization": f"Bearer {token}"}})
 
 # Email + password (the runner logs in through the UI, e.g. mobile)
-def auth(user, ctx):
-    return {"credentials": {"email": user["email"], "password": "test-password-123"}}
+return ScenarioUpResult(auth={"credentials": {"email": user.email, "password": "test-password-123"}})
 ```
 
-For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
+For the email/password shape, the scenario must create the user with a matching password hash so a real login succeeds.
 
-## Step 7 - The endpoint is always enabled
+## Step 7 - Production gating (optional)
 
-There is no on/off switch: HMAC signing is the gate, so unsigned or tampered requests get `401` no matter where the endpoint runs. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no extra guard is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate it in your handler with your own condition:
+The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The `allow_production` field on `HandlerConfig` is deprecated and ignored (setting it only emits a `DeprecationWarning`). On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate the mount with your own condition:
 
 ```python
-# app/autonoma_endpoint.py  (your route, before delegating to the SDK)
-if os.environ.get("APP_ENV") == "production":
-    raise HTTPException(status_code=404)   # or your framework's 404
-```
+import os
 
-The old `allow_production` config option is deprecated and ignored - passing it changes nothing.
+if os.environ.get("ENV") != "production":
+    app.include_router(create_fastapi_handler(config), prefix="/api/autonoma")
+```
 
 ## Step 8 - Validate before deploying
 
-Dry-run your scenarios against a real database with `check_scenario` and iterate until they pass. See `validation.md`. Never ship a scenario you have not validated.
+Dry-run every scenario against a real database with `check_scenario` and iterate until they pass. See `validation.md`. Never ship a scenario you have not validated.
 
 ## Step 9 - Smoke-test with curl
 
 ```bash
-# terminal
 SECRET="your-shared-secret"
 BODY='{"action":"discover"}'
 SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/.*= //')
-curl -s -X POST http://localhost:8000/api/autonoma/ \
-  -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
+curl -s -X POST http://localhost:8000/api/autonoma \
+  -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | python -m json.tool
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON body listing your scenarios as `{ name, description }`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 
@@ -182,15 +200,14 @@ Tell the user the endpoint path, confirm all scenarios pass, and hand off:
 ## Rules
 
 **Do:**
-- Reuse the app's existing DB client and real creation code inside factories.
+- Reuse the app's existing DB client and real creation code inside `up`.
 - Return real credentials from `auth` using the app's own session/JWT logic.
-- Register a factory (with a `teardown`) for every model any scenario creates.
+- Seed every unique value from `test_run_id` with the `unique_*` helpers.
 - Match the project's conventions: import style, file layout, naming.
 - Validate every scenario with `check_scenario` before deploying.
 
 **Do not:**
-- Implement HMAC, token signing, or teardown ordering yourself - the SDK owns all of it.
+- Implement HMAC, token signing, or expiry yourself - the SDK owns all of it.
 - Return a hardcoded token like `"test-token"` from `auth`.
 - Use the same value for `shared_secret` and `signing_secret`.
-- Set `id`, defaulted fields, or auto timestamps in scenario data.
-- Expect the SDK to inject the scope field or wire any FK - you set every FK as a `_ref`.
+- Reach for a random UUID or the current time for a unique value - it breaks the determinism `down` and debugging rely on.

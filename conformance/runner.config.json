@@ -8,6 +8,12 @@
       "args": ["tsx", "bridges/typescript.ts"],
       "cwd": ".",
       "modules": ["hmac", "refs"]
+    },
+    "python": {
+      "command": "python3",
+      "args": ["bridges/conformance_bridge.py"],
+      "cwd": "../sdks/python",
+      "modules": ["hmac", "refs"]
     }
   }
 }
