@@ -14,10 +14,8 @@ if (file_exists($autoload)) {
     });
 }
 
-use Autonoma\Sdk\Graph;
 use Autonoma\Sdk\Hmac;
 use Autonoma\Sdk\Refs;
-use Autonoma\Sdk\Fingerprint;
 
 $data = json_decode(file_get_contents('php://stdin'), true);
 
@@ -26,14 +24,14 @@ try {
     $fn = $data['function'];
     $inp = $data['input'];
 
+    // Scenario-v2 dropped the create-graph interpreter and fingerprint(); the PHP
+    // bridge conforms only on the unchanged hmac + refs primitives. verifyRefs
+    // returns the decoded { refs, testRunId, environment } payload.
     $result = match ("{$mod}.{$fn}") {
-        'graph.topoSort' => Graph::topoSort($inp['nodes'], $inp['edges']),
-        'graph.findDeferrableEdge' => Graph::findDeferrableEdge($inp['cycle'], $inp['edges']),
         'hmac.signBody' => Hmac::signBody($inp['body'], $inp['secret']),
         'hmac.verifySignature' => Hmac::verifySignature($inp['body'], $inp['signature'], $inp['secret']),
         'refs.signRefs' => Refs::signRefs($inp['payload'], $inp['secret']),
         'refs.verifyRefs' => Refs::verifyRefs($inp['token'], $inp['secret']),
-        'fingerprint.fingerprint' => Fingerprint::fingerprint($inp['value']),
         default => throw new \RuntimeException("Unknown dispatch: {$mod}.{$fn}"),
     };
 

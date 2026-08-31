@@ -38,6 +38,12 @@
       "args": ["-jar", "conformance-bridge/target/autonoma-conformance-bridge.jar"],
       "cwd": "../sdks/java",
       "modules": ["hmac", "refs"]
+    },
+    "php": {
+      "command": "php",
+      "args": ["bridges/conformance_bridge.php"],
+      "cwd": "../sdks/php",
+      "modules": ["hmac", "refs"]
     }
   }
 }
