@@ -1,4 +1,4 @@
-module github.com/autonoma-ai/sdk/sdks/go
+module github.com/autonoma-ai/sdk/sdks/go/v2
 
 go 1.25.0
 

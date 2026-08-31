@@ -2,22 +2,9 @@ package autonoma
 
 import (
 	"encoding/json"
-	"fmt"
-	"reflect"
+	"strings"
 	"testing"
 )
-
-// --- Test input structs ---
-
-type OrganizationInput struct {
-	Name string `json:"name"`
-}
-
-type UserInput struct {
-	Email          string `json:"email"`
-	Name           string `json:"name,omitempty"`
-	OrganizationID string `json:"organizationId,omitempty"`
-}
 
 // --- Helpers ---
 
@@ -30,646 +17,227 @@ func signedReq(body map[string]any, secret string) HandlerRequest {
 	}
 }
 
-// --- Tests ---
-
-func TestHandleRequest_InvalidSignature(t *testing.T) {
-	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-	}
-	req := HandlerRequest{
-		Body:    `{"action":"discover"}`,
-		Headers: map[string]string{"x-signature": "invalid"},
-	}
-
-	resp := HandleRequest(config, req)
-	if resp.Status != 401 {
-		t.Errorf("expected 401, got %d", resp.Status)
-	}
-	if resp.Body["code"] != "INVALID_SIGNATURE" {
-		t.Errorf("expected INVALID_SIGNATURE, got %v", resp.Body["code"])
+func testScenarios(downCalls *[]string) []ScenarioDefinition {
+	return []ScenarioDefinition{
+		DefineScenario(ScenarioDefinition{
+			Name:        "standard",
+			Description: "A standard seeded environment",
+			Up: func(ctx ScenarioUpContext) (ScenarioUpResult, error) {
+				return ScenarioUpResult{
+					Auth:     &AuthResult{Headers: map[string]string{"Authorization": "Bearer " + ctx.TestRunID}},
+					Teardown: map[string]any{"userId": "user-" + ctx.TestRunID},
+				}, nil
+			},
+			Down: func(ctx ScenarioDownContext) error {
+				if downCalls != nil {
+					*downCalls = append(*downCalls, ctx.Name+":"+ctx.TestRunID)
+				}
+				return nil
+			},
+		}),
+		DefineScenario(ScenarioDefinition{
+			Name:        "empty",
+			Description: "Nothing seeded",
+			Up:          func(ctx ScenarioUpContext) (ScenarioUpResult, error) { return ScenarioUpResult{}, nil },
+		}),
 	}
 }
 
-func TestHandleRequest_UnknownAction(t *testing.T) {
-	config := &HandlerConfig{
+func baseConfig(downCalls *[]string) *HandlerConfig {
+	return &HandlerConfig{
 		SharedSecret:  "shared",
 		SigningSecret: "signing",
+		Scenarios:     testScenarios(downCalls),
 	}
-	body := `{"action":"nonexistent"}`
-	sig := SignBody(body, "shared")
-	req := HandlerRequest{
-		Body:    body,
-		Headers: map[string]string{"x-signature": sig},
-	}
+}
 
-	resp := HandleRequest(config, req)
-	if resp.Status != 400 {
-		t.Errorf("expected 400, got %d", resp.Status)
-	}
-	if resp.Body["code"] != "UNKNOWN_ACTION" {
-		t.Errorf("expected UNKNOWN_ACTION, got %v", resp.Body["code"])
+// --- Request gate ---
+
+func TestHandleRequest_InvalidSignature(t *testing.T) {
+	resp := HandleRequest(baseConfig(nil), HandlerRequest{
+		Body:    `{"action":"discover"}`,
+		Headers: map[string]string{"x-signature": "invalid"},
+	})
+	if resp.Status != 401 || resp.Body["code"] != "INVALID_SIGNATURE" {
+		t.Errorf("expected 401 INVALID_SIGNATURE, got %d %v", resp.Status, resp.Body["code"])
 	}
 }
 
 func TestHandleRequest_SameSecrets(t *testing.T) {
-	config := &HandlerConfig{
-		SharedSecret:  "same",
-		SigningSecret: "same",
-	}
-	req := HandlerRequest{
-		Body:    `{"action":"discover"}`,
-		Headers: map[string]string{"x-signature": "whatever"},
-	}
-
-	resp := HandleRequest(config, req)
-	if resp.Status != 500 {
-		t.Errorf("expected 500, got %d", resp.Status)
-	}
-	if resp.Body["code"] != "SAME_SECRETS" {
-		t.Errorf("expected SAME_SECRETS, got %v", resp.Body["code"])
+	config := &HandlerConfig{SharedSecret: "same", SigningSecret: "same"}
+	resp := HandleRequest(config, HandlerRequest{Body: `{"action":"discover"}`, Headers: map[string]string{"x-signature": "x"}})
+	if resp.Status != 500 || resp.Body["code"] != "SAME_SECRETS" {
+		t.Errorf("expected 500 SAME_SECRETS, got %d %v", resp.Status, resp.Body["code"])
 	}
 }
 
 func TestHandleRequest_InvalidBody(t *testing.T) {
-	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-	}
-	body := "not json"
-	sig := SignBody(body, "shared")
-	req := HandlerRequest{
-		Body:    body,
-		Headers: map[string]string{"x-signature": sig},
-	}
-
-	resp := HandleRequest(config, req)
-	if resp.Status != 400 {
-		t.Errorf("expected 400, got %d", resp.Status)
-	}
-	if resp.Body["code"] != "INVALID_BODY" {
-		t.Errorf("expected INVALID_BODY, got %v", resp.Body["code"])
+	resp := HandleRequest(baseConfig(nil), signedReqRaw("not json", "shared"))
+	if resp.Status != 400 || resp.Body["code"] != "INVALID_BODY" {
+		t.Errorf("expected 400 INVALID_BODY, got %d %v", resp.Status, resp.Body["code"])
 	}
 }
 
-func TestHandleRequest_InvalidRefsToken(t *testing.T) {
-	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-	}
-	body := `{"action":"down","refsToken":"tampered.token.value"}`
-	sig := SignBody(body, "shared")
-	req := HandlerRequest{
-		Body:    body,
-		Headers: map[string]string{"x-signature": sig},
-	}
+func signedReqRaw(body, secret string) HandlerRequest {
+	return HandlerRequest{Body: body, Headers: map[string]string{"x-signature": SignBody(body, secret)}}
+}
 
-	resp := HandleRequest(config, req)
-	if resp.Status != 403 {
-		t.Errorf("expected 403, got %d", resp.Status)
-	}
-	if resp.Body["code"] != "INVALID_REFS_TOKEN" {
-		t.Errorf("expected INVALID_REFS_TOKEN, got %v", resp.Body["code"])
+func TestHandleRequest_UnknownAction(t *testing.T) {
+	resp := HandleRequest(baseConfig(nil), signedReq(map[string]any{"action": "nonexistent"}, "shared"))
+	if resp.Status != 400 || resp.Body["code"] != "UNKNOWN_ACTION" {
+		t.Errorf("expected 400 UNKNOWN_ACTION, got %d %v", resp.Status, resp.Body["code"])
 	}
 }
+
+// --- discover ---
 
 func TestDiscover(t *testing.T) {
-	config := &HandlerConfig{
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		ScopeField:    "organizationId",
-		Factories: FactoryRegistry{
-			"Organization": {
-				InputStruct: reflect.TypeOf(OrganizationInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					return nil, nil
-				},
-			},
-			"User": {
-				InputStruct: reflect.TypeOf(UserInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					return nil, nil
-				},
-			},
-		},
-	}
-
-	req := signedReq(map[string]any{"action": "discover"}, "shared")
-	resp := HandleRequest(config, req)
+	resp := HandleRequest(baseConfig(nil), signedReq(map[string]any{"action": "discover"}, "shared"))
 	if resp.Status != 200 {
 		t.Fatalf("expected 200, got %d: %v", resp.Status, resp.Body)
 	}
-
-	schema, ok := resp.Body["schema"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected schema in response, got %T", resp.Body["schema"])
-	}
-	models, ok := schema["models"].([]map[string]any)
-	if !ok {
-		t.Fatalf("expected models array, got %T", schema["models"])
-	}
-	if len(models) != 2 {
-		t.Fatalf("expected 2 models, got %d", len(models))
+	if resp.Body["version"] != "2.0" {
+		t.Errorf("expected version 2.0, got %v", resp.Body["version"])
 	}
 
-	// Should have empty edges and relations.
-	edges, _ := schema["edges"].([]map[string]any)
-	if len(edges) != 0 {
-		t.Errorf("expected empty edges, got %d", len(edges))
+	scenarios, ok := resp.Body["scenarios"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected scenarios array, got %T", resp.Body["scenarios"])
 	}
-	relations, _ := schema["relations"].([]map[string]any)
-	if len(relations) != 0 {
-		t.Errorf("expected empty relations, got %d", len(relations))
+	if len(scenarios) != 2 {
+		t.Fatalf("expected 2 scenarios, got %d", len(scenarios))
 	}
-	if schema["scopeField"] != "organizationId" {
-		t.Errorf("expected scopeField=organizationId, got %v", schema["scopeField"])
+	if scenarios[0]["name"] != "standard" {
+		t.Errorf("expected first scenario 'standard', got %v", scenarios[0]["name"])
+	}
+	if desc, _ := scenarios[0]["description"].(string); desc == "" {
+		t.Errorf("expected non-empty description")
+	}
+	// discover must never leak a create/schema shape.
+	if _, hasSchema := resp.Body["schema"]; hasSchema {
+		t.Errorf("discover must not include a schema in v2")
 	}
 }
 
-func TestFactoryCreate(t *testing.T) {
-	factoryCreateCalled := false
-	var receivedInput interface{}
+// --- up ---
 
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories: FactoryRegistry{
-			"Organization": {
-				InputStruct: reflect.TypeOf(OrganizationInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					factoryCreateCalled = true
-					receivedInput = input
-					org := input.(*OrganizationInput)
-					return map[string]any{"id": "factory-org-1", "name": org.Name}, nil
-				},
-			},
-		},
-	}
-
-	req := signedReq(map[string]any{
-		"action":    "up",
-		"create":    map[string]any{"Organization": []any{map[string]any{"name": "FactoryOrg"}}},
-		"testRunId": "run-factory",
-	}, "shared")
-
-	resp := HandleRequest(config, req)
+func TestUp_ReturnsEnvelope(t *testing.T) {
+	body := map[string]any{"action": "up", "scenario": map[string]any{"name": "standard"}, "testRunId": "run-1"}
+	resp := HandleRequest(baseConfig(nil), signedReq(body, "shared"))
 	if resp.Status != 200 {
 		t.Fatalf("expected 200, got %d: %v", resp.Status, resp.Body)
 	}
-
-	if !factoryCreateCalled {
-		t.Fatal("expected factory Create to be called")
+	if resp.Body["version"] != "2.0" {
+		t.Errorf("expected version 2.0, got %v", resp.Body["version"])
 	}
-	org, ok := receivedInput.(*OrganizationInput)
-	if !ok {
-		t.Fatalf("expected *OrganizationInput, got %T", receivedInput)
+	token, _ := resp.Body["teardownToken"].(string)
+	if len(strings.Split(token, ".")) != 3 {
+		t.Errorf("expected 3-part teardownToken, got %q", token)
 	}
-	if org.Name != "FactoryOrg" {
-		t.Errorf("expected name 'FactoryOrg', got %v", org.Name)
+	if resp.Body["expiresInSeconds"] != 3600 {
+		t.Errorf("expected default expiresInSeconds 3600, got %v", resp.Body["expiresInSeconds"])
 	}
-
-	refs, _ := resp.Body["refs"].(map[string][]map[string]any)
-	if refs == nil {
-		t.Fatal("expected refs in response")
+	// The duplicated plaintext refs and the old refsToken field are gone.
+	if _, has := resp.Body["refs"]; has {
+		t.Errorf("expected no plaintext refs on the up envelope")
 	}
-	if len(refs["Organization"]) != 1 || refs["Organization"][0]["id"] != "factory-org-1" {
-		t.Errorf("expected factory-org-1 in refs, got %v", refs["Organization"])
+	if _, has := resp.Body["refsToken"]; has {
+		t.Errorf("expected no refsToken on the up envelope")
 	}
-}
-
-func TestFactoryFKPreResolution(t *testing.T) {
-	var userReceivedInput interface{}
-
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories: FactoryRegistry{
-			"Organization": {
-				InputStruct: reflect.TypeOf(OrganizationInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					org := input.(*OrganizationInput)
-					return map[string]any{"id": "resolved-org-id", "name": org.Name}, nil
-				},
-			},
-			"User": {
-				InputStruct: reflect.TypeOf(UserInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					userReceivedInput = input
-					u := input.(*UserInput)
-					return map[string]any{"id": "user-1", "email": u.Email, "organizationId": u.OrganizationID}, nil
-				},
-			},
-		},
-	}
-
-	// Use _alias/_ref to wire Organization -> User
-	req := signedReq(map[string]any{
-		"action": "up",
-		"create": map[string]any{
-			"Organization": []any{map[string]any{"name": "Org", "_alias": "org1"}},
-			"User":         []any{map[string]any{"email": "a@b.com", "name": "A", "organizationId": map[string]any{"_ref": "org1"}}},
-		},
-		"testRunId": "run-fk",
-	}, "shared")
-
-	resp := HandleRequest(config, req)
-	if resp.Status != 200 {
-		t.Fatalf("expected 200, got %d: %v", resp.Status, resp.Body)
-	}
-
-	if userReceivedInput == nil {
-		t.Fatal("expected User factory to be called")
-	}
-	u := userReceivedInput.(*UserInput)
-	if u.OrganizationID != "resolved-org-id" {
-		t.Errorf("expected organizationId to be 'resolved-org-id', got %v", u.OrganizationID)
+	auth, ok := resp.Body["auth"].(*AuthResult)
+	if !ok || auth.Headers["Authorization"] != "Bearer run-1" {
+		t.Errorf("expected auth headers, got %v", resp.Body["auth"])
 	}
 }
 
-func TestFactoryMissingPK(t *testing.T) {
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories: FactoryRegistry{
-			"Organization": {
-				InputStruct: reflect.TypeOf(OrganizationInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					org := input.(*OrganizationInput)
-					return map[string]any{"name": org.Name}, nil // missing 'id'
-				},
-			},
-		},
+func TestUp_CustomExpires(t *testing.T) {
+	config := baseConfig(nil)
+	config.ExpiresInSeconds = 60
+	body := map[string]any{"action": "up", "scenario": map[string]any{"name": "empty"}, "testRunId": "r"}
+	resp := HandleRequest(config, signedReq(body, "shared"))
+	if resp.Body["expiresInSeconds"] != 60 {
+		t.Errorf("expected expiresInSeconds 60, got %v", resp.Body["expiresInSeconds"])
 	}
-
-	req := signedReq(map[string]any{
-		"action":    "up",
-		"create":    map[string]any{"Organization": []any{map[string]any{"name": "NoPK"}}},
-		"testRunId": "run-nopk",
-	}, "shared")
-
-	resp := HandleRequest(config, req)
-	if resp.Status != 500 {
-		t.Fatalf("expected 500, got %d: %v", resp.Status, resp.Body)
-	}
-	if resp.Body["code"] != "FACTORY_MISSING_PK" {
-		t.Errorf("expected FACTORY_MISSING_PK, got %v", resp.Body["code"])
+	// The empty scenario returns nothing, so no auth on the envelope.
+	if _, has := resp.Body["auth"]; has {
+		t.Errorf("expected no auth for empty scenario")
 	}
 }
 
-func TestFactoryTeardown(t *testing.T) {
-	var teardownCalls []string
-
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories: FactoryRegistry{
-			"Organization": {
-				InputStruct: reflect.TypeOf(OrganizationInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					org := input.(*OrganizationInput)
-					return map[string]any{"id": fmt.Sprintf("org-%s", org.Name), "name": org.Name}, nil
-				},
-				Teardown: func(record interface{}, ctx FactoryContext) error {
-					rec := record.(map[string]any)
-					teardownCalls = append(teardownCalls, rec["id"].(string))
-					return nil
-				},
-			},
-		},
+func TestUp_UnknownEnvironment(t *testing.T) {
+	body := map[string]any{"action": "up", "scenario": map[string]any{"name": "does-not-exist"}, "testRunId": "r"}
+	resp := HandleRequest(baseConfig(nil), signedReq(body, "shared"))
+	if resp.Status != 400 || resp.Body["code"] != "UNKNOWN_ENVIRONMENT" {
+		t.Errorf("expected 400 UNKNOWN_ENVIRONMENT, got %d %v", resp.Status, resp.Body["code"])
 	}
+}
 
-	// Create two orgs
-	upReq := signedReq(map[string]any{
-		"action":    "up",
-		"create":    map[string]any{"Organization": []any{map[string]any{"name": "A"}, map[string]any{"name": "B"}}},
-		"testRunId": "run-teardown",
-	}, "shared")
-
-	upResp := HandleRequest(config, upReq)
-	if upResp.Status != 200 {
-		t.Fatalf("expected 200 on up, got %d: %v", upResp.Status, upResp.Body)
+func TestUp_MissingScenarioName(t *testing.T) {
+	resp := HandleRequest(baseConfig(nil), signedReq(map[string]any{"action": "up", "testRunId": "r"}, "shared"))
+	if resp.Status != 400 || resp.Body["code"] != "INVALID_BODY" {
+		t.Errorf("expected 400 INVALID_BODY, got %d %v", resp.Status, resp.Body["code"])
 	}
+}
 
-	refsToken, _ := upResp.Body["refsToken"].(string)
-	if refsToken == "" {
-		t.Fatal("expected refsToken in response")
+// --- down ---
+
+func TestDown_ValidToken(t *testing.T) {
+	var downCalls []string
+	config := baseConfig(&downCalls)
+
+	upBody := map[string]any{"action": "up", "scenario": map[string]any{"name": "standard"}, "testRunId": "run-td"}
+	upResp := HandleRequest(config, signedReq(upBody, "shared"))
+	token, _ := upResp.Body["teardownToken"].(string)
+
+	downBody := map[string]any{"action": "down", "teardownToken": token, "testRunId": "run-td"}
+	downResp := HandleRequest(config, signedReq(downBody, "shared"))
+	if downResp.Status != 200 || downResp.Body["ok"] != true {
+		t.Fatalf("expected 200 ok:true, got %d %v", downResp.Status, downResp.Body)
 	}
+	if len(downCalls) != 1 || downCalls[0] != "standard:run-td" {
+		t.Errorf("expected down called once for standard:run-td, got %v", downCalls)
+	}
+}
 
-	// Teardown
-	downReq := signedReq(map[string]any{
-		"action":    "down",
-		"refsToken": refsToken,
-	}, "shared")
+func TestDown_RoutesByTokenEnvironment(t *testing.T) {
+	var downCalls []string
+	config := baseConfig(&downCalls)
 
-	downResp := HandleRequest(config, downReq)
+	upBody := map[string]any{"action": "up", "scenario": map[string]any{"name": "standard"}, "testRunId": "run-tok"}
+	token, _ := HandleRequest(config, signedReq(upBody, "shared")).Body["teardownToken"].(string)
+
+	// No scenario.name on the down request - the handler must recover it from
+	// the verified token's environment.
+	downBody := map[string]any{"action": "down", "teardownToken": token}
+	downResp := HandleRequest(config, signedReq(downBody, "shared"))
 	if downResp.Status != 200 {
-		t.Fatalf("expected 200 on down, got %d: %v", downResp.Status, downResp.Body)
+		t.Fatalf("expected 200, got %d %v", downResp.Status, downResp.Body)
 	}
-
-	if len(teardownCalls) != 2 {
-		t.Fatalf("expected 2 teardown calls, got %d", len(teardownCalls))
-	}
-	// Reverse order: B first, then A
-	if teardownCalls[0] != "org-B" || teardownCalls[1] != "org-A" {
-		t.Errorf("expected teardown in reverse order [org-B, org-A], got %v", teardownCalls)
+	if len(downCalls) != 1 || downCalls[0] != "standard:run-tok" {
+		t.Errorf("expected down routed via token environment, got %v", downCalls)
 	}
 }
 
-func TestFactoryContextHasRefs(t *testing.T) {
-	var userCtx *FactoryContext
-
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories: FactoryRegistry{
-			"Organization": {
-				InputStruct: reflect.TypeOf(OrganizationInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					org := input.(*OrganizationInput)
-					return map[string]any{"id": "org-ctx", "name": org.Name}, nil
-				},
-			},
-			"User": {
-				InputStruct: reflect.TypeOf(UserInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					ctxCopy := ctx
-					userCtx = &ctxCopy
-					u := input.(*UserInput)
-					return map[string]any{"id": "user-ctx", "email": u.Email, "organizationId": u.OrganizationID}, nil
-				},
-			},
-		},
-	}
-
-	req := signedReq(map[string]any{
-		"action": "up",
-		"create": map[string]any{
-			"Organization": []any{map[string]any{"name": "Org", "_alias": "org1"}},
-			"User":         []any{map[string]any{"email": "x@y.com", "name": "X", "organizationId": map[string]any{"_ref": "org1"}}},
-		},
-		"testRunId": "run-ctx",
-	}, "shared")
-
-	resp := HandleRequest(config, req)
-	if resp.Status != 200 {
-		t.Fatalf("expected 200, got %d: %v", resp.Status, resp.Body)
-	}
-
-	if userCtx == nil {
-		t.Fatal("expected User factory context to be captured")
-	}
-
-	// By the time User factory runs, Organization should already be in refs
-	orgRefs := userCtx.Refs["Organization"]
-	if len(orgRefs) != 1 {
-		t.Fatalf("expected 1 Organization in refs, got %d", len(orgRefs))
-	}
-	if orgRefs[0]["id"] != "org-ctx" {
-		t.Errorf("expected org-ctx, got %v", orgRefs[0]["id"])
-	}
-	if userCtx.TestRunID != "run-ctx" {
-		t.Errorf("expected testRunId 'run-ctx', got %v", userCtx.TestRunID)
+func TestDown_InvalidTeardownToken(t *testing.T) {
+	resp := HandleRequest(baseConfig(nil), signedReq(map[string]any{"action": "down", "teardownToken": "tampered.token.value"}, "shared"))
+	if resp.Status != 403 || resp.Body["code"] != "INVALID_TEARDOWN_TOKEN" {
+		t.Errorf("expected 403 INVALID_TEARDOWN_TOKEN, got %d %v", resp.Status, resp.Body["code"])
 	}
 }
 
-func TestAfterUpHook(t *testing.T) {
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories: FactoryRegistry{
-			"User": {
-				InputStruct: reflect.TypeOf(UserInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					u := input.(*UserInput)
-					return map[string]any{"id": "u1", "email": u.Email}, nil
-				},
-			},
-		},
-		AfterUp: func(ctx HookContext, auth map[string]any) (map[string]any, error) {
-			auth["X-Custom"] = "enriched"
-			return auth, nil
-		},
-	}
-
-	req := signedReq(map[string]any{
-		"action":    "up",
-		"create":    map[string]any{"User": []any{map[string]any{"email": "test@test.com"}}},
-		"testRunId": "run-123",
-	}, "shared")
-
-	resp := HandleRequest(config, req)
-	if resp.Status != 200 {
-		t.Fatalf("expected 200, got %d: %v", resp.Status, resp.Body)
-	}
-
-	auth, ok := resp.Body["auth"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected auth to be a map, got %T", resp.Body["auth"])
-	}
-	if auth["X-Custom"] != "enriched" {
-		t.Errorf("expected X-Custom to be 'enriched', got %v", auth["X-Custom"])
-	}
-}
-
-func TestBeforeDownHook(t *testing.T) {
-	hookCalled := false
-	var capturedScenarioName string
-
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories: FactoryRegistry{
-			"User": {
-				InputStruct: reflect.TypeOf(UserInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					return nil, nil
-				},
-			},
-		},
-		BeforeDown: func(ctx HookContext) error {
-			hookCalled = true
-			capturedScenarioName = ctx.ScenarioName
-			return nil
-		},
-	}
-
-	testRunId := "run-123"
-	refsToken, err := SignRefs(RefsPayload{
-		Refs:        map[string][]map[string]any{"User": {{"id": "u1"}}},
-		TestRunID:   testRunId,
-		Environment: "",
-	}, "signing")
-	if err != nil {
-		t.Fatalf("failed to sign refs: %v", err)
-	}
-
-	downReq := signedReq(map[string]any{
-		"action":    "down",
-		"refsToken": refsToken,
-	}, "shared")
-
-	resp := HandleRequest(config, downReq)
-	if resp.Status != 200 {
-		t.Fatalf("expected 200, got %d: %v", resp.Status, resp.Body)
-	}
-
-	if !hookCalled {
-		t.Error("expected BeforeDown hook to be called")
-	}
-	if capturedScenarioName != testRunId {
-		t.Errorf("expected ScenarioName to be %q, got %q", testRunId, capturedScenarioName)
+func TestDown_MissingTeardownToken(t *testing.T) {
+	resp := HandleRequest(baseConfig(nil), signedReq(map[string]any{"action": "down"}, "shared"))
+	if resp.Status != 400 || resp.Body["code"] != "INVALID_BODY" {
+		t.Errorf("expected 400 INVALID_BODY, got %d %v", resp.Status, resp.Body["code"])
 	}
 }
 
 func TestEndpointAlwaysEnabled(t *testing.T) {
-	// AllowProduction is a deprecated no-op: the endpoint serves whether the
-	// flag is absent (zero value, false) or explicitly false.
-	config := &HandlerConfig{
-		SharedSecret:    "shared",
-		SigningSecret:   "signing",
-		AllowProduction: false,
-		Factories:       FactoryRegistry{},
-	}
-	req := signedReq(map[string]any{"action": "discover"}, "shared")
-
-	resp := HandleRequest(config, req)
+	// AllowProduction is a deprecated no-op: discover serves regardless.
+	config := baseConfig(nil)
+	config.AllowProduction = false
+	resp := HandleRequest(config, signedReq(map[string]any{"action": "discover"}, "shared"))
 	if resp.Status != 200 {
-		t.Fatalf("expected 200 even with AllowProduction false, got %d: %v", resp.Status, resp.Body)
-	}
-}
-
-func TestSchemaToWire(t *testing.T) {
-	schema := SchemaInfo{
-		Models: []ModelInfo{
-			{
-				Name:      "User",
-				TableName: "users",
-				Fields: []FieldInfo{
-					{Name: "id", Type: "string", IsRequired: false, IsId: true, HasDefault: true},
-					{Name: "email", Type: "string", IsRequired: true, IsId: false, HasDefault: false},
-				},
-			},
-		},
-		Edges:      []FKEdge{},
-		Relations:  []SchemaRelation{},
-		ScopeField: "organizationId",
-	}
-
-	result := SchemaToWire(&schema)
-	data, _ := json.Marshal(result)
-	if len(data) == 0 {
-		t.Error("expected non-empty JSON")
-	}
-
-	models, ok := result["models"].([]map[string]any)
-	if !ok || len(models) != 1 {
-		t.Fatalf("expected 1 model, got %v", result["models"])
-	}
-	if models[0]["name"] != "User" {
-		t.Errorf("expected User, got %v", models[0]["name"])
-	}
-}
-
-func TestNoFactoryRegistered(t *testing.T) {
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories:     FactoryRegistry{},
-	}
-
-	req := signedReq(map[string]any{
-		"action":    "up",
-		"create":    map[string]any{"Organization": []any{map[string]any{"name": "Org"}}},
-		"testRunId": "run-no-factory",
-	}, "shared")
-
-	resp := HandleRequest(config, req)
-	if resp.Status != 400 {
-		t.Fatalf("expected 400, got %d: %v", resp.Status, resp.Body)
-	}
-	if resp.Body["code"] != "INVALID_BODY" {
-		t.Errorf("expected INVALID_BODY, got %v", resp.Body["code"])
-	}
-}
-
-func TestTeardownWithDependencies(t *testing.T) {
-	var teardownOrder []string
-
-	config := &HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  "shared",
-		SigningSecret: "signing",
-		Factories: FactoryRegistry{
-			"Organization": {
-				InputStruct: reflect.TypeOf(OrganizationInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					org := input.(*OrganizationInput)
-					return map[string]any{"id": "org-1", "name": org.Name}, nil
-				},
-				Teardown: func(record interface{}, ctx FactoryContext) error {
-					rec := record.(map[string]any)
-					teardownOrder = append(teardownOrder, "Organization:"+rec["id"].(string))
-					return nil
-				},
-			},
-			"User": {
-				InputStruct: reflect.TypeOf(UserInput{}),
-				Create: func(input interface{}, ctx FactoryContext) (map[string]any, error) {
-					u := input.(*UserInput)
-					return map[string]any{"id": "user-1", "email": u.Email, "organizationId": u.OrganizationID}, nil
-				},
-				Teardown: func(record interface{}, ctx FactoryContext) error {
-					rec := record.(map[string]any)
-					teardownOrder = append(teardownOrder, "User:"+rec["id"].(string))
-					return nil
-				},
-			},
-		},
-	}
-
-	// Create with alias/ref dependencies
-	upReq := signedReq(map[string]any{
-		"action": "up",
-		"create": map[string]any{
-			"Organization": []any{map[string]any{"name": "Org", "_alias": "org1"}},
-			"User":         []any{map[string]any{"email": "a@b.com", "organizationId": map[string]any{"_ref": "org1"}}},
-		},
-		"testRunId": "run-dep-td",
-	}, "shared")
-
-	upResp := HandleRequest(config, upReq)
-	if upResp.Status != 200 {
-		t.Fatalf("expected 200 on up, got %d: %v", upResp.Status, upResp.Body)
-	}
-
-	refsToken, _ := upResp.Body["refsToken"].(string)
-
-	downReq := signedReq(map[string]any{
-		"action":    "down",
-		"refsToken": refsToken,
-	}, "shared")
-
-	downResp := HandleRequest(config, downReq)
-	if downResp.Status != 200 {
-		t.Fatalf("expected 200 on down, got %d: %v", downResp.Status, downResp.Body)
-	}
-
-	// User should be torn down before Organization (reverse of creation order)
-	if len(teardownOrder) != 2 {
-		t.Fatalf("expected 2 teardown calls, got %d: %v", len(teardownOrder), teardownOrder)
-	}
-	if teardownOrder[0] != "User:user-1" {
-		t.Errorf("expected User to be torn down first, got %v", teardownOrder[0])
-	}
-	if teardownOrder[1] != "Organization:org-1" {
-		t.Errorf("expected Organization to be torn down second, got %v", teardownOrder[1])
+		t.Fatalf("expected 200 with AllowProduction false, got %d", resp.Status)
 	}
 }

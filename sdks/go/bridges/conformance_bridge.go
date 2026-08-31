@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
+	"github.com/autonoma-ai/sdk/sdks/go/v2/autonoma"
 )
 
 type bridgeInput struct {
@@ -61,36 +61,20 @@ func dispatch(input bridgeInput) {
 	}()
 
 	switch key {
-	case "graph.topoSort":
-		nodes := toStringSlice(input.Input["nodes"])
-		edges := toFKEdges(input.Input["edges"])
-		result := autonoma.TopoSort(nodes, edges)
-		writeResult(result)
-
-	case "graph.findDeferrableEdge":
-		cycle := toStringSlice(input.Input["cycle"])
-		edges := toFKEdges(input.Input["edges"])
-		edge := autonoma.FindDeferrableEdge(cycle, edges)
-		writeResult(edge)
-
 	case "hmac.signBody":
 		body, _ := input.Input["body"].(string)
 		secret, _ := input.Input["secret"].(string)
-		result := autonoma.SignBody(body, secret)
-		writeResult(result)
+		writeResult(autonoma.SignBody(body, secret))
 
 	case "hmac.verifySignature":
 		body, _ := input.Input["body"].(string)
 		signature, _ := input.Input["signature"].(string)
 		secret, _ := input.Input["secret"].(string)
-		result := autonoma.VerifySignature(body, signature, secret)
-		writeResult(result)
+		writeResult(autonoma.VerifySignature(body, signature, secret))
 
 	case "refs.signRefs":
-		payloadRaw := input.Input["payload"]
 		secret, _ := input.Input["secret"].(string)
-		payload := toRefsPayload(payloadRaw)
-		result, err := autonoma.SignRefs(payload, secret)
+		result, err := autonoma.SignRefs(toRefsPayload(input.Input["payload"]), secret)
 		if err != nil {
 			writeError(err.Error())
 			return
@@ -105,17 +89,11 @@ func dispatch(input bridgeInput) {
 			writeError(err.Error())
 			return
 		}
-		// Convert to the expected JSON format
 		writeResult(map[string]any{
 			"refs":        result.Refs,
 			"testRunId":   result.TestRunID,
 			"environment": result.Environment,
 		})
-
-	case "fingerprint.fingerprint":
-		value := input.Input["value"]
-		result := autonoma.Fingerprint(value)
-		writeResult(result)
 
 	default:
 		writeError(fmt.Sprintf("Unknown function: %s", key))
@@ -134,78 +112,16 @@ func writeError(msg string) {
 	fmt.Println(string(data))
 }
 
-func toStringSlice(v any) []string {
-	arr, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	result := make([]string, len(arr))
-	for i, item := range arr {
-		result[i], _ = item.(string)
-	}
-	return result
-}
-
-func toFKEdges(v any) []autonoma.FKEdge {
-	arr, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	edges := make([]autonoma.FKEdge, len(arr))
-	for i, item := range arr {
-		m, _ := item.(map[string]any)
-		edges[i] = autonoma.FKEdge{
-			From:         getString(m, "from"),
-			To:           getString(m, "to"),
-			LocalField:   getString(m, "localField"),
-			ForeignField: getString(m, "foreignField"),
-			Nullable:     getBool(m, "nullable"),
-		}
-	}
-	return edges
-}
-
 func toRefsPayload(v any) autonoma.RefsPayload {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return autonoma.RefsPayload{}
 	}
-
-	refs := make(map[string][]map[string]any)
-	if refsRaw, ok := m["refs"].(map[string]any); ok {
-		for model, records := range refsRaw {
-			if arr, ok := records.([]any); ok {
-				var items []map[string]any
-				for _, item := range arr {
-					if record, ok := item.(map[string]any); ok {
-						items = append(items, record)
-					}
-				}
-				refs[model] = items
-			}
-		}
-	}
-
 	testRunID, _ := m["testRunId"].(string)
 	environment, _ := m["environment"].(string)
-
 	return autonoma.RefsPayload{
-		Refs:        refs,
+		Refs:        m["refs"],
 		TestRunID:   testRunID,
 		Environment: environment,
 	}
-}
-
-func getString(m map[string]any, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
-func getBool(m map[string]any, key string) bool {
-	if v, ok := m[key].(bool); ok {
-		return v
-	}
-	return false
 }

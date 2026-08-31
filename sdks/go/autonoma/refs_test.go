@@ -5,71 +5,77 @@ import (
 	"testing"
 )
 
-func TestSignRefs(t *testing.T) {
+func TestSignRefs_ThreeParts(t *testing.T) {
 	payload := RefsPayload{
-		Refs:        map[string][]map[string]any{"User": {{"id": "user-1", "email": "test@test.com"}}},
+		Refs:        map[string]any{"userId": "user-1", "email": "test@test.com"},
 		TestRunID:   "test-run-123",
 		Environment: "standard",
 	}
-
 	token, err := SignRefs(payload, "signing-secret")
 	if err != nil {
 		t.Fatalf("SignRefs() error: %v", err)
 	}
-
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		t.Errorf("Expected 3 parts, got %d", len(parts))
+	if parts := strings.Split(token, "."); len(parts) != 3 {
+		t.Errorf("expected 3 parts, got %d", len(parts))
 	}
 }
 
-func TestVerifyRefs(t *testing.T) {
-	t.Run("round-trips signed token", func(t *testing.T) {
-		payload := RefsPayload{
-			Refs:        map[string][]map[string]any{"User": {{"id": "user-1", "email": "test@test.com"}}},
-			TestRunID:   "test-run-123",
-			Environment: "standard",
-		}
-		secret := "signing-secret"
+func TestVerifyRefs_RoundTrip(t *testing.T) {
+	payload := RefsPayload{
+		Refs:        map[string]any{"userId": "user-1", "nested": map[string]any{"count": float64(3)}},
+		TestRunID:   "test-run-123",
+		Environment: "standard",
+	}
+	secret := "signing-secret"
 
-		token, err := SignRefs(payload, secret)
-		if err != nil {
-			t.Fatalf("SignRefs() error: %v", err)
-		}
+	token, err := SignRefs(payload, secret)
+	if err != nil {
+		t.Fatalf("SignRefs() error: %v", err)
+	}
+	got, err := VerifyRefs(token, secret)
+	if err != nil {
+		t.Fatalf("VerifyRefs() error: %v", err)
+	}
 
-		result, err := VerifyRefs(token, secret)
-		if err != nil {
-			t.Fatalf("VerifyRefs() error: %v", err)
-		}
+	if got.TestRunID != "test-run-123" {
+		t.Errorf("TestRunID = %q, want test-run-123", got.TestRunID)
+	}
+	if got.Environment != "standard" {
+		t.Errorf("Environment = %q, want standard", got.Environment)
+	}
+	refs, ok := got.Refs.(map[string]any)
+	if !ok {
+		t.Fatalf("expected refs to decode as an object, got %T", got.Refs)
+	}
+	if refs["userId"] != "user-1" {
+		t.Errorf("refs.userId = %v, want user-1", refs["userId"])
+	}
+	nested, ok := refs["nested"].(map[string]any)
+	if !ok || nested["count"] != float64(3) {
+		t.Errorf("expected nested arbitrary JSON to round-trip, got %v", refs["nested"])
+	}
+}
 
-		if result.TestRunID != "test-run-123" {
-			t.Errorf("TestRunID = %q, want %q", result.TestRunID, "test-run-123")
-		}
-		if result.Environment != "standard" {
-			t.Errorf("Environment = %q, want %q", result.Environment, "standard")
-		}
-	})
+func TestVerifyRefs_RejectsWrongSecret(t *testing.T) {
+	payload := RefsPayload{Refs: map[string]any{}, TestRunID: "r", Environment: "e"}
+	token, _ := SignRefs(payload, "right-secret")
+	if _, err := VerifyRefs(token, "wrong-secret"); err == nil {
+		t.Error("expected error for wrong secret")
+	}
+}
 
-	t.Run("rejects wrong secret", func(t *testing.T) {
-		token := "eyJhbGciOiJIUzI1NiIsInR5cCI6IlJFRlMifQ.eyJyZWZzIjp7IlVzZXIiOlt7ImlkIjoidXNlci0xIiwiZW1haWwiOiJ0ZXN0QHRlc3QuY29tIn1dfSwidGVzdFJ1bklkIjoidGVzdC1ydW4tMTIzIiwiZW52aXJvbm1lbnQiOiJzdGFuZGFyZCJ9.b2340UY6iXALRK2SaBV0BzZLVbxC8J59_csCUEc-gOw"
-		_, err := VerifyRefs(token, "wrong-secret")
-		if err == nil {
-			t.Error("Expected error for wrong secret")
-		}
-	})
+func TestVerifyRefs_RejectsMalformed(t *testing.T) {
+	if _, err := VerifyRefs("only-one-part", "signing-secret"); err == nil {
+		t.Error("expected error for malformed token")
+	}
+}
 
-	t.Run("rejects malformed token", func(t *testing.T) {
-		_, err := VerifyRefs("only-one-part", "signing-secret")
-		if err == nil {
-			t.Error("Expected error for malformed token")
-		}
-	})
-
-	t.Run("rejects tampered payload", func(t *testing.T) {
-		token := "eyJhbGciOiJIUzI1NiIsInR5cCI6IlJFRlMifQ.dGFtcGVyZWQ.b2340UY6iXALRK2SaBV0BzZLVbxC8J59_csCUEc-gOw"
-		_, err := VerifyRefs(token, "signing-secret")
-		if err == nil {
-			t.Error("Expected error for tampered payload")
-		}
-	})
+func TestVerifyRefs_RejectsTampered(t *testing.T) {
+	payload := RefsPayload{Refs: map[string]any{"a": "b"}, TestRunID: "r", Environment: "e"}
+	token, _ := SignRefs(payload, "signing-secret")
+	parts := strings.Split(token, ".")
+	tampered := parts[0] + ".dGFtcGVyZWQ." + parts[2] // swap the payload segment
+	if _, err := VerifyRefs(tampered, "signing-secret"); err == nil {
+		t.Error("expected error for tampered payload")
+	}
 }
