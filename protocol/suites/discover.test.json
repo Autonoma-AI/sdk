@@ -1,25 +1,18 @@
 {
-  "name": "discover returns environment descriptors",
+  "name": "discover lists registered scenarios",
   "steps": [
     {
       "action": "discover",
       "expect": {
         "status": 200,
         "bodyShape": {
-          "environments": "array"
+          "scenarios": "array"
         },
         "bodyAssertions": [
-          { "path": "environments[0].name", "type": "string" },
-          { "path": "environments[0].fingerprint", "type": "string", "pattern": "^[a-f0-9]{16}$" }
+          { "path": "version", "type": "string", "pattern": "^2\\.0$" },
+          { "path": "scenarios[0].name", "type": "string", "notEmpty": true },
+          { "path": "scenarios[0].description", "type": "string" }
         ]
-      }
-    },
-    {
-      "description": "fingerprints are stable across calls",
-      "action": "discover",
-      "expect": {
-        "status": 200,
-        "fingerprintsMatchStep": 0
       }
     }
   ]

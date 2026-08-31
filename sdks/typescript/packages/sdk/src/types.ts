@@ -1,175 +1,35 @@
 /**
- * Public types for the Autonoma SDK.
+ * Public types for the Autonoma SDK (Scenario v2).
  *
- * The SDK is now factory-driven: every model the dashboard can create
- * comes from a registered factory, and each factory carries a Zod input
- * schema (and optional ref schema). There is no SQL introspection, no
- * SQL fallback, and no executor on `HandlerConfig`. Factories that need
- * DB access use whatever client the host already has.
+ * A customer authors named **scenarios** with `defineScenario`. The
+ * platform calls `up` with only a scenario name + `testRunId`; the
+ * scenario's `up` runs free-form async code and returns optional
+ * `auth`/`teardown`. The SDK owns the envelope: `teardownToken` signing,
+ * expiry defaults, and the protocol `version` field.
+ *
+ * `defineFactory` and the factory types below survive as an optional
+ * library a scenario's `up`/`down` may use internally (see `factory.ts`);
+ * they are no longer wired to the wire protocol.
  */
 import type { ZodTypeAny, z } from 'zod'
 
-export interface SchemaInfo {
-  models: ModelInfo[]
-  /** Always emitted as `[]` in factory-driven mode; kept for wire-shape symmetry. */
-  edges: FKEdge[]
-  /** Always emitted as `[]` in factory-driven mode; kept for wire-shape symmetry. */
-  relations: SchemaRelation[]
-  scopeField: string
-}
+/** A JSON scalar leaf value. */
+export type JsonScalar = string | number | boolean | null
 
-/** Wire-shape relic — emitted as an empty array in factory-driven mode. */
-export interface SchemaRelation {
-  parentModel: string
-  childModel: string
-  parentField: string
-  childField: string
-}
+/** Arbitrary JSON with scalar leaves. */
+export type JsonValue = JsonScalar | JsonValue[] | { [key: string]: JsonValue }
 
-export interface ModelInfo {
-  name: string
-  /** Cosmetic — snake_case of `name`; the dashboard renders it for display only. */
-  tableName: string
-  fields: FieldInfo[]
-}
-
-export interface FieldInfo {
-  name: string
-  type: string
-  isRequired: boolean
-  isId: boolean
-  hasDefault: boolean
-}
-
-/** Wire-shape relic — emitted as an empty array in factory-driven mode. */
-export interface FKEdge {
-  from: string
-  to: string
-  localField: string
-  foreignField: string
-  nullable: boolean
-}
+/**
+ * Whatever a scenario's `up` returns as `teardown`. Carried inside the
+ * signed `teardownToken` at `up` and handed back to the scenario's `down`
+ * verbatim, so a scenario can carry the handles it needs to tear itself down.
+ */
+export type ScenarioTeardown = Record<string, unknown>
 
 export interface SdkInfo {
   language: string
   orm: string
   server: string
-}
-
-export interface FactoryContext {
-  /** All refs created so far, keyed by model name */
-  refs: Record<string, Record<string, unknown>[]>
-  /** Logical scope value or testRunId fallback (kept for backwards-compat). */
-  scenarioName: string
-  /** Unique ID for this test run */
-  testRunId: string
-}
-
-/**
- * Factory definition.
- *
- * The two type parameters are bound to the Zod schemas you pass in:
- *   - `TInput extends ZodTypeAny` — the create input. `data` arrives
- *     already validated and typed as `z.infer<TInput>`, so your factory
- *     body doesn't need a manual `z.infer<...>` annotation.
- *   - `TRef extends ZodTypeAny` — the shape your `create` returns and
- *     `teardown` later receives. When `refSchema` is omitted, `TRef`
- *     widens to a generic `{ id; ... }` record so old factories keep
- *     compiling without a refSchema.
- *
- * Bind both at the call site by writing `defineFactory({...})` — TS
- * infers the generics from the schema instances.
- */
-export interface FactoryDefinition<
-  TInput extends ZodTypeAny = ZodTypeAny,
-  TRef extends ZodTypeAny | undefined = undefined,
-> {
-  /**
-   * Create a single entity. Receives the validated input (parsed by
-   * `inputSchema`) and must return at least `{ id }`. When `refSchema`
-   * is set, the return type is constrained to `z.input<TRef>` so the
-   * teardown signature lines up exactly.
-   */
-  create: (
-    data: z.infer<TInput>,
-    ctx: FactoryContext,
-  ) =>
-    | Promise<RefRecord<TRef>>
-    | RefRecord<TRef>
-  /**
-   * Optional teardown per record. Receives whatever `create` returned —
-   * validated through `refSchema` first when one is registered. If
-   * omitted the model is left alone on `down`. There is no SQL fallback.
-   */
-  teardown?: (
-    record: TRef extends ZodTypeAny ? z.infer<TRef> : Record<string, unknown> & { id: string | number },
-    ctx: FactoryContext,
-  ) => Promise<void> | void
-  /** Required Zod schema for the create input — drives both validation and discover. */
-  inputSchema: TInput
-  /** Optional Zod schema for the record returned by `create` (validated on teardown). */
-  refSchema?: TRef
-}
-
-type RefRecord<TRef extends ZodTypeAny | undefined> = TRef extends ZodTypeAny
-  ? z.input<TRef>
-  : Record<string, unknown> & { id: string | number }
-
-// `FactoryDefinition` is invariant in its type parameters (functions
-// take the schema-derived types as inputs), so the registry must accept
-// any concrete factory. The handler uses `factory.inputSchema.safeParse`
-// at runtime — TypeScript can't statically know which schema sits
-// behind a registry lookup, and that's fine.
-export type FactoryRegistry = Record<string, FactoryDefinition<any, any>>
-
-export interface HandlerConfig {
-  /** Scope field name (camelCase), e.g., 'organizationId' */
-  scopeField: string
-  /** Shared secret — known by both you and Autonoma. Used to verify HMAC signatures on incoming requests. */
-  sharedSecret: string
-  /** Internal secret — only you know this. Used to sign the refs JWT token. Autonoma never sees it. */
-  signingSecret: string
-  /** Factory definitions per model. Required: every model the dashboard sends in `create` must have one. */
-  factories?: FactoryRegistry
-  /**
-   * @deprecated Ignored - the endpoint is always enabled; HMAC signing is the
-   * gate. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no
-   * extra guard is needed. If you deploy the factory in your own environments
-   * and want it dark in production, gate it in your handler, e.g. return 404
-   * when `process.env.NODE_ENV === 'production'`.
-   */
-  allowProduction?: boolean
-  /**
-   * Auth callback — called after entity creation during `up`.
-   * Receives the first User record from refs (or null if no User model exists)
-   * and a context object with scopeValue and refs.
-   * Must return auth credentials for the test runner.
-   */
-  auth: (user: Record<string, unknown> | null, context: AuthContext) => Promise<AuthResult> | AuthResult
-  /**
-   * Optional hook called before teardown in `down`.
-   * Use this to clean up data created outside the SDK (e.g., external service records).
-   */
-  beforeDown?: (context: HookContext) => Promise<void> | void
-  /**
-   * Optional hook called after entity creation and auth in `up`.
-   * Can modify the auth result before it is returned to the caller.
-   */
-  afterUp?: (context: HookContext, authResult: AuthResult) => Promise<AuthResult> | AuthResult
-  /** SDK identity metadata. Server adapters populate this. */
-  sdk?: Partial<SdkInfo>
-}
-
-export interface AuthContext {
-  /** The detected scope value (e.g. organization ID) or testRunId fallback. */
-  scopeValue: string
-  /** All created entity refs, keyed by model name. */
-  refs: Record<string, Record<string, unknown>[]>
-}
-
-export interface HookContext {
-  scenarioName: string
-  refs: Record<string, Record<string, unknown>[]>
 }
 
 export interface AuthCookie {
@@ -183,10 +43,122 @@ export interface AuthCookie {
   maxAge?: number
 }
 
+/** Credentials the test runner uses to act as the seeded user. */
 export interface AuthResult {
   cookies?: AuthCookie[]
   headers?: Record<string, string>
   credentials?: Record<string, string>
+}
+
+// ---------------------------------------------------------------------------
+// Scenario authoring surface
+// ---------------------------------------------------------------------------
+
+/** Context passed to a scenario's `up`. */
+export interface ScenarioUpContext {
+  /** Unique id for this test run — seed uniqueness helpers from it. */
+  testRunId: string
+}
+
+/** What a scenario's `up` returns. All fields optional. */
+export interface ScenarioUpResult {
+  auth?: AuthResult
+  teardown?: ScenarioTeardown
+}
+
+/** Context passed to a scenario's `down`. */
+export interface ScenarioDownContext {
+  /** The scenario name, recovered from the verified teardown token. */
+  name: string
+  /** The `teardown` handle this scenario returned from `up`. */
+  teardown: ScenarioTeardown
+  /** The `testRunId` captured at `up` time. */
+  testRunId: string
+}
+
+/**
+ * A named scenario. `up` provisions the environment a test needs; the
+ * optional `down` tears it back down. Register with
+ * `createHandler({ ..., scenarios: [defineScenario({...})] })`.
+ */
+export interface ScenarioDefinition {
+  /** Stable identifier the platform calls `up`/`down` by. */
+  name: string
+  /** Human-readable summary shown in `discover`. */
+  description: string
+  up: (ctx: ScenarioUpContext) => Promise<ScenarioUpResult> | ScenarioUpResult
+  down?: (ctx: ScenarioDownContext) => Promise<void> | void
+}
+
+// ---------------------------------------------------------------------------
+// Optional factory library (not wired to the wire protocol in v2)
+// ---------------------------------------------------------------------------
+
+export interface FactoryContext {
+  /** All refs created so far, keyed by model name. */
+  refs: Record<string, Record<string, unknown>[]>
+  /** Logical scope value or testRunId fallback. */
+  scenarioName: string
+  /** Unique ID for this test run. */
+  testRunId: string
+}
+
+/**
+ * Factory definition — an optional helper a scenario's `up`/`down` may use
+ * to create/tear down entities through the app's real logic. The two type
+ * parameters bind to the Zod schemas you pass in.
+ */
+export interface FactoryDefinition<
+  TInput extends ZodTypeAny = ZodTypeAny,
+  TRef extends ZodTypeAny | undefined = undefined,
+> {
+  create: (
+    data: z.infer<TInput>,
+    ctx: FactoryContext,
+  ) => Promise<RefRecord<TRef>> | RefRecord<TRef>
+  teardown?: (
+    record: TRef extends ZodTypeAny
+      ? z.infer<TRef>
+      : Record<string, unknown> & { id: string | number },
+    ctx: FactoryContext,
+  ) => Promise<void> | void
+  /** Zod schema for the create input. */
+  inputSchema: TInput
+  /** Optional Zod schema for the record returned by `create`. */
+  refSchema?: TRef
+}
+
+type RefRecord<TRef extends ZodTypeAny | undefined> = TRef extends ZodTypeAny
+  ? z.input<TRef>
+  : Record<string, unknown> & { id: string | number }
+
+// `FactoryDefinition` is invariant in its type parameters, so the registry
+// accepts any concrete factory.
+export type FactoryRegistry = Record<string, FactoryDefinition<any, any>>
+
+// ---------------------------------------------------------------------------
+// Handler config + wire types
+// ---------------------------------------------------------------------------
+
+export interface HandlerConfig {
+  /** Shared secret — known by both you and Autonoma. Verifies HMAC signatures. */
+  sharedSecret: string
+  /** Private signing secret — only you know this. Signs the teardown token. */
+  signingSecret: string
+  /** Registered scenarios. Every scenario the platform can run must be listed. */
+  scenarios?: ScenarioDefinition[]
+  /**
+   * Token/environment lifetime returned on `up` as `expiresInSeconds`.
+   * Defaults to one hour when omitted.
+   */
+  expiresInSeconds?: number
+  /**
+   * @deprecated Ignored - the endpoint is always enabled; HMAC signing is the
+   * gate. Gate it in your handler if you want it dark in your own production.
+   */
+  allowProduction?: boolean
+  /** SDK identity metadata. Server adapters populate this. */
+  sdk?: Partial<SdkInfo>
 }
 
 export interface HandlerRequest {
@@ -199,16 +171,31 @@ export interface HandlerResponse {
   body: Record<string, unknown>
 }
 
-export interface DiscoverResponse {
-  schema: SchemaInfo
+// ---------------------------------------------------------------------------
+// Response shapes (v2)
+// ---------------------------------------------------------------------------
+
+export interface ScenarioDescriptor {
+  name: string
+  description: string
 }
 
-export interface UpResponse {
-  auth: AuthResult
-  refs: Record<string, Record<string, unknown>[]>
-  refsToken: string
+export type DiscoverResponse = {
+  scenarios: ScenarioDescriptor[]
+  version: string
+  sdk: SdkInfo
 }
 
-export interface DownResponse {
-  ok: boolean
+export type UpResponse = {
+  auth?: AuthResult
+  teardownToken: string
+  expiresInSeconds?: number
+  version: string
+  sdk: SdkInfo
+}
+
+export type DownResponse = {
+  ok?: boolean
+  version: string
+  sdk: SdkInfo
 }

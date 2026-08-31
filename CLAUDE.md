@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Autonoma SDK — a multi-language SDK that automates the Autonoma Environment Factory endpoint. Each language implementation lives under `sdks/<language>/` and must pass the shared conformance test suite. The SDK handles HMAC verification, JWT refs, FK-ordered entity creation, and scoped teardown.
+Autonoma SDK — a multi-language SDK that implements the Autonoma Environment Factory endpoint. A customer authors named **scenarios** in their own code with `defineScenario` (or the language's equivalent). Each scenario's `up` runs free-form code that provisions an isolated environment and returns `{ auth?, teardown? }`; its optional `down` tears that environment back down. The SDK owns only the envelope: HMAC request verification, the signed teardown token, expiry, and the protocol version. Each language implementation lives under `sdks/<language>/` and must behave identically, verified by the shared conformance suite.
+
+This is **Scenario v2** (protocol `2.0`). The v1 factory-driven model - a declarative `create` graph with `_alias`/`_ref` edges, topological sorting, and a required factory per model - is gone from the wire. `defineFactory` survives only as an optional helper a scenario's `up`/`down` may call internally.
 
 ## Repository Structure
 
@@ -68,7 +70,8 @@ mvn package -DskipTests                    # build JARs (including conformance b
 ### Ruby
 ```bash
 cd sdks/ruby
-ruby -Ilib -Itest test/test_hmac.rb test/test_refs.rb test/test_fingerprint.rb test/test_graph.rb test/test_handler.rb test/test_create.rb
+rake test                                                  # all tests (globs test/**/test_*.rb)
+ruby -Ilib -Itest test/test_handler.rb                     # single file
 ```
 
 ### Rust
@@ -102,55 +105,49 @@ npx tsx protocol/test-runner.ts --url http://localhost:3000/api/autonoma --secre
 
 All language SDKs implement the same protocol with the same core modules:
 
-- **handler** — request routing (discover/up/down), HMAC verification, environment gating, error wrapping
+- **handler** — request routing (discover/up/down), HMAC verification, scenario lookup by name, teardown-token signing on `up` and verification on `down`, error wrapping
 - **hmac** — HMAC-SHA256 signing/verification for request authentication
-- **refs** — JWT-like token (header.payload.signature) for signing/verifying created entity refs
-- **graph** — Kahn's topo sort + Tarjan's SCC for FK ordering and cycle detection
-- **fingerprint** — deterministic sha256-based hash of scenario definitions
-- **factory** — required user-defined entity factories (`defineFactory`). Every model the platform can create must have one; the SDK routes every write through a factory and never runs SQL itself. Each factory carries an input schema that also drives `discover` (no database introspection).
+- **refs** — JWT-like token (header.payload.signature) that signs and verifies the **teardown token** carrying the scenario name + the scenario's `teardown` handle
+- **scenario** — `defineScenario`: validates a scenario definition (`name`/`description`/`up`/`down`) and returns it unchanged
+- **unique** — deterministic uniqueness helpers seeded from `testRunId` (`uniqueEmail`, `uniqueSlug`, `uniqueId`, `uniqueToken`)
+- **factory** (optional) — `defineFactory` plus the payload-topo helpers. A helper library a scenario's `up`/`down` may call internally; **not wired to the wire protocol** in v2
 - **Server adapter** — converts framework-specific request/response to internal types
 
-### Entity Factories
+### Scenarios
 
-The SDK is **factory-driven**. Every model the platform can create must have a registered factory; there is no ORM adapter, no schema introspection, and no SQL fallback. A model with no factory cannot be created. Factories exist so test data is created through the app's real logic (password hashing, external service calls, state machines, etc.), exactly as production data is.
+The primary surface is `defineScenario`. A scenario has a `name`, a `description`, an `up`, and an optional `down`.
 
-**Key types** (reference implementation in TypeScript):
-- `FactoryDefinition` — `{ inputSchema, create(data, ctx), teardown?(record, ctx), refSchema? }`. `inputSchema` (Zod in TS) validates the create payload and drives `discover`. `create` receives pre-resolved fields (temp IDs already replaced with real FK IDs) and must return at least the PK field. If `teardown` is omitted the model is not deleted on `down`.
-- `FactoryContext` — `{ refs, scenarioName, testRunId }`. Passed to both `create` and `teardown`. There is no `executor`.
-- `FactoryRegistry` — `Record<string, FactoryDefinition>`. Passed as `factories` on `HandlerConfig`; required.
+- `up(ctx)` receives `{ testRunId }` and runs free-form async code - loops, conditionals, real API calls, calls into the app's own service layer. It returns up to two optional things:
+  - `auth` - credentials the test runner uses to act as the seeded user (`cookies`/`headers`/`credentials`). Secrets live here.
+  - `teardown` - any JSON handle `down` needs. Signed into the teardown token, handed back to `down` verbatim, never returned in the clear.
+- `down(ctx)` receives `{ name, teardown, testRunId }` recovered from the verified teardown token, and undoes what `up` created. Omitting `down` is a no-op.
 
-**How it works:**
-1. Tree resolution and topological sorting happen from the create payload's `_alias`/`_ref` graph
-2. For each model in topo order: look up its factory (error if missing) and call `factory.create()` per record
-3. FK fields are pre-resolved before reaching the factory (Option A — factories never see `__temp_*` IDs)
-4. On teardown: if a factory defines `teardown`, call it per record in reverse order; a model whose factory has no `teardown` is skipped
-5. Deferred updates for circular FK cycles are handled through the factory layer, not raw SQL
+There is no `scopeField`, no `factories` registry, and no top-level `auth` callback on the handler config - the config carries only `sharedSecret`, `signingSecret`, `scenarios`, optional `expiresInSeconds`, and optional `sdk` metadata. Auth is returned per-scenario from `up`.
 
-**Factory return contract:** Must return at least `{ id }` (or whatever the PK field is named). All returned fields are stored in refs and passed to the test runner. Fields don't need to match DB column names — only the PK matters for FK wiring.
+**Uniqueness:** when `up` provisions records with unique columns, seed those values from `testRunId` so they are unique per run yet reproducible. The `unique*` helpers derive unique-yet-deterministic values from `testRunId`, so `up` and a later `down` can recompute the same value without storing it. The digest (`sha256(testRunId + " " + parts...)`, truncated to 12 hex chars) is byte-for-byte identical across all eight languages.
 
-**Language-native patterns:**
-- TypeScript/Python/Ruby: closures/lambdas
-- Java: interfaces (`FactoryDefinition`)
-- Go: struct with function fields
-- Rust: traits with `async_trait`
-- Elixir: 2-arity functions
-- PHP: callables
+**Language-native authoring patterns:**
+- TypeScript / Python: object / dataclass passed to `defineScenario` (`up`/`down` are closures)
+- Ruby / PHP / Elixir: a builder (`Scenario.define_scenario` / `Scenario::defineScenario` / `Autonoma.Scenario.define_scenario`) with closure `up`/`down`
+- Go: a `ScenarioDefinition` struct with `Up`/`Down` function fields
+- Rust: a `Scenario` trait (`#[async_trait]`) or the `define_scenario` closure helper
+- Java: `Scenario.define(...)` returning a `ScenarioDefinition` interface (functional `UpFn`/`DownFn`)
 
-**Troubleshooting factory errors:**
+**Error codes** (returned as `{ error, code }` with an HTTP status; see `docs/shared/protocol.md`):
 
-| Error Code | Cause | Fix |
-|------------|-------|-----|
-| `FACTORY_MISSING_PK` | Factory `create` returned a record without the primary key field | Ensure your factory returns at least `{ id: "..." }` (or whatever the PK is named in the schema). The SDK needs the PK to wire FK references between models. |
-| `SAME_SECRETS` | `sharedSecret` and `signingSecret` are identical | Use two distinct secrets — the shared secret authenticates requests, the signing secret signs refs tokens. Reusing one for both is a security risk. |
-| `INVALID_SIGNATURE` | HMAC verification failed on the incoming request | Check that the `sharedSecret` in your SDK config matches the one configured in the Autonoma dashboard. |
-| `INVALID_REFS_TOKEN` | The `refsToken` in a `down` request could not be verified | The token was signed with a different `signingSecret` or was tampered with. Ensure the same config is used for `up` and `down`. |
-| `UNKNOWN_ACTION` | Request body has an unrecognized `action` value | Valid actions are `discover`, `up`, and `down`. |
-| `INVALID_BODY` | Request body is not valid JSON or is missing required fields | Check that the request body is valid JSON and includes `action`. For `up`, include `create`; for `down`, include `refsToken`. |
-| `PRODUCTION_BLOCKED` | Deprecated - never returned. The endpoint is always enabled; HMAC signing is the gate. The `allowProduction` option is an ignored no-op kept only for backward compatibility. | Nothing to set. On Autonoma previews (`AUTONOMA_PREVIEWKIT` set) no guard is needed; gate manually in your handler if you want the endpoint dark in your own production deployments. |
+| Error Code | HTTP | Cause / Fix |
+|------------|------|-------------|
+| `SAME_SECRETS` | 500 | `sharedSecret` and `signingSecret` are identical. Use two distinct secrets - the shared one authenticates requests, the signing one signs the teardown token. |
+| `INVALID_SIGNATURE` | 401 | HMAC verification failed. The `sharedSecret` in the SDK config must match the one in the Autonoma dashboard. |
+| `INVALID_BODY` | 400 | Body is not valid JSON, missing `action`, missing `scenario.name` on `up`, or missing `teardownToken` on `down`. |
+| `UNKNOWN_ACTION` | 400 | `action` is not `discover`, `up`, or `down`. |
+| `UNKNOWN_ENVIRONMENT` | 400 | The requested scenario name is not registered. |
+| `INVALID_TEARDOWN_TOKEN` | 403 | The teardown token could not be verified - signed with a different `signingSecret` or tampered with. Use the same config for `up` and `down`. |
+| `PRODUCTION_BLOCKED` | 404 | Deprecated - never returned. The endpoint is always enabled; HMAC signing is the gate. `allowProduction` is an ignored no-op. On Autonoma previews (`AUTONOMA_PREVIEWKIT` set) no guard is needed; gate manually in your handler to keep the endpoint dark in your own production deployments. |
 
 ### Available Adapters
 
-There are no ORM adapters. Factories talk to whatever database client the host app already has. Only server (HTTP framework) adapters are shipped:
+There are no ORM adapters. A scenario's `up`/`down` talk to whatever database client or service layer the host app already has. Only server (HTTP framework) adapters are shipped:
 
 | Language | Server Adapters |
 |----------|-----------------|
@@ -168,10 +165,12 @@ There are no ORM adapters. Factories talk to whatever database client the host a
 Every response (discover/up/down) includes:
 ```json
 {
-  "version": "1.0",
-  "sdk": { "language": "typescript", "orm": "unknown", "server": "express" }
+  "version": "2.0",
+  "sdk": { "language": "typescript", "orm": "unknown", "server": "web" }
 }
 ```
+
+The platform detects the protocol per deployment from the `version` field.
 
 ## Multi-Language Rules
 
@@ -179,13 +178,13 @@ This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PH
 
 ### Adding features or fixing bugs
 
-- Any change to protocol behavior (handler, HMAC, refs, graph, fingerprint) **must be implemented in all eight languages**.
-- Add or update conformance test cases in `conformance/` to cover the new behavior, then verify all eight pass: `cd conformance && npx tsx run.ts`.
+- Any change to protocol behavior (handler routing, HMAC, the teardown token, the uniqueness helpers) **must be implemented in all eight languages**.
+- The conformance suite now exercises only the unchanged `hmac` + `refs` primitives: every bridge in `conformance/runner.config.json` overrides `modules` to `["hmac", "refs"]`. The `graph`/`fingerprint` fixtures are v1 leftovers and are no longer run by any language. Add or update conformance cases as needed, then verify all eight pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
 
 ### Bundled agent docs
 
-Each published package ships an agent-facing doc set (read from `node_modules` / site-packages / the JAR, etc.) plus an `AGENTS.md` pointer, so a coding agent implementing the SDK reads the version-matched, factory-driven API instead of stale training data. Single source of truth:
+Each published package ships an agent-facing doc set (read from `node_modules` / site-packages / the JAR, etc.) plus an `AGENTS.md` pointer, so a coding agent implementing the SDK reads the version-matched, scenario-based v2 API instead of stale training data. Single source of truth:
 
 - `docs/shared/{overview,protocol,scenarios}.md` + `docs/shared/llms.txt` — language-agnostic, copied verbatim into every package.
 - `docs/languages/<lang>/{implement,factories,validation,AGENTS}.md` — language-specific.
@@ -213,7 +212,7 @@ Each published package ships an agent-facing doc set (read from `node_modules` /
 - PHP: PSR-4 autoloading, Composer (composer.json), Laravel service provider auto-discovery
 - Java: Maven multi-module, Java 17+, records for data types, Spring Boot 3.x for server adapter
 - Ruby: gemspec with no hard runtime dependencies (stdlib only), ActiveRecord/Rails as optional adapters
-- Rust: Cargo crate with optional feature flags (`actix`, `axum`), async-trait for the factory abstraction
-- Go: standard Go module, Gin server adapter; factories use the host app's own DB client
+- Rust: Cargo crate with optional feature flags (`actix`, `axum`), async-trait for the `Scenario` abstraction
+- Go: standard Go module, Gin server adapter; a scenario's `Up`/`Down` use the host app's own DB client
 - All SDKs must pass `conformance/` fixtures and `protocol/` test suites
 - Protocol responses include `version` and `sdk` metadata for traceability

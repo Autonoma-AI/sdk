@@ -1,5 +1,5 @@
 {
-  "name": "up creates environment and returns auth + refs",
+  "name": "up runs a scenario and returns the envelope",
   "steps": [
     {
       "action": "discover",
@@ -9,18 +9,20 @@
     {
       "action": "up",
       "body": {
-        "environment": "{{discoverResult.environments[0].name}}"
+        "scenario": { "name": "{{discoverResult.scenarios[0].name}}" },
+        "testRunId": "protocol-run-1"
       },
       "expect": {
         "status": 200,
         "bodyShape": {
-          "auth": "object",
-          "refs": "object",
-          "refsToken": "string"
+          "teardownToken": "string",
+          "refs": "undefined",
+          "refsToken": "undefined"
         },
         "bodyAssertions": [
-          { "path": "auth", "type": "object" },
-          { "path": "refsToken", "type": "string", "notEmpty": true }
+          { "path": "version", "type": "string", "pattern": "^2\\.0$" },
+          { "path": "teardownToken", "type": "string", "notEmpty": true },
+          { "path": "expiresInSeconds", "type": "number" }
         ]
       },
       "saveAs": "upResult"

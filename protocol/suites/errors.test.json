@@ -10,7 +10,7 @@
     },
     {
       "action": "up",
-      "body": { "environment": "does-not-exist" },
+      "body": { "scenario": { "name": "does-not-exist" }, "testRunId": "protocol-run-err" },
       "expect": {
         "status": 400,
         "body": { "code": "UNKNOWN_ENVIRONMENT" }

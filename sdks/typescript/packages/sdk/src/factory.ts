@@ -2,11 +2,10 @@ import type { ZodTypeAny } from 'zod'
 import type { FactoryDefinition } from './types'
 
 /**
- * Define a factory for creating entities via user code.
- *
- * Every factory must declare an `inputSchema` (Zod) so the SDK can:
- *   1. validate the create payload before invoking `create`, and
- *   2. derive the `discover` schema from the Zod shape (no DB introspection).
+ * Define a factory for creating entities via user code. In v2 this is an
+ * OPTIONAL helper a scenario's `up`/`down` may call internally - it is not
+ * wired to the wire protocol, and `discover` no longer derives a schema from
+ * it. The `inputSchema` (Zod) validates the input before `create` runs.
  *
  * The generics are inferred from the schemas you pass in: `create`'s
  * `data` argument is typed as `z.infer<typeof inputSchema>`, and
@@ -27,8 +26,8 @@ export function defineFactory<
   }
   if (!definition.inputSchema || !isZodSchema(definition.inputSchema)) {
     throw new Error(
-      'Factory "inputSchema" must be a Zod schema (e.g. z.object({...})). ' +
-        'Discover relies on it to describe the model to the dashboard.',
+      'Factory "inputSchema" must be a Zod schema (e.g. z.object({...})) ' +
+        'so it can validate the input before create runs.',
     )
   }
   if (definition.refSchema !== undefined && !isZodSchema(definition.refSchema)) {

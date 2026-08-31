@@ -31,7 +31,6 @@ interface TestStep {
       pattern?: string
       notEmpty?: boolean
     }>
-    fingerprintsMatchStep?: number
   }
   saveAs?: string
 }
@@ -112,7 +111,6 @@ async function sendRequest(
 
 async function runSuite(suite: TestSuite): Promise<{ passed: number; failed: number; errors: string[] }> {
   const saved: Record<string, unknown> = {}
-  const stepResults: Array<{ status: number; body: Record<string, unknown> }> = []
   let passed = 0
   let failed = 0
   const errors: string[] = []
@@ -128,7 +126,6 @@ async function runSuite(suite: TestSuite): Promise<{ passed: number; failed: num
         : {}
 
       const result = await sendRequest(step.action, body, step.overrideSignature)
-      stepResults.push(result)
 
       // Check status
       if (result.status !== step.expect.status) {
@@ -184,22 +181,6 @@ async function runSuite(suite: TestSuite): Promise<{ passed: number; failed: num
           }
           if (assertion.notEmpty && (!value || (typeof value === 'string' && value.length === 0))) {
             errors.push(`  [${stepDesc}] ${assertion.path}: expected non-empty`)
-          }
-        }
-      }
-
-      // Check fingerprint stability
-      if (step.expect.fingerprintsMatchStep !== undefined) {
-        const prevResult = stepResults[step.expect.fingerprintsMatchStep]
-        if (prevResult) {
-          const prevEnvs = (prevResult.body.environments as any[]) ?? []
-          const currEnvs = (result.body.environments as any[]) ?? []
-          for (let j = 0; j < Math.min(prevEnvs.length, currEnvs.length); j++) {
-            if (prevEnvs[j]?.fingerprint !== currEnvs[j]?.fingerprint) {
-              errors.push(
-                `  [${stepDesc}] Fingerprint mismatch for environment ${j}: ${prevEnvs[j]?.fingerprint} !== ${currEnvs[j]?.fingerprint}`,
-              )
-            }
           }
         }
       }

@@ -1,5 +1,5 @@
 {
-  "name": "down tears down environment with valid refsToken",
+  "name": "down tears a scenario down with a valid teardownToken",
   "steps": [
     {
       "action": "discover",
@@ -9,7 +9,8 @@
     {
       "action": "up",
       "body": {
-        "environment": "{{discoverResult.environments[0].name}}"
+        "scenario": { "name": "{{discoverResult.scenarios[0].name}}" },
+        "testRunId": "protocol-run-2"
       },
       "expect": { "status": 200 },
       "saveAs": "upResult"
@@ -17,11 +18,15 @@
     {
       "action": "down",
       "body": {
-        "refsToken": "{{upResult.refsToken}}"
+        "teardownToken": "{{upResult.teardownToken}}",
+        "testRunId": "protocol-run-2"
       },
       "expect": {
         "status": 200,
-        "body": { "ok": true }
+        "body": { "ok": true },
+        "bodyAssertions": [
+          { "path": "version", "type": "string", "pattern": "^2\\.0$" }
+        ]
       }
     }
   ]
