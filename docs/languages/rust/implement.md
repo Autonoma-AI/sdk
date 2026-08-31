@@ -4,25 +4,25 @@ Follow these steps to stand up a working Environment Factory endpoint. This is w
 
 ## Prerequisites
 
-- A Rust backend on Actix Web or Axum, running on a `tokio` runtime.
-- The database client your app already uses (`sqlx`, `diesel`, `tokio-postgres` - it does not matter; your factories call it). Have a connection pool you can share, typically an `Arc<Pool>`.
+- A Rust backend on Axum or Actix Web, running on a `tokio` runtime.
+- The database client your app already uses (`sqlx`, `diesel`, `tokio-postgres` - it does not matter; your scenario code calls it). A connection pool you can capture into a closure, typically an `Arc<Pool>`.
 
-## Step 1 - Add the crate with the right feature
+## Step 1 - Add the crate and enable a server feature
 
-The crate is `autonoma-sdk`. Enable exactly one server-adapter feature that matches your framework:
+The crate is `autonoma-sdk` (imported as `autonoma_sdk`). The server adapters are **behind Cargo features**, and the default is neither - you must opt in to exactly the one that matches your framework.
 
-| Framework | Feature | Adapter module |
-|-----------|---------|----------------|
-| Axum | `axum` | `autonoma_sdk::axum` |
-| Actix Web | `actix` | `autonoma_sdk::actix` |
+| Framework | Feature | Adapter module | Handler function |
+|-----------|---------|----------------|------------------|
+| Axum | `axum` | `autonoma_sdk::axum` | `create_axum_handler` |
+| Actix Web | `actix` | `autonoma_sdk::actix` | `create_actix_handler` |
 
 ```toml
 # Cargo.toml
 [dependencies]
-autonoma-sdk = { version = "0.1", features = ["axum"] }   # or features = ["actix"]
+autonoma-sdk = { version = "2", features = ["axum"] }   # or features = ["actix"]
 ```
 
-The crate name uses a hyphen; import it as `autonoma_sdk`. There are no `sqlx` feature flags on this crate - it never touches your database. The only features are `actix` and `axum` (`sdks/rust/Cargo.toml`).
+There is no ORM feature and no database dependency on this crate - it never touches your database. The only features are `actix` and `axum` (`sdks/rust/Cargo.toml`). Build and test the crate with `cargo build && cargo test`.
 
 ## Step 2 - Generate the two secrets
 
@@ -32,72 +32,117 @@ openssl rand -hex 32   # AUTONOMA_SHARED_SECRET
 openssl rand -hex 32   # AUTONOMA_SIGNING_SECRET  (must be different)
 ```
 
-Add both to your environment. The SDK returns `SAME_SECRETS` (HTTP 500) if they match (`sdks/rust/src/handler.rs:54`).
+Add both to your environment. The SDK returns `SAME_SECRETS` (HTTP 500) if they match (`sdks/rust/src/handler.rs`).
 
-## Step 3 - Find the scope field
+## Step 3 - Confirm the endpoint path and auth mechanism
 
-Read the database schema. Find the foreign key that appears on the most models and points at a single root entity - commonly `organizationId`, `orgId`, `tenantId`, or `workspaceId`. That is the scope field. The root model itself (e.g. `Organization`) does not carry it.
+There is no scope field to find in v2. Instead, confirm two things with the user before writing code:
 
-Confirm the field, the endpoint path, and the app's auth mechanism with the user before writing code.
+- The endpoint path you will mount (for example `/api/autonoma`).
+- How the app authenticates a request (session cookie, JWT bearer, or email + password), so your scenarios' `up` can return real, working credentials.
 
-## Step 4 - Write a factory per model
+## Step 4 - Write scenarios
 
-Write one factory for each model the platform will create, calling your app's real creation code, and collect them into a `FactoryRegistry` (a `HashMap<String, FactoryDefinition>`). See `factories.md` for the full contract.
+A scenario is named code that provisions an environment. The idiomatic surface is the `Scenario` trait, but the fastest way to register one inline is the closure helper `define_scenario` (with an `up` and a `down`) or `define_scenario_up_only` (no `down`); both return `Box<dyn Scenario>`. Each `up`/`down` is a function whose body is `Box::pin(async move { ... })` and whose return type spells out the boxed future. `up` returns `Result<ScenarioUpResult, AutonomaError>`; `down` returns `Result<(), AutonomaError>`. See `scenarios.md` for the authoring rules.
 
-## Step 5 - Build the handler config
-
-`HandlerConfig` (`sdks/rust/src/types.rs:187`) carries the scope field, both secrets, the factory registry, the gate flag, and the auth callback. Build it once and hand it to your adapter.
+`ScenarioUpContext` carries one field, `test_run_id`. `ScenarioUpResult` (derives `Default`) has two optional fields: `auth: Option<AuthResult>`, `teardown: Option<serde_json::Value>`.
 
 ```rust
-// src/autonoma.rs
+// src/scenarios.rs
 use std::collections::HashMap;
-use std::sync::Arc;
-use serde_json::{json, Value, Map};
-use sqlx::PgPool;
-use autonoma_sdk::types::{AuthContext, HandlerConfig};
-use crate::factories::build_factories;
+use std::future::Future;
+use std::pin::Pin;
 
-pub fn autonoma_config(pool: Arc<PgPool>) -> HandlerConfig {
-    HandlerConfig {
-        scope_field: "organizationId".into(),
-        shared_secret: std::env::var("AUTONOMA_SHARED_SECRET").unwrap(),
-        signing_secret: std::env::var("AUTONOMA_SIGNING_SECRET").unwrap(),
-        factories: build_factories(pool.clone()),
-        allow_production: false,  // deprecated no-op, but the struct still requires it - see Step 8
-        auth: Box::new(move |user: Option<&Map<String, Value>>, _ctx: &AuthContext| {
-            let pool = pool.clone();
-            let user = user.cloned();
-            Box::pin(async move {
-                let id = user.as_ref().and_then(|u| u["id"].as_str()).unwrap();
-                let token = create_session(&pool, id).await;   // your real session code
-                let mut out: HashMap<String, Value> = HashMap::new();
-                out.insert("cookies".into(), json!([{
-                    "name": "session", "value": token,
-                    "httpOnly": true, "sameSite": "lax", "path": "/"
-                }]));
-                out
-            })
-        }),
-        sdk: None,          // the adapter fills in language/server
-        before_down: None,
-        after_up: None,
-    }
+use autonoma_sdk::errors::AutonomaError;
+use autonoma_sdk::scenario::{define_scenario, define_scenario_up_only, Scenario};
+use autonoma_sdk::types::{AuthResult, ScenarioDownContext, ScenarioUpContext, ScenarioUpResult};
+use autonoma_sdk::unique::unique_email;
+use serde_json::json;
+
+fn single_user_up(
+    ctx: &ScenarioUpContext,
+) -> Pin<Box<dyn Future<Output = Result<ScenarioUpResult, AutonomaError>> + Send + '_>> {
+    let test_run_id = ctx.test_run_id.clone();
+    Box::pin(async move {
+        let _email = unique_email(&test_run_id, "", "");
+        // ... your real creation + session code goes here ...
+        let user_id = format!("user-{}", test_run_id);
+        let token = format!("token-{}", test_run_id);
+
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+
+        Ok(ScenarioUpResult {
+            auth: Some(AuthResult {
+                headers: Some(headers),
+                ..Default::default()
+            }),
+            teardown: Some(json!({ "userId": user_id })),
+        })
+    })
+}
+
+fn single_user_down(
+    ctx: &ScenarioDownContext,
+) -> Pin<Box<dyn Future<Output = Result<(), AutonomaError>> + Send + '_>> {
+    let teardown = ctx.teardown.clone();
+    Box::pin(async move {
+        let _user_id = teardown.get("userId").and_then(|v| v.as_str());
+        // ... delete exactly what up created ...
+        Ok(())
+    })
+}
+
+fn empty_up(
+    _ctx: &ScenarioUpContext,
+) -> Pin<Box<dyn Future<Output = Result<ScenarioUpResult, AutonomaError>> + Send + '_>> {
+    Box::pin(async move { Ok(ScenarioUpResult::default()) })
+}
+
+pub fn scenarios() -> Vec<Box<dyn Scenario>> {
+    vec![
+        define_scenario(
+            "single-user",
+            "One verified user in a fresh org",
+            single_user_up,
+            Some(single_user_down),
+        ),
+        define_scenario_up_only("empty", "An empty org with one user, nothing else", empty_up),
+    ]
 }
 ```
 
-## Step 6 - Wire the handler
+`define_scenario` panics at process start on an empty `name`, since an invalid scenario is a programming error. If you prefer, you can `impl Scenario for MyStruct` directly (using `#[async_trait]`) instead of the closure helpers - the handler stores `Box<dyn Scenario>` either way.
 
-Both adapters take the config and return a closure you mount on your router. The adapter reads the raw body as bytes (required for HMAC), sets `sdk.server`, and calls `handle_request` for you.
+## Step 5 - Wire the handler
+
+Build a `HandlerConfig` once and hand it to your adapter's handler function. The config carries the two secrets and the scenario `Vec`. There is **no** `scope_field`, **no** `factories`, and **no** top-level `auth` callback.
+
+`allow_production` is deprecated and ignored, but it is still a required struct field - set it to `false` and put `#[allow(deprecated)]` on the construction so the compiler stays quiet.
 
 ```rust
 // src/main.rs  (Axum)
-use axum::{routing::post, Router};
+use axum::routing::post;
+use axum::Router;
 use autonoma_sdk::axum::create_axum_handler;
+use autonoma_sdk::types::HandlerConfig;
+use crate::scenarios::scenarios;
 
-let config = autonoma_config(pool.clone());
+#[allow(deprecated)]
+let config = HandlerConfig {
+    shared_secret: std::env::var("AUTONOMA_SHARED_SECRET").expect("AUTONOMA_SHARED_SECRET"),
+    signing_secret: std::env::var("AUTONOMA_SIGNING_SECRET").expect("AUTONOMA_SIGNING_SECRET"),
+    scenarios: scenarios(),
+    expires_in_seconds: None,  // default 3600 (one hour)
+    allow_production: false,   // deprecated no-op; struct still requires it
+    sdk: None,                 // the adapter fills in language/server
+};
+
 let app = Router::new()
     .route("/api/autonoma", post(create_axum_handler(config)));
 ```
+
+Actix Web uses the same config; only the mounting differs:
 
 ```rust
 // src/main.rs  (Actix Web)
@@ -105,7 +150,7 @@ use actix_web::{web, App, HttpServer};
 use autonoma_sdk::actix::create_actix_handler;
 
 HttpServer::new(move || {
-    let config = autonoma_config(pool.clone());
+    let config = build_config();  // same #[allow(deprecated)] HandlerConfig as above
     App::new().route("/api/autonoma", web::post().to(create_actix_handler(config)))
 })
 .bind(("0.0.0.0", 3000))?
@@ -113,53 +158,58 @@ HttpServer::new(move || {
 .await
 ```
 
-`create_axum_handler` (`sdks/rust/src/axum.rs:28`) and `create_actix_handler` (`sdks/rust/src/actix.rs:26`) wrap the config in an `Arc` internally, so the returned handler is `Clone` and safe to share across requests. Standalone variants (`axum_handler`, `actix_handler`) exist if you route manually.
+`create_axum_handler` (`sdks/rust/src/axum.rs`) and `create_actix_handler` (`sdks/rust/src/actix.rs`) wrap the config in an `Arc` internally, set `sdk.server`, read the raw body as bytes (required for HMAC), and call `handle_request` for you. The returned Axum handler is `Clone` and safe to share across requests. Standalone variants (`axum_handler`, `actix_handler`) exist if you route manually.
 
-## Step 7 - Implement the auth callback
+## Step 6 - Return real credentials from `up`
 
-This is the part that most often breaks tests, so get it right. The callback signature is:
+The `auth` a scenario's `up` returns is the part that most often breaks tests, so get it right. It must be **real, working credentials** produced by the app's actual auth mechanism. A fake or hardcoded token makes every test fail at login. `AuthResult` has three optional fields - `cookies: Option<Vec<AuthCookie>>`, `headers: Option<HashMap<String, String>>`, `credentials: Option<HashMap<String, String>>` - and derives `Default`, so fill only the one your app uses. There is no top-level `token` field.
 
 ```rust
-// signature (from sdks/rust/src/types.rs:191)
-Fn(Option<&Map<String, Value>>, &AuthContext)
-    -> Pin<Box<dyn Future<Output = HashMap<String, Value>> + Send>>
+// Session cookie (most web apps)
+use autonoma_sdk::types::{AuthCookie, AuthResult};
+let auth = AuthResult {
+    cookies: Some(vec![AuthCookie {
+        name: "session".to_string(),
+        value: token,
+        http_only: Some(true),
+        same_site: Some("lax".to_string()),
+        path: Some("/".to_string()),
+        ..Default::default()
+    }]),
+    ..Default::default()
+};
+
+// JWT bearer token (APIs, SPAs) - the token goes in a header
+let mut headers = HashMap::new();
+headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+let auth = AuthResult { headers: Some(headers), ..Default::default() };
+
+// Email + password (the runner logs in through the UI, e.g. mobile)
+let mut creds = HashMap::new();
+creds.insert("email".to_string(), email.clone());
+creds.insert("password".to_string(), "test-password-123".to_string());
+let auth = AuthResult { credentials: Some(creds), ..Default::default() };
 ```
 
-- The first argument is the first created `User` record (case-insensitive on the model name `user`/`users`), or `None` if the scenario made none (`sdks/rust/src/handler.rs:478`).
-- `AuthContext` is `{ scope_value: &str, refs: &HashMap<...> }` (`sdks/rust/src/types.rs:171`).
-- It returns a `HashMap<String, Value>` that the SDK places verbatim under the response's `auth` field. There is **no top-level `token`** - populate the map with `cookies`, `headers`, and/or `credentials` to match how the platform logs in. A bearer token goes inside `headers`.
+For the email/password shape, the scenario must create the user with a matching password hash so a real login succeeds.
 
-Return **real, working credentials** from your app's actual auth mechanism. A fake or hardcoded token makes every test fail at login. Pick the shape that matches your app:
+## Step 7 - Production gating (optional)
 
-```rust
-// src/autonoma.rs - session cookie (most web apps)
-out.insert("cookies".into(), json!([{ "name": "session", "value": token, "httpOnly": true }]));
-
-// JWT bearer token (APIs, SPAs) - token goes in a header
-out.insert("headers".into(), json!({ "Authorization": format!("Bearer {token}") }));
-
-// email + password (the runner logs in through the UI, e.g. mobile)
-out.insert("credentials".into(), json!({ "email": email, "password": "test-password-123" }));
-```
-
-For the email/password shape, the `User` factory must create the record with a matching password hash so a real login succeeds.
-
-## Step 8 - Production gating (optional)
-
-The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The old `allow_production` field is deprecated and ignored (it is still a required struct field, so set it to `false` and move on). On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate the route registration with your own condition:
+The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The old `allow_production` field is deprecated and ignored (the handler logs a one-shot warning if you set it `true`, then does nothing). On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate the route registration with your own condition:
 
 ```rust
-// src/autonoma.rs
+// src/main.rs
+let mut app = Router::new();
 if std::env::var("APP_ENV").as_deref() != Ok("production") {
     app = app.route("/api/autonoma", post(create_axum_handler(config)));
 }
 ```
 
-## Step 9 - Validate before deploying
+## Step 8 - Validate before deploying
 
-There is no `check_scenario` helper in the Rust SDK. Dry-run each scenario by driving `handle_request` through an `up` then `down` cycle in a `#[tokio::test]` against a real (test) database, and iterate until it passes. See `validation.md`. Never ship a scenario you have not validated.
+There is no `check_scenario` helper in the Rust SDK. Dry-run each scenario by driving `handle_request` through a full `up` then `down` cycle in a `#[tokio::test]` against a real (test) database, signing the body with `hmac::sign_body`, and iterate until it passes. See `validation.md`. Never ship a scenario you have not validated.
 
-## Step 10 - Smoke-test with curl
+## Step 9 - Smoke-test with curl
 
 The signature is the HMAC-SHA256 of the raw body, keyed with the shared secret, as hex, in the `x-signature` header.
 
@@ -172,9 +222,9 @@ curl -s -X POST http://localhost:3000/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON body listing your scenarios as `{ name, description }`, plus the `version` and `sdk` metadata. A `404` means the route is not mounted; a `401` means the secret does not match.
 
-## Step 11 - Report and connect
+## Step 10 - Report and connect
 
 Tell the user the endpoint path, confirm all scenarios pass, and hand off:
 
@@ -185,16 +235,15 @@ Tell the user the endpoint path, confirm all scenarios pass, and hand off:
 ## Rules
 
 **Do:**
-- Reuse the app's existing DB pool and real creation code inside factories (capture an `Arc<Pool>` in the closure).
+- Reuse the app's existing DB client and real creation code inside `up` (capture an `Arc<Pool>` in the closure or store it on your `Scenario` struct).
 - Return real credentials from `auth` using the app's own session/JWT logic.
-- Register a factory (with a teardown) for every model any scenario creates.
+- Seed every unique value from `test_run_id` with the `unique_*` helpers.
 - Match the project's conventions: module layout, error handling, naming.
 - Validate every scenario with a `#[tokio::test]` before deploying.
 
 **Do not:**
-- Implement HMAC, token signing, or teardown ordering yourself - the SDK owns all of it.
+- Implement HMAC, token signing, or expiry yourself - the SDK owns all of it.
 - Return a hardcoded token like `"test-token"` from `auth`.
 - Use the same value for `shared_secret` and `signing_secret`.
-- Set `id`, defaulted fields, or auto timestamps in scenario data.
-- Expect the SDK to inject the scope field or wire any FK - you set every FK as a `_ref`.
-- Add a `sqlx` feature to the crate - it has none; only `actix` and `axum` exist.
+- Reach for a random UUID or wall-clock time for a unique value - it breaks the determinism `down` and debugging rely on.
+- Add a `sqlx` (or any ORM) feature to the crate - it has none; only `actix` and `axum` exist.

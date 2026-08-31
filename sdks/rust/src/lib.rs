@@ -1,9 +1,10 @@
-//! Autonoma SDK for Rust.
+//! Autonoma SDK for Rust (Scenario v2).
 //!
-//! Factory-driven design: every model is owned by a registered factory whose
-//! input is described by `Vec<FieldDef>`. There is no SQL introspection — the
-//! SDK derives discover schema from factory input_fields and uses the create
-//! payload's `_alias`/`_ref` graph for ordering.
+//! A host app registers named scenarios; the platform calls discover/up/down
+//! over an HMAC-signed HTTP request and the SDK owns the envelope: refs-token
+//! signing, expiry defaults, and the protocol version field. Scenarios are the
+//! [`scenario::Scenario`] trait; a scenario's `up` runs free-form async code
+//! and returns the `auth`/`teardown` a test run needs.
 //!
 //! # Features
 //!
@@ -14,11 +15,9 @@ pub mod actix;
 pub mod axum;
 pub mod errors;
 pub mod factory;
-pub mod fingerprint;
-pub mod graph;
 pub mod handler;
 pub mod hmac;
-pub mod payload_topo;
 pub mod refs;
-pub mod schema;
+pub mod scenario;
 pub mod types;
+pub mod unique;

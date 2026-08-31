@@ -72,12 +72,40 @@ jobs:
         run: poetry run pytest -v
 
   # ---------------------------------------------------------------------------
+  # Rust
+  # ---------------------------------------------------------------------------
+  rust:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdks/rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('sdks/rust/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - run: cargo build
+      - run: cargo test
+      - run: cargo build --features actix
+      - run: cargo build --features axum
+
+  # ---------------------------------------------------------------------------
   # Conformance (identical hmac + refs output across every migrated language)
   # ---------------------------------------------------------------------------
   conformance:
     name: Conformance Suite
     runs-on: ubuntu-latest
-    needs: [ts-unit, python]
+    needs: [ts-unit, python, rust]
     steps:
       - uses: actions/checkout@v4
 
@@ -118,6 +146,22 @@ jobs:
         working-directory: sdks/go
         run: go build -o bridges/conformance_bridge ./bridges/
 
+      # Rust (for Rust bridge)
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdks/rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('sdks/rust/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build Rust conformance bridge
+        working-directory: sdks/rust
+        run: cargo build --release --bin conformance_bridge
+
       # Install tsx globally for the conformance runner
       - name: Install tsx
         run: npm install -g tsx
@@ -157,6 +201,18 @@ jobs:
           go-version: "1.25"
           cache-dependency-path: sdks/go/go.sum
 
+      # Rust (builds + boots the Rust protocol server).
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdks/rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('sdks/rust/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
       # tsx + the TS SDK source (the servers and runner import it directly).
       - name: Install TS dependencies
         working-directory: sdks/typescript
@@ -167,7 +223,7 @@ jobs:
         working-directory: sdks/python
         run: pip install -e ".[flask]"
 
-      # Boots the TypeScript, Python, and Go v2 endpoints and runs
+      # Boots the TypeScript, Python, Go, and Rust v2 endpoints and runs
       # protocol/suites/* against each with protocol/test-runner.ts.
       - name: Run protocol suites
-        run: PYTHON=python node protocol/run-suites.mjs typescript python go
+        run: PYTHON=python node protocol/run-suites.mjs typescript python go rust

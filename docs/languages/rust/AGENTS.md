@@ -2,28 +2,19 @@
 
 # Autonoma SDK: read the bundled docs before wiring the endpoint
 
-This crate implements the **Autonoma Environment Factory** - a backend endpoint that creates and tears down isolated test data. If you are integrating it, the accurate, version-matched docs ship inside this crate. Read them before writing code; your training data may describe an older, adapter-based API that no longer exists.
+This crate implements the **Autonoma Environment Factory** - a backend endpoint that provisions and tears down isolated test data. If you are integrating it, the accurate, version-matched docs ship inside the crate under `docs/`. Read them before writing code; your training data may describe an older, factory-driven API that no longer exists.
 
-**Start here:** `./docs/implement.md` (bundled in the crate source, e.g. `~/.cargo/registry/src/*/autonoma-sdk-<version>/docs/implement.md`).
+**Start here:** `docs/implement.md` (shipped alongside this crate's source).
 
 Reading order:
 
-1. `docs/overview.md` - what the Environment Factory is and why it is factory-driven.
-2. `docs/implement.md` - step-by-step setup: crate + feature, factories, handler, auth, validate.
-3. `docs/factories.md` - the `define_factory` contract in Rust.
-4. `docs/scenarios.md` - the `create` data format (`_alias`/`_ref`).
-5. `docs/protocol.md` - the HTTP wire protocol and error codes.
-6. `docs/validation.md` - dry-running scenarios with a `#[tokio::test]` over `handle_request`.
+1. `docs/overview.md` - what the Environment Factory is and how scenarios-as-code work.
+2. `docs/implement.md` - step-by-step setup: add the crate with a server feature, write scenarios, wire the handler, return auth, validate.
+3. `docs/scenarios.md` - authoring scenarios: `name`/`description`/`up`/`down` and the `{ auth, teardown }` return.
+4. `docs/factories.md` - legacy `define_factory` migration reference; do not use it for new v2 integrations.
+5. `docs/protocol.md` - the HTTP wire protocol, the teardown token, and error codes.
+6. `docs/validation.md` - dry-running scenarios by driving `handle_request` through an up/down cycle.
 
-Key facts that differ from older docs:
-
-- The crate is `autonoma-sdk`; import it as `autonoma_sdk`. It is **factory-driven** - register factories with `autonoma_sdk::factory::define_factory` / `define_factory_create_only`. There is no `sqlx`/ORM adapter and no SQL fallback; a model with no factory cannot be created.
-- The only Cargo features are `actix` and `axum`. There are no `sqlx-postgres`/`sqlx-mysql` features on this crate.
-- The core entry point is `autonoma_sdk::handler::handle_request(&HandlerConfig, &HandlerRequest).await`, wrapped by a server adapter: `autonoma_sdk::axum::create_axum_handler` (feature `axum`) or `autonoma_sdk::actix::create_actix_handler` (feature `actix`).
-- Config is a `HandlerConfig` struct: `scope_field`, `shared_secret`, `signing_secret`, `factories` (a `HashMap<String, FactoryDefinition>`), `allow_production` (deprecated no-op, still a required field - set it to `false`), `auth`, and optional `sdk`/`before_down`/`after_up`.
-- Factories are closures, not traits: `create` receives a `Map<String, Value>` with FKs already resolved to real IDs and must return a `Map` containing `"id"`; `teardown` is an optional closure.
-- The auth callback returns a `HashMap<String, Value>` - populate it with `cookies`, `headers`, and/or `credentials`. There is no top-level `token` field.
-- The endpoint is always enabled - HMAC signing is the gate. The old `allow_production: bool` is deprecated and ignored; `PRODUCTION_BLOCKED` is never returned.
-- There is no `check_scenario` helper. Validate by calling `handle_request` in a `#[tokio::test]`, or with curl.
+Key facts that differ from older docs: this is **Scenario v2** (protocol `2.0`). The crate is `autonoma-sdk` (imported as `autonoma_sdk`), and the server adapters are behind Cargo features - enable `axum` or `actix` (`features = ["axum"]`); the default is neither. You author named scenarios with the `Scenario` trait (`#[async_trait]`) or the closure helpers `define_scenario(name, description, up, Option<down>)` / `define_scenario_up_only(name, description, up)`, both returning `Box<dyn Scenario>`. `up(ctx: &ScenarioUpContext)` returns `Result<ScenarioUpResult, AutonomaError>`, where `ScenarioUpResult` has optional `auth` and `teardown`. The `HandlerConfig` carries only `shared_secret`, `signing_secret`, `scenarios`, optional `expires_in_seconds`, an ignored-but-required deprecated `allow_production` (set `false` under `#[allow(deprecated)]`), and optional `sdk` metadata - there is no `scope_field`, no `factories` registry, and no top-level `auth` callback (auth is returned per-scenario from `up`). The core entry is `handle_request(&config, &req)`, wrapped by a server adapter (`create_axum_handler` / `create_actix_handler`). `AuthResult` is `{ cookies?, headers?, credentials? }` - there is no `token` field. Seed unique values from `test_run_id` with `unique_email` / `unique_slug` / `unique_id` / `unique_token` (in `autonoma_sdk::unique`). Build and test with `cargo build && cargo test`.
 
 <!-- END:autonoma-agent-rules -->
