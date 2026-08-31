@@ -5,218 +5,194 @@ Follow these steps to stand up a working Environment Factory endpoint. This is w
 
 ## Prerequisites
 
-- A Go backend (module-based, Go 1.24+).
-- The database client your app already uses (GORM, `sqlx`, `pgx`, `database/sql` - it does not matter; your factories call it).
-- Gin, if that is your HTTP framework. For any other framework you wire `autonoma.HandleRequest` by hand (Step 5).
+- A Go 1.25+ backend.
+- A database and the client your app already uses (`database/sql`, `pgx`, GORM, sqlx, ent - it does not matter; your scenario code calls it).
 
-## Step 1 - Install the package
+## Step 1 - Install the module
+
+The whole SDK - core handler, uniqueness helpers, and the Gin adapter - lives in one module and one package, `autonoma`:
 
 ```bash
-# shell
-go get github.com/autonoma-ai/sdk/sdks/go/autonoma
+go get github.com/autonoma-ai/sdk/sdks/go/v2/autonoma
 ```
 
-The SDK lives inside the Autonoma monorepo (`github.com/autonoma-ai/sdk`) as a submodule under `sdks/go/`, so the module path is `github.com/autonoma-ai/sdk/sdks/go` and you import the package as `github.com/autonoma-ai/sdk/sdks/go/autonoma`. To pin a release, use the plain version - `go get github.com/autonoma-ai/sdk/sdks/go/autonoma@v0.2.9` - even though the underlying git tag is `sdks/go/v0.2.9` (the subdirectory prefix is how Go versions a submodule; you never type the prefix).
+```go
+import "github.com/autonoma-ai/sdk/sdks/go/v2/autonoma"
+```
 
-There is no ORM adapter package to install - the SDK is factory-driven. The only server adapter that ships is Gin (`autonoma.GinHandler`); everything else (Echo, Fiber, Chi, `net/http`, ...) uses `autonoma.HandleRequest` directly - see Step 5.
+There is no separate server adapter package to install. Gin ships in the same package as `autonoma.GinHandler`. For any other framework you read the raw request body yourself and call `autonoma.HandleRequest` directly (see Step 5). There is no ORM adapter - scenarios call your app's own code directly.
+
+| Framework | How you mount it |
+|-----------|------------------|
+| Gin | `autonoma.GinHandler(config)` returns a `gin.HandlerFunc` |
+| net/http, Echo, Fiber, Chi, anything else | Read the raw body, build a `HandlerRequest`, call `autonoma.HandleRequest(config, req)` |
 
 ## Step 2 - Generate the two secrets
 
 ```bash
-# shell
 openssl rand -hex 32   # AUTONOMA_SHARED_SECRET
 openssl rand -hex 32   # AUTONOMA_SIGNING_SECRET  (must be different)
 ```
 
-Add both to your environment (and placeholders to `.env.example` if it exists). The handler returns `SAME_SECRETS` (500) on every request if they match.
+Add both to your environment. The handler rejects a request with `SAME_SECRETS` (HTTP 500) if the two values are equal.
 
-## Step 3 - Find the scope field
+```env
+AUTONOMA_SHARED_SECRET=...   # shared with Autonoma
+AUTONOMA_SIGNING_SECRET=...  # private, never shared
+```
 
-Read the database schema. Find the foreign key that appears on the most models and points at a single root entity - commonly `organizationId`, `orgId`, `tenantId`, or `workspaceId`. That is the scope field. The root model itself (e.g. `Organization`) does not carry it.
+## Step 3 - Confirm the endpoint path and auth mechanism
 
-Confirm the field, the endpoint path, and the app's auth mechanism with the user before writing code.
+There is no scope field to find in v2. Instead, confirm two things with the user before writing code:
 
-## Step 4 - Write a factory per model
+- The endpoint path you will mount (for example `/api/autonoma`).
+- How the app authenticates a request (session cookie, JWT bearer, or email + password), so your scenarios' `Up` can return real, working credentials.
 
-Write one factory for each model the platform will create, calling your app's real creation code. See `factories.md` for the full contract. Collect them into one registry keyed by model name:
+## Step 4 - Write scenarios
+
+A scenario is named code that provisions an environment. Author each with `autonoma.DefineScenario`, which takes an `autonoma.ScenarioDefinition` with a `Name`, a `Description`, an `Up`, and an optional `Down`. `Up` runs whatever provisioning code you would write by hand and returns an `autonoma.ScenarioUpResult` (`Auth`, `Teardown`, all optional). See `scenarios.md` for the authoring rules.
+
+`DefineScenario` panics at build time if `Name` is empty or `Up` is nil, so a misconfigured scenario fails at process start rather than on the first request.
 
 ```go
-// factories/registry.go
-package factories
+// scenarios/single_user.go
+package scenarios
 
-import "github.com/autonoma-ai/sdk/sdks/go/autonoma"
+import "github.com/autonoma-ai/sdk/sdks/go/v2/autonoma"
 
-var Registry = autonoma.FactoryRegistry{
-	"Organization": Organization,
-	"User":         User,
-	"Member":       Member,
+var SingleUser = autonoma.DefineScenario(autonoma.ScenarioDefinition{
+    Name:        "single-user",
+    Description: "One verified user in a fresh org",
+    Up: func(ctx autonoma.ScenarioUpContext) (autonoma.ScenarioUpResult, error) {
+        email := autonoma.UniqueEmail(ctx.TestRunID, "", "")
+        user, err := createUser(email) // your real creation code
+        if err != nil {
+            return autonoma.ScenarioUpResult{}, err
+        }
+        token, err := mintToken(user.ID) // your real auth code
+        if err != nil {
+            return autonoma.ScenarioUpResult{}, err
+        }
+        return autonoma.ScenarioUpResult{
+            Auth:     &autonoma.AuthResult{Headers: map[string]string{"Authorization": "Bearer " + token}},
+            Teardown: map[string]any{"userId": user.ID},
+        }, nil
+    },
+    Down: func(ctx autonoma.ScenarioDownContext) error {
+        userID, _ := ctx.Teardown["userId"].(string)
+        return deleteUser(userID)
+    },
+})
+```
+
+`ctx.Teardown` is a `map[string]any`, so read handles back with a type assertion (`ctx.Teardown["userId"].(string)`). Collect every scenario into one slice:
+
+```go
+// scenarios/scenarios.go
+package scenarios
+
+import "github.com/autonoma-ai/sdk/sdks/go/v2/autonoma"
+
+var All = []autonoma.ScenarioDefinition{
+    SingleUser,
+    Standard,
+    Large,
 }
 ```
 
 ## Step 5 - Wire the handler
 
-Build one `*autonoma.HandlerConfig` and mount it. The config carries the scope field, both secrets, the factory registry, the gate flag, and the auth callback.
+Build the config once and hand it to the adapter. The config carries the two secrets and the scenario slice. There is no `ScopeField`, no `Factories`, and no top-level auth callback.
 
 ```go
-// autonoma_endpoint.go
-package main
-
-import (
-	"github.com/gin-gonic/gin"
-
-	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
-	"myapp/auth"
-	"myapp/factories"
-)
-
-func mountAutonoma(r *gin.Engine) {
-	config := &autonoma.HandlerConfig{
-		ScopeField:    "organizationId",
-		SharedSecret:  os.Getenv("AUTONOMA_SHARED_SECRET"),
-		SigningSecret: os.Getenv("AUTONOMA_SIGNING_SECRET"),
-		Factories:     factories.Registry,
-		Auth: func(user map[string]any, ctx autonoma.AuthContext) (map[string]any, error) {
-			session, err := auth.CreateSession(user["id"].(string)) // your app's real session code
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{
-				"cookies": []map[string]any{
-					{"name": "session", "value": session.Token, "httpOnly": true, "sameSite": "lax", "path": "/"},
-				},
-			}, nil
-		},
-	}
-
-	r.POST("/api/autonoma", autonoma.GinHandler(config))
+config := &autonoma.HandlerConfig{
+    SharedSecret:  os.Getenv("AUTONOMA_SHARED_SECRET"),
+    SigningSecret: os.Getenv("AUTONOMA_SIGNING_SECRET"),
+    Scenarios:     scenarios.All,
 }
 ```
 
-`GinHandler` reads the raw body, forwards the `x-signature` header, and sets `sdk.server` to `"gin"` for you.
-
-### Any other framework (Echo, Fiber, Chi, net/http): wire HandleRequest by hand
-
-Gin is the only framework with a bundled adapter. For everything else there is no adapter to import - and you do not need one. `autonoma.HandleRequest(config, req) HandlerResponse` is the framework-agnostic entry point; a server adapter is nothing more than a ~10-line wrapper that (1) reads the raw request body untouched, (2) copies the headers into a `map[string]string` with lowercased keys, (3) calls `HandleRequest`, and (4) writes the returned `Status` and JSON `Body`. Do that in your framework's handler idiom.
-
-**Echo:**
+Mount it on Gin:
 
 ```go
-// autonoma_echo.go
-import (
-	"github.com/labstack/echo/v4"
-	"github.com/autonoma-ai/sdk/sdks/go/autonoma"
-)
-
-func autonomaHandler(config *autonoma.HandlerConfig) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		body, err := io.ReadAll(c.Request().Body)
-		if err != nil {
-			return err
-		}
-		headers := map[string]string{}
-		for k := range c.Request().Header {
-			headers[strings.ToLower(k)] = c.Request().Header.Get(k)
-		}
-		resp := autonoma.HandleRequest(config, autonoma.HandlerRequest{
-			Body:    string(body),
-			Headers: headers,
-		})
-		return c.JSON(resp.Status, resp.Body)
-	}
-}
-
-// mount: e.POST("/api/autonoma", autonomaHandler(config))
+router.POST("/api/autonoma", autonoma.GinHandler(config))
 ```
 
-**Plain net/http** (the same shape, for reference):
+On any other framework, read the raw body (before any middleware reparses it) and call `HandleRequest`. The signature is verified over the exact request bytes, so the string you pass must be the untouched body.
 
 ```go
-// autonoma_nethttp.go
-func autonomaHandler(config *autonoma.HandlerConfig) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		headers := map[string]string{}
-		for k := range r.Header {
-			headers[strings.ToLower(k)] = r.Header.Get(k)
-		}
-		resp := autonoma.HandleRequest(config, autonoma.HandlerRequest{
-			Body:    string(body),
-			Headers: headers,
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.Status)
-		json.NewEncoder(w).Encode(resp.Body)
-	}
+func autonomaHandler(w http.ResponseWriter, r *http.Request) {
+    body, _ := io.ReadAll(r.Body)
+    headers := map[string]string{"x-signature": r.Header.Get("x-signature")}
+
+    resp := autonoma.HandleRequest(config, autonoma.HandlerRequest{
+        Body:    string(body),
+        Headers: headers,
+    })
+
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(resp.Status)
+    _ = json.NewEncoder(w).Encode(resp.Body)
 }
 ```
 
-The HMAC is computed over the exact request bytes, so read the body as a raw string **before** any middleware reparses it (e.g. before Echo's `BodyDump` or a JSON bind). `sdk.server` will report `"unknown"` for a hand-wired adapter, which is expected.
+`HandleRequest` returns a `HandlerResponse{ Status int; Body map[string]any }`; write both to the response.
 
-## Step 6 - Implement the auth callback
+## Step 6 - Return real credentials from `Up`
 
-This is the part that most often breaks tests, so get it right. The callback signature is:
-
-```go
-// signature
-Auth func(user map[string]any, ctx autonoma.AuthContext) (map[string]any, error)
-```
-
-- `user` - the first created `User` record (matched case-insensitively on the model name `user`/`users`), exactly as your factory returned it, or `nil` if the scenario made none. Guard for `nil` before indexing it.
-- `ctx` - `autonoma.AuthContext{ ScopeValue string; Refs map[string][]map[string]any }`.
-- **Return** - a `map[string]any` that becomes the response `auth` object. It must contain **real, working credentials** built with the app's actual auth mechanism. If it returns a fake or hardcoded token, every test fails at login.
-
-There is no top-level `token` field. Use the keys `cookies`, `headers`, and/or `credentials` - pick the shape that matches how your app authenticates:
+The `Auth` a scenario's `Up` returns is the part that most often breaks tests, so get it right. It must be **real, working credentials** produced by the app's actual auth mechanism. A fake or hardcoded token makes every test fail at login. `Auth` is a `*autonoma.AuthResult` with `Cookies`, `Headers`, and `Credentials` - there is no `token` field.
 
 ```go
-// auth_shapes.go
-
 // Session cookie (most web apps)
-return map[string]any{
-	"cookies": []map[string]any{
-		{"name": "session", "value": session.Token, "httpOnly": true, "sameSite": "lax", "path": "/"},
-	},
+return autonoma.ScenarioUpResult{
+    Auth: &autonoma.AuthResult{
+        Cookies: []autonoma.AuthCookie{{
+            Name: "session", Value: session.Token, HTTPOnly: true, SameSite: "lax", Path: "/",
+        }},
+    },
+    /* ... */
 }, nil
 
 // JWT bearer token (APIs, SPAs) - the token goes in a header
-return map[string]any{
-	"headers": map[string]any{"Authorization": "Bearer " + token},
+return autonoma.ScenarioUpResult{
+    Auth: &autonoma.AuthResult{Headers: map[string]string{"Authorization": "Bearer " + token}},
+    /* ... */
 }, nil
 
 // Email + password (the runner logs in through the UI, e.g. mobile)
-return map[string]any{
-	"credentials": map[string]any{"email": user["email"], "password": "test-password-123"},
+return autonoma.ScenarioUpResult{
+    Auth: &autonoma.AuthResult{Credentials: map[string]string{"email": user.Email, "password": "test-password-123"}},
+    /* ... */
 }, nil
 ```
 
-For the email/password shape, the `User` factory must create the record with a matching password hash, so a real login succeeds.
+For the email/password shape, the scenario must create the user with a matching password hash so a real login succeeds.
 
 ## Step 7 - Production gating (optional)
 
-The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The old `AllowProduction` flag is deprecated and ignored. On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate it in your route registration with your own condition:
+The endpoint is always enabled - HMAC signing is the gate, and unsigned requests get `401`. The `AllowProduction` field on `HandlerConfig` is deprecated and ignored (setting it just logs a one-time deprecation notice). On Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) nothing more is needed - previews are isolated and never production. If you deploy the factory in your own environments and want it dark in production anyway, gate the route with your own condition:
 
 ```go
-// gate.go
 if os.Getenv("APP_ENV") != "production" {
-	r.POST("/api/autonoma", autonoma.GinHandler(config))
+    router.POST("/api/autonoma", autonoma.GinHandler(config))
 }
 ```
 
 ## Step 8 - Validate before deploying
 
-Dry-run your scenarios against a real (test) database and iterate until they pass. Go has no `checkScenario` helper - you drive `autonoma.HandleRequest` from a Go test. See `validation.md`. Never ship a scenario you have not validated.
+Go has no dry-run helper. You validate by driving `autonoma.HandleRequest` through a full `up` then `down` cycle in a `*_test.go` against a real (test) database, and iterate until it passes. See `validation.md`. Never ship a scenario you have not validated.
 
 ## Step 9 - Smoke-test with curl
 
 ```bash
-# shell
 SECRET="your-shared-secret"
 BODY='{"action":"discover"}'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/.*= //')
+SIG=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/.*= //')
 curl -s -X POST http://localhost:8080/api/autonoma \
   -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY" | jq .
 ```
 
-Expected: a JSON schema listing your models and `scopeField`. A `404` means the route is not mounted; a `401` means the secret does not match.
+Expected: a JSON body listing your scenarios as `{ name, description }`. A `404` means the route is not mounted; a `401` means the secret does not match.
 
 ## Step 10 - Report and connect
 
@@ -229,15 +205,15 @@ Tell the user the endpoint path, confirm all scenarios pass, and hand off:
 ## Rules
 
 **Do:**
-- Reuse the app's existing DB client and real creation code inside factories.
+- Reuse the app's existing DB client and real creation code inside `Up`.
 - Return real credentials from `Auth` using the app's own session/JWT logic.
-- Register a factory (with a `Teardown`) for every model any scenario creates.
-- Match the project's conventions: package layout, error handling, naming.
-- Validate every scenario with a Go test driving `HandleRequest` before deploying.
+- Seed every unique value from `ctx.TestRunID` with the `Unique*` helpers.
+- Return a real `error` from `Up`/`Down` when provisioning or teardown fails; the handler wraps it as `INTERNAL_ERROR`.
+- Match the project's conventions: package layout, import style, naming.
+- Validate every scenario through a full up/down test before deploying.
 
 **Do not:**
-- Implement HMAC, token signing, or teardown ordering yourself - the SDK owns all of it.
+- Implement HMAC, token signing, or expiry yourself - the SDK owns all of it.
 - Return a hardcoded token like `"test-token"` from `Auth`.
 - Use the same value for `SharedSecret` and `SigningSecret`.
-- Set `id`, defaulted fields, or auto timestamps in scenario data.
-- Expect the SDK to inject the scope field or wire any FK - you set every FK as a `_ref`.
+- Reach for a random UUID or `time.Now()` for a unique value - it breaks the determinism `Down` and debugging rely on.

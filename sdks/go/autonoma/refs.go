@@ -7,36 +7,29 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
-	"time"
 )
 
-// SignRefs signs a refs payload into a JWT-like token (header.payload.signature).
+// RefsPayload is the payload signed into the teardown token.
+type RefsPayload struct {
+	// Refs is whatever a scenario's Up returned as refs - arbitrary JSON, signed
+	// at Up and handed back to Down verbatim.
+	Refs any `json:"refs"`
+	// TestRunID is the testRunId captured at Up time.
+	TestRunID string `json:"testRunId"`
+	// Environment is the scenario name. Named "environment" for wire/back-compat
+	// reasons; Down reads it to route to the right scenario's teardown.
+	Environment string `json:"environment"`
+}
+
+// SignRefs signs a refs payload into a JWT-like token (header.payload.signature)
+// using HMAC-SHA256.
 func SignRefs(payload RefsPayload, secret string) (string, error) {
 	headerJSON, err := json.Marshal(map[string]string{"alg": "HS256", "typ": "REFS"})
 	if err != nil {
 		return "", err
 	}
-
-	sanitizedRefs := sanitizeRefs(payload.Refs)
-	sanitizedPayload := map[string]any{
-		"refs":        sanitizedRefs,
-		"testRunId":   payload.TestRunID,
-		"environment": payload.Environment,
-	}
-
-	if payload.AliasDependencies != nil {
-		sanitizedPayload["aliasDependencies"] = payload.AliasDependencies
-	}
-	if payload.AliasOwnerModel != nil {
-		sanitizedPayload["aliasOwnerModel"] = payload.AliasOwnerModel
-	}
-	if payload.ModelOrder != nil {
-		sanitizedPayload["modelOrder"] = payload.ModelOrder
-	}
-
-	payloadJSON, err := json.Marshal(sanitizedPayload)
+	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
@@ -48,17 +41,14 @@ func SignRefs(payload RefsPayload, secret string) (string, error) {
 	return header + "." + body + "." + sig, nil
 }
 
-// VerifyRefs verifies and decodes a refs token. Returns the payload or an error.
+// VerifyRefs verifies and decodes a teardown token, returning the payload or an error.
 func VerifyRefs(token string, secret string) (*RefsPayload, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, errors.New("malformed token")
 	}
 
-	header := parts[0]
-	body := parts[1]
-	signature := parts[2]
-
+	header, body, signature := parts[0], parts[1], parts[2]
 	expected := hmacBase64URL(header+"."+body, secret)
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) != 1 {
 		return nil, errors.New("signature mismatch")
@@ -81,48 +71,4 @@ func hmacBase64URL(data string, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(data))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
-// sanitizeRefs converts non-JSON-safe types (time.Time, uuid.UUID, etc.) to strings.
-func sanitizeRefs(refs map[string][]map[string]any) map[string][]map[string]any {
-	result := make(map[string][]map[string]any, len(refs))
-	for model, records := range refs {
-		sanitizedRecords := make([]map[string]any, len(records))
-		for i, record := range records {
-			sanitizedRecords[i] = sanitizeRecord(record)
-		}
-		result[model] = sanitizedRecords
-	}
-	return result
-}
-
-func sanitizeRecord(record map[string]any) map[string]any {
-	result := make(map[string]any, len(record))
-	for key, value := range record {
-		result[key] = sanitizeValue(value)
-	}
-	return result
-}
-
-func sanitizeValue(value any) any {
-	if value == nil {
-		return nil
-	}
-	switch v := value.(type) {
-	case time.Time:
-		return v.Format(time.RFC3339Nano)
-	case map[string]any:
-		return sanitizeRecord(v)
-	case []any:
-		sanitized := make([]any, len(v))
-		for i, item := range v {
-			sanitized[i] = sanitizeValue(item)
-		}
-		return sanitized
-	default:
-		if stringer, ok := value.(fmt.Stringer); ok {
-			return stringer.String()
-		}
-		return value
-	}
 }

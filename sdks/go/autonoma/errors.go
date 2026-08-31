@@ -2,6 +2,8 @@ package autonoma
 
 import "fmt"
 
+// AutonomaError is the base error carried across the wire with a stable code
+// and HTTP status.
 type AutonomaError struct {
 	Message string
 	Code    string
@@ -20,6 +22,8 @@ func ErrUnknownAction(action string) *AutonomaError {
 	}
 }
 
+// ErrUnknownEnvironment is thrown by up when the request names a scenario that
+// is not registered.
 func ErrUnknownEnvironment(name string) *AutonomaError {
 	return &AutonomaError{
 		Message: fmt.Sprintf("Unknown environment: %s", name),
@@ -36,15 +40,16 @@ func ErrInvalidSignature() *AutonomaError {
 	}
 }
 
-func ErrInvalidRefsToken(reason string) *AutonomaError {
+func ErrInvalidTeardownToken(reason string) *AutonomaError {
 	return &AutonomaError{
-		Message: fmt.Sprintf("Invalid refs token: %s", reason),
-		Code:    "INVALID_REFS_TOKEN",
+		Message: fmt.Sprintf("Invalid teardown token: %s", reason),
+		Code:    "INVALID_TEARDOWN_TOKEN",
 		Status:  403,
 	}
 }
 
-// Deprecated: the SDK no longer gates on production; this error is never returned.
+// ErrProductionBlocked is deprecated: the SDK no longer gates on production, so
+// this error is never returned. HMAC signing is the gate.
 func ErrProductionBlocked(reason string) *AutonomaError {
 	return &AutonomaError{
 		Message: fmt.Sprintf("Environment factory is disabled. %s", reason),
@@ -58,14 +63,6 @@ func ErrInvalidBody(reason string) *AutonomaError {
 		Message: fmt.Sprintf("Invalid request body: %s", reason),
 		Code:    "INVALID_BODY",
 		Status:  400,
-	}
-}
-
-func ErrFactoryMissingPK(model, pkField string) *AutonomaError {
-	return &AutonomaError{
-		Message: fmt.Sprintf("Factory for %q must return a record with %q", model, pkField),
-		Code:    "FACTORY_MISSING_PK",
-		Status:  500,
 	}
 }
 
