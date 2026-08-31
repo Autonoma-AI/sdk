@@ -120,12 +120,38 @@ jobs:
       - run: mvn test -B
 
   # ---------------------------------------------------------------------------
+  # PHP
+  # ---------------------------------------------------------------------------
+  php:
+    name: PHP Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/php
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer
+
+      - uses: actions/cache@v4
+        with:
+          path: sdks/php/vendor
+          key: composer-${{ runner.os }}-${{ hashFiles('sdks/php/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - run: composer install --no-interaction --prefer-dist
+      - run: ./vendor/bin/phpunit
+
+  # ---------------------------------------------------------------------------
   # Conformance (identical hmac + refs output across every migrated language)
   # ---------------------------------------------------------------------------
   conformance:
     name: Conformance Suite
     runs-on: ubuntu-latest
-    needs: [ts-unit, python, rust, java]
+    needs: [ts-unit, python, rust, java, php]
     steps:
       - uses: actions/checkout@v4
 
@@ -194,6 +220,17 @@ jobs:
         working-directory: sdks/java
         run: mvn package -DskipTests -B
 
+      # PHP (for PHP bridge)
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer
+
+      # Install PHP SDK
+      - name: Install PHP dependencies
+        working-directory: sdks/php
+        run: composer install --no-interaction --prefer-dist
+
       # Install tsx globally for the conformance runner
       - name: Install tsx
         run: npm install -g tsx
@@ -257,6 +294,13 @@ jobs:
           java-version: "17"
           cache: maven
 
+      # PHP (boots the stdlib-only PHP protocol server; it requires the SDK src
+      # directly, so no composer install is needed).
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: none
+
       # tsx + the TS SDK source (the servers and runner import it directly).
       - name: Install TS dependencies
         working-directory: sdks/typescript
@@ -267,7 +311,7 @@ jobs:
         working-directory: sdks/python
         run: pip install -e ".[flask]"
 
-      # Boots the TypeScript, Python, Go, Rust, Ruby, and Java v2 endpoints and
-      # runs protocol/suites/* against each with protocol/test-runner.ts.
+      # Boots the TypeScript, Python, Go, Rust, Ruby, Java, and PHP v2 endpoints
+      # and runs protocol/suites/* against each with protocol/test-runner.ts.
       - name: Run protocol suites
-        run: PYTHON=python node protocol/run-suites.mjs typescript python go rust ruby java
+        run: PYTHON=python node protocol/run-suites.mjs typescript python go rust ruby java php

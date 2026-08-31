@@ -31,7 +31,7 @@ class Refs
         return $value;
     }
 
-    /** Verify and decode a refs token. Returns payload array or throws. */
+    /** Verify and decode a teardown token. Returns payload array or throws. */
     public static function verifyRefs(string $token, string $secret): array
     {
         $parts = explode('.', $token);

@@ -2,28 +2,36 @@
 
 namespace Autonoma\Sdk;
 
-use Autonoma\Sdk\Types\FactoryContext;
 use Autonoma\Sdk\Types\HandlerConfig;
 use Autonoma\Sdk\Types\HandlerRequest;
 use Autonoma\Sdk\Types\HandlerResponse;
+use Autonoma\Sdk\Types\ScenarioDefinition;
+use Autonoma\Sdk\Types\ScenarioDownContext;
+use Autonoma\Sdk\Types\ScenarioUpContext;
+use Autonoma\Sdk\Types\ScenarioUpResult;
 
 /**
- * Request routing for discover/up/down protocol actions.
+ * Request routing for discover / up / down protocol actions (Scenario v2).
  *
- * Factory-driven design: every model in body.create must have a registered
- * factory. The SDK uses the factory's inputFields both to validate inputs
- * and to build the discover schema. Ordering for up and down comes from the
- * create payload's _alias/_ref graph; there is no SQL introspection.
+ * discover lists the registered scenarios; up looks a scenario up by name, runs
+ * its free-form up, signs a teardown token carrying the scenario name, and
+ * responds; down recovers the scenario name from the verified token and routes
+ * to that scenario's down. There is no create-graph interpreter and no
+ * factory-derived discover schema.
  */
 class Handler
 {
-    private const PROTOCOL_VERSION_HARDCODED = '1.0';
+    private const PROTOCOL_VERSION_HARDCODED = '2.0';
+    private const DEFAULT_EXPIRES_IN_SECONDS = 3600;
+
     public static string $PROTOCOL_VERSION = '';
+
+    private static bool $warnedDeprecatedAllowProduction = false;
 
     public static function getProtocolVersion(): string
     {
         if (self::$PROTOCOL_VERSION === '') {
-            $path = __DIR__ . '/../../../../protocol/version.txt';
+            $path = __DIR__ . '/../../../protocol/version.txt';
             if (is_file($path)) {
                 self::$PROTOCOL_VERSION = trim(file_get_contents($path));
             } else {
@@ -36,12 +44,16 @@ class Handler
     public static function handleRequest(HandlerConfig $config, HandlerRequest $req): HandlerResponse
     {
         try {
+            if ($config->allowProduction && !self::$warnedDeprecatedAllowProduction) {
+                self::$warnedDeprecatedAllowProduction = true;
+                error_log('[autonoma] allowProduction is deprecated and ignored - the endpoint is always enabled');
+            }
+
             if ($config->sharedSecret === $config->signingSecret) {
                 throw AutonomaError::sameSecrets();
             }
 
             $signature = $req->headers['x-signature'] ?? $req->headers['X-Signature'] ?? '';
-
             if (!Hmac::verifySignature($req->body, $signature, $config->sharedSecret)) {
                 throw AutonomaError::invalidSignature();
             }
@@ -52,8 +64,8 @@ class Handler
             }
 
             $action = $body['action'] ?? null;
-            if ($action === null) {
-                throw AutonomaError::invalidBody('missing action. expected one of \'discover\', \'up\' or \'down\'');
+            if (!is_string($action) || $action === '') {
+                throw AutonomaError::invalidBody('missing action. expected one of "discover", "up" or "down"');
             }
 
             return match ($action) {
@@ -88,10 +100,13 @@ class Handler
 
     private static function handleDiscover(HandlerConfig $config): HandlerResponse
     {
-        $schema = Schema::buildSchemaFromFactories($config->factories, $config->scopeField);
+        $scenarios = [];
+        foreach ($config->scenarios as $s) {
+            $scenarios[] = ['name' => $s->name, 'description' => $s->description];
+        }
         return new HandlerResponse(
             status: 200,
-            body: array_merge(self::buildSdkMeta($config), ['schema' => Schema::schemaToWire($schema)]),
+            body: array_merge(self::buildSdkMeta($config), ['scenarios' => $scenarios]),
         );
     }
 
@@ -101,147 +116,41 @@ class Handler
 
     private static function handleUp(HandlerConfig $config, array $body): HandlerResponse
     {
-        $create = $body['create'] ?? null;
-        if ($create === null) {
-            throw AutonomaError::invalidBody('missing "create" in request body');
+        $name = self::readScenarioName($body);
+        if ($name === null || $name === '') {
+            throw AutonomaError::invalidBody('missing "scenario.name" in request body');
         }
 
-        $testRunId = $body['testRunId'] ?? self::generateUuid();
-
-        $factories = $config->factories;
-        if (empty($factories)) {
-            throw AutonomaError::invalidBody(
-                'no factories registered -- every model in `create` must have a factory.'
-            );
+        $scenario = self::findScenario($config, $name);
+        if ($scenario === null) {
+            throw AutonomaError::unknownEnvironment($name);
         }
 
-        $tree = PayloadTopo::resolvePayloadTree($create);
+        $rawTestRunId = $body['testRunId'] ?? null;
+        $testRunId = (is_string($rawTestRunId) && $rawTestRunId !== '') ? $rawTestRunId : self::generateUuid();
 
-        $refs = [];
-        $idMap = [];
+        $result = ($scenario->up)(new ScenarioUpContext(testRunId: $testRunId));
+        [$auth, $teardown] = self::readUpResult($result);
 
-        // Track per-model run index for {{index}} / {{cycle()}} substitution.
-        $modelIndex = [];
-
-        foreach ($tree->ops as $op) {
-            $model = $op->model;
-            $factory = $factories[$model] ?? null;
-            if ($factory === null) {
-                throw AutonomaError::invalidBody(
-                    "no factory registered for model \"{$model}\". " .
-                    "Register one with Factory::define(...) and add it to HandlerConfig factories."
-                );
-            }
-
-            $idx = $modelIndex[$model] ?? 0;
-            $modelIndex[$model] = $idx + 1;
-
-            // Substitute built-in tokens then swap temp ids for real ids.
-            $resolved = self::resolveTokens($op->fields, $testRunId, $idx);
-            $resolved = self::swapTempIds($resolved, $idMap);
-
-            // Validate through the factory's inputFields and call create.
-            $validated = self::validateInput($resolved, $factory->inputFields);
-
-            $ctx = new FactoryContext(
-                refs: $refs,
-                scenarioName: $testRunId,
-                testRunId: $testRunId,
-            );
-            $record = ($factory->create)($validated, $ctx);
-
-            if (!is_array($record) || !isset($record['id']) || $record['id'] === null) {
-                throw AutonomaError::factoryMissingPk($model, 'id');
-            }
-
-            if (!isset($refs[$model])) {
-                $refs[$model] = [];
-            }
-            $refs[$model][] = $record;
-            $idMap[$op->tempId] = $record['id'];
-        }
-
-        // Auth callback gets the first User (case-insensitive on model name).
-        $authUser = self::findFirstUser($refs);
-        $scopeValue = self::detectScopeValue($refs, $config->scopeField) ?? $testRunId;
-        $authContext = ['scope_value' => $scopeValue, 'refs' => $refs];
-        $auth = ($config->auth)($authUser, $authContext);
-
-        if ($config->afterUp !== null) {
-            $hookCtx = ['scenarioName' => $scopeValue, 'refs' => $refs];
-            $auth = ($config->afterUp)($hookCtx, $auth);
-        }
-
-        $refsToken = Refs::signRefs(
+        $teardownToken = Refs::signRefs(
             [
-                'refs' => $refs,
-                'testRunId' => $scopeValue,
-                'environment' => '',
-                'aliasDependencies' => $tree->aliasDependencies,
-                'aliasOwnerModel' => $tree->aliasOwnerModel,
+                'refs' => $teardown ?? [],
+                'testRunId' => $testRunId,
+                'environment' => $name,
             ],
             $config->signingSecret,
         );
 
-        return new HandlerResponse(
-            status: 200,
-            body: array_merge(self::buildSdkMeta($config), [
-                'auth' => $auth,
-                'refs' => $refs,
-                'refsToken' => $refsToken,
-            ]),
-        );
-    }
+        $expiresInSeconds = $config->expiresInSeconds ?? self::DEFAULT_EXPIRES_IN_SECONDS;
 
-    /**
-     * Replace any __temp_* placeholder string with its real id.
-     */
-    private static function swapTempIds(mixed $value, array $idMap): mixed
-    {
-        if (is_string($value) && str_starts_with($value, '__temp_')) {
-            return $idMap[$value] ?? $value;
+        $responseBody = self::buildSdkMeta($config);
+        if ($auth !== null) {
+            $responseBody['auth'] = $auth;
         }
-        if (is_array($value)) {
-            $result = [];
-            foreach ($value as $k => $v) {
-                $result[$k] = self::swapTempIds($v, $idMap);
-            }
-            return $result;
-        }
-        return $value;
-    }
+        $responseBody['teardownToken'] = $teardownToken;
+        $responseBody['expiresInSeconds'] = $expiresInSeconds;
 
-    /**
-     * Validate input against factory's inputFields.
-     * Strips unknown keys and checks required fields are present.
-     *
-     * @param array<string, mixed> $data
-     * @param \Autonoma\Sdk\Types\FieldInfo[] $inputFields
-     * @return array<string, mixed>
-     */
-    private static function validateInput(array $data, array $inputFields): array
-    {
-        $knownFields = [];
-        foreach ($inputFields as $field) {
-            $knownFields[$field->name] = $field;
-        }
-
-        // Strip unknown keys.
-        $validated = [];
-        foreach ($data as $key => $value) {
-            if (isset($knownFields[$key])) {
-                $validated[$key] = $value;
-            }
-        }
-
-        // Check required fields.
-        foreach ($inputFields as $field) {
-            if ($field->isRequired && !$field->hasDefault && !array_key_exists($field->name, $validated)) {
-                throw AutonomaError::invalidBody("missing required field \"{$field->name}\"");
-            }
-        }
-
-        return $validated;
+        return new HandlerResponse(status: 200, body: $responseBody);
     }
 
     // -----------------------------------------------------------------------
@@ -250,45 +159,34 @@ class Handler
 
     private static function handleDown(HandlerConfig $config, array $body): HandlerResponse
     {
-        $refsToken = $body['refsToken'] ?? null;
-        if ($refsToken === null) {
-            throw AutonomaError::invalidBody('missing refsToken');
+        $teardownToken = $body['teardownToken'] ?? null;
+        if (!is_string($teardownToken) || $teardownToken === '') {
+            throw AutonomaError::invalidBody('missing teardownToken');
         }
 
         try {
-            $payload = Refs::verifyRefs($refsToken, $config->signingSecret);
+            $payload = Refs::verifyRefs($teardownToken, $config->signingSecret);
         } catch (\Throwable $e) {
-            throw AutonomaError::invalidRefsToken($e->getMessage());
+            throw AutonomaError::invalidTeardownToken($e->getMessage());
         }
 
-        $refs = $payload['refs'] ?? [];
-        $testRunId = $payload['testRunId'] ?? '';
-        $aliasDeps = $payload['aliasDependencies'] ?? [];
-        $aliasOwnerModel = $payload['aliasOwnerModel'] ?? [];
-
-        if ($config->beforeDown !== null) {
-            $hookCtx = ['scenarioName' => $testRunId, 'refs' => $refs];
-            ($config->beforeDown)($hookCtx);
+        $teardown = $payload['refs'] ?? [];
+        if (!is_array($teardown)) {
+            $teardown = [];
         }
+        $testRunId = is_string($payload['testRunId'] ?? null) ? $payload['testRunId'] : '';
+        // The verified token is authoritative for routing; any scenario name on
+        // the request body is ignored.
+        $name = is_string($payload['environment'] ?? null) ? $payload['environment'] : '';
 
-        $factories = $config->factories;
-        $teardownOrder = PayloadTopo::computeTeardownOrder($refs, $aliasDeps, $aliasOwnerModel);
-
-        foreach ($teardownOrder as $model) {
-            $factory = $factories[$model] ?? null;
-            if ($factory === null || $factory->teardown === null) {
-                // No teardown means the host has decided not to delete this
-                // model; skip. The SDK has no SQL fallback.
-                continue;
-            }
-            $records = $refs[$model] ?? [];
-            $ctx = new FactoryContext(
-                refs: $refs,
-                scenarioName: $testRunId,
-                testRunId: $testRunId,
-            );
-            foreach (array_reverse($records) as $record) {
-                ($factory->teardown)($record, $ctx);
+        if ($name !== '') {
+            $scenario = self::findScenario($config, $name);
+            if ($scenario !== null && $scenario->down !== null) {
+                ($scenario->down)(new ScenarioDownContext(
+                    name: $name,
+                    teardown: $teardown,
+                    testRunId: $testRunId,
+                ));
             }
         }
 
@@ -302,77 +200,47 @@ class Handler
     // helpers
     // -----------------------------------------------------------------------
 
+    private static function findScenario(HandlerConfig $config, string $name): ?ScenarioDefinition
+    {
+        foreach ($config->scenarios as $s) {
+            if ($s->name === $name) {
+                return $s;
+            }
+        }
+        return null;
+    }
+
+    /** Read body.scenario.name from an untrusted JSON body. */
+    private static function readScenarioName(array $body): ?string
+    {
+        $scenario = $body['scenario'] ?? null;
+        if (!is_array($scenario)) {
+            return null;
+        }
+        $sname = $scenario['name'] ?? null;
+        return is_string($sname) ? $sname : null;
+    }
+
     /**
-     * Substitute built-in tokens in field values: {{testRunId}}, {{index}},
-     * {{cycle(a,b,c)}}. Raises AutonomaError(UNRESOLVED_TOKEN) for any other
-     * {{token}}.
+     * Normalize a scenario up return into [auth, teardown]. Accepts a
+     * ScenarioUpResult or a plain associative array with those keys.
+     *
+     * @return array{0: ?array, 1: ?array}
      */
-    public static function resolveTokens(mixed $value, string $testRunId, int $index): mixed
+    private static function readUpResult(mixed $result): array
     {
-        if (is_string($value)) {
-            return preg_replace_callback(
-                '/\{\{\s*([^{}]+?)\s*\}\}/',
-                function (array $m) use ($testRunId, $index): string {
-                    $token = trim($m[1]);
-                    if ($token === 'testRunId') {
-                        return $testRunId;
-                    }
-                    if ($token === 'index') {
-                        return (string) $index;
-                    }
-                    if (preg_match('/^cycle\((.*)\)$/', $token, $cm) === 1) {
-                        $parts = array_map(
-                            fn(string $p): string => trim(trim(trim($p), '"'), "'"),
-                            explode(',', $cm[1])
-                        );
-                        if (count($parts) === 0) {
-                            return '';
-                        }
-                        return $parts[$index % count($parts)];
-                    }
-                    throw new AutonomaError(
-                        "Unresolved token: {{{$token}}}",
-                        'UNRESOLVED_TOKEN',
-                        400
-                    );
-                },
-                $value
-            );
+        if ($result instanceof ScenarioUpResult) {
+            return [$result->auth, $result->teardown];
         }
-        if (is_array($value)) {
-            $out = [];
-            foreach ($value as $k => $v) {
-                $out[$k] = self::resolveTokens($v, $testRunId, $index);
-            }
-            return $out;
+        if (is_array($result)) {
+            $auth = $result['auth'] ?? null;
+            $teardown = $result['teardown'] ?? null;
+            return [
+                is_array($auth) ? $auth : null,
+                is_array($teardown) ? $teardown : null,
+            ];
         }
-        return $value;
-    }
-
-    private static function findFirstUser(array $refs): ?array
-    {
-        foreach ($refs as $model => $records) {
-            $normalized = strtolower($model);
-            if (($normalized === 'user' || $normalized === 'users') && !empty($records)) {
-                return $records[0];
-            }
-        }
-        return null;
-    }
-
-    private static function detectScopeValue(array $refs, string $scopeField): ?string
-    {
-        $scopeNormalized = strtolower(str_replace('_', '', $scopeField));
-        foreach ($refs as $records) {
-            foreach ($records as $record) {
-                foreach ($record as $key => $value) {
-                    if (strtolower(str_replace('_', '', $key)) === $scopeNormalized && is_string($value)) {
-                        return $value;
-                    }
-                }
-            }
-        }
-        return null;
+        return [null, null];
     }
 
     private static function generateUuid(): string

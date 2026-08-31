@@ -15,12 +15,13 @@ class AutonomaServiceProvider extends ServiceProvider
         $this->app->singleton(HandlerConfig::class, function ($app) {
             $config = $app['config']['autonoma'];
 
+            $expires = $config['expires_in_seconds'] ?? null;
+
             return new HandlerConfig(
-                scopeField: $config['scope_field'],
                 sharedSecret: $config['shared_secret'],
                 signingSecret: $config['signing_secret'],
-                auth: $config['auth'] ?? throw new \RuntimeException('Autonoma SDK requires an "auth" callback in config/autonoma.php'),
-                factories: $config['factories'] ?? [],
+                scenarios: $config['scenarios'] ?? [],
+                expiresInSeconds: $expires === null ? null : (int) $expires,
                 sdk: ['orm' => 'eloquent'],
             );
         });

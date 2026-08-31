@@ -2,30 +2,52 @@
 
 namespace Autonoma\Sdk\Tests;
 
-use Autonoma\Sdk\Factory;
 use Autonoma\Sdk\Handler;
 use Autonoma\Sdk\Hmac;
-use Autonoma\Sdk\Refs;
-use Autonoma\Sdk\Types\FactoryContext;
-use Autonoma\Sdk\Types\FieldInfo;
+use Autonoma\Sdk\Scenario;
 use Autonoma\Sdk\Types\HandlerConfig;
 use Autonoma\Sdk\Types\HandlerRequest;
+use Autonoma\Sdk\Types\ScenarioDefinition;
+use Autonoma\Sdk\Types\ScenarioDownContext;
+use Autonoma\Sdk\Types\ScenarioUpContext;
+use Autonoma\Sdk\Types\ScenarioUpResult;
 use PHPUnit\Framework\TestCase;
 
 class HandlerTest extends TestCase
 {
-    private function makeConfig(array $factories = []): HandlerConfig
+    private function standardScenario(?callable $down = null): ScenarioDefinition
     {
-        return new HandlerConfig(
-            scopeField: 'organizationId',
-            sharedSecret: 'test-shared-secret',
-            signingSecret: 'test-signing-secret',
-            auth: fn($user, $ctx) => ['credentials' => ['token' => 'test-token']],
-            factories: $factories,
+        return Scenario::defineScenario(
+            name: 'standard',
+            description: 'A standard seeded environment',
+            up: fn(ScenarioUpContext $ctx) => new ScenarioUpResult(
+                auth: ['headers' => ['Authorization' => 'Bearer ' . $ctx->testRunId]],
+                teardown: ['userId' => 'user-' . $ctx->testRunId],
+            ),
+            down: $down,
         );
     }
 
-    private function makeRequest(string $body, string $secret = 'test-shared-secret'): HandlerRequest
+    private function emptyScenario(): ScenarioDefinition
+    {
+        return Scenario::defineScenario(
+            name: 'empty',
+            description: 'Nothing seeded',
+            up: fn(ScenarioUpContext $ctx) => new ScenarioUpResult(),
+        );
+    }
+
+    /** @param ScenarioDefinition[]|null $scenarios */
+    private function makeConfig(?array $scenarios = null): HandlerConfig
+    {
+        return new HandlerConfig(
+            sharedSecret: 'shared',
+            signingSecret: 'signing',
+            scenarios: $scenarios ?? [$this->standardScenario(), $this->emptyScenario()],
+        );
+    }
+
+    private function makeRequest(string $body, string $secret = 'shared'): HandlerRequest
     {
         return new HandlerRequest(
             body: $body,
@@ -33,390 +55,190 @@ class HandlerTest extends TestCase
         );
     }
 
-    private function orgFactory(?callable $teardown = null): \Autonoma\Sdk\Types\FactoryDefinition
-    {
-        return Factory::define(
-            create: fn(array $data, FactoryContext $ctx) => ['id' => 'org-' . ($data['name'] ?? 'x'), 'name' => $data['name'] ?? ''],
-            inputFields: [new FieldInfo('name', 'string', true)],
-            teardown: $teardown,
-        );
-    }
-
-    private function userFactory(?callable $create = null): \Autonoma\Sdk\Types\FactoryDefinition
-    {
-        return Factory::define(
-            create: $create ?? fn(array $data, FactoryContext $ctx) => [
-                'id' => 'user-1',
-                'email' => $data['email'] ?? '',
-                'name' => $data['name'] ?? '',
-                'organizationId' => $data['organization_id'] ?? null,
-            ],
-            inputFields: [
-                new FieldInfo('email', 'string', true),
-                new FieldInfo('name', 'string', true),
-                new FieldInfo('organization_id', 'string', true),
-            ],
-        );
-    }
+    // --- request gate ---
 
     public function testRejectsInvalidSignature(): void
     {
-        $config = $this->makeConfig();
-        $req = new HandlerRequest(
-            body: '{"action":"discover"}',
-            headers: ['x-signature' => 'invalid'],
-        );
-        $res = Handler::handleRequest($config, $req);
+        $req = new HandlerRequest(body: '{"action":"discover"}', headers: ['x-signature' => 'invalid']);
+        $res = Handler::handleRequest($this->makeConfig(), $req);
         $this->assertSame(401, $res->status);
         $this->assertSame('INVALID_SIGNATURE', $res->body['code']);
     }
 
+    public function testRejectsSameSecrets(): void
+    {
+        $config = new HandlerConfig(sharedSecret: 'same', signingSecret: 'same');
+        $res = Handler::handleRequest($config, $this->makeRequest('{"action":"discover"}', 'same'));
+        $this->assertSame(500, $res->status);
+        $this->assertSame('SAME_SECRETS', $res->body['code']);
+    }
+
     public function testRejectsInvalidJson(): void
     {
-        $config = $this->makeConfig();
-        $body = 'not json';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest('not json'));
         $this->assertSame(400, $res->status);
         $this->assertSame('INVALID_BODY', $res->body['code']);
     }
 
     public function testRejectsMissingAction(): void
     {
-        $config = $this->makeConfig();
-        $body = '{}';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest('{}'));
         $this->assertSame(400, $res->status);
         $this->assertSame('INVALID_BODY', $res->body['code']);
     }
 
     public function testRejectsUnknownAction(): void
     {
-        $config = $this->makeConfig();
-        $body = '{"action":"unknown"}';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest('{"action":"nonexistent"}'));
         $this->assertSame(400, $res->status);
         $this->assertSame('UNKNOWN_ACTION', $res->body['code']);
     }
 
-    public function testRejectsSameSecrets(): void
+    // --- discover ---
+
+    public function testDiscoverListsScenarios(): void
+    {
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest('{"action":"discover"}'));
+        $this->assertSame(200, $res->status);
+        $this->assertSame('2.0', $res->body['version']);
+        $this->assertCount(2, $res->body['scenarios']);
+        $this->assertSame('standard', $res->body['scenarios'][0]['name']);
+        $this->assertNotEmpty($res->body['scenarios'][0]['description']);
+        // discover must never leak a create/schema shape in v2.
+        $this->assertArrayNotHasKey('schema', $res->body);
+    }
+
+    // --- up ---
+
+    public function testUpReturnsEnvelope(): void
+    {
+        $body = json_encode(['action' => 'up', 'scenario' => ['name' => 'standard'], 'testRunId' => 'run-1']);
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest($body));
+
+        $this->assertSame(200, $res->status);
+        $this->assertSame('2.0', $res->body['version']);
+        $this->assertCount(3, explode('.', $res->body['teardownToken']));
+        $this->assertSame(3600, $res->body['expiresInSeconds']);
+        // The duplicated plaintext refs and the old refsToken field are gone.
+        $this->assertArrayNotHasKey('refs', $res->body);
+        $this->assertArrayNotHasKey('refsToken', $res->body);
+        $this->assertSame('Bearer run-1', $res->body['auth']['headers']['Authorization']);
+    }
+
+    public function testUpCustomExpires(): void
     {
         $config = new HandlerConfig(
-            scopeField: 'organizationId',
-            sharedSecret: 'same-secret',
-            signingSecret: 'same-secret',
-            auth: fn($user, $ctx) => ['credentials' => ['token' => 'test-token']],
+            sharedSecret: 'shared',
+            signingSecret: 'signing',
+            scenarios: [$this->standardScenario(), $this->emptyScenario()],
+            expiresInSeconds: 60,
         );
-        $body = '{"action":"discover"}';
-        $req = new HandlerRequest(
-            body: $body,
-            headers: ['x-signature' => Hmac::signBody($body, 'same-secret')],
-        );
-        $res = Handler::handleRequest($config, $req);
-        $this->assertSame(500, $res->status);
-        $this->assertSame('SAME_SECRETS', $res->body['code']);
+        $body = json_encode(['action' => 'up', 'scenario' => ['name' => 'empty'], 'testRunId' => 'r']);
+        $res = Handler::handleRequest($config, $this->makeRequest($body));
+
+        $this->assertSame(60, $res->body['expiresInSeconds']);
+        // The empty scenario returns nothing, so no auth on the envelope.
+        $this->assertArrayNotHasKey('auth', $res->body);
     }
 
-    public function testServesWithoutAllowProduction(): void
+    public function testUpUnknownEnvironment(): void
     {
-        // makeConfig never sets allowProduction.
-        $config = $this->makeConfig(['Organization' => $this->orgFactory()]);
-        $body = '{"action":"discover"}';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
-        $this->assertSame(200, $res->status);
-        $this->assertArrayHasKey('schema', $res->body);
+        $body = json_encode(['action' => 'up', 'scenario' => ['name' => 'does-not-exist'], 'testRunId' => 'r']);
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest($body));
+        $this->assertSame(400, $res->status);
+        $this->assertSame('UNKNOWN_ENVIRONMENT', $res->body['code']);
     }
 
-    public function testServesWhenAllowProductionIsExplicitlyFalse(): void
+    public function testUpMissingScenarioName(): void
     {
-        $config = new HandlerConfig(
-            scopeField: 'organizationId',
-            sharedSecret: 'test-shared-secret',
-            signingSecret: 'test-signing-secret',
-            auth: fn($user, $ctx) => ['credentials' => ['token' => 'test-token']],
-            // Deprecated no-op: even an explicit false must not block the endpoint.
-            allowProduction: false,
-        );
-        $body = '{"action":"discover"}';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
-        $this->assertSame(200, $res->status);
-        $this->assertArrayHasKey('schema', $res->body);
-    }
-
-    public function testRejectsMissingRefsTokenOnDown(): void
-    {
-        $config = $this->makeConfig();
-        $body = '{"action":"down"}';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
+        $body = json_encode(['action' => 'up', 'testRunId' => 'r']);
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest($body));
         $this->assertSame(400, $res->status);
         $this->assertSame('INVALID_BODY', $res->body['code']);
     }
 
-    public function testRejectsInvalidRefsToken(): void
+    public function testUpAcceptsPlainArrayResult(): void
     {
-        $config = $this->makeConfig();
-        $body = '{"action":"down","refsToken":"bad.token.here"}';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
-        $this->assertSame(403, $res->status);
-        $this->assertSame('INVALID_REFS_TOKEN', $res->body['code']);
-    }
-
-    public function testRejectsMissingCreateOnUp(): void
-    {
-        $config = $this->makeConfig();
-        $body = '{"action":"up"}';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
-        $this->assertSame(400, $res->status);
-        $this->assertSame('INVALID_BODY', $res->body['code']);
-    }
-
-    public function testAfterUpHookModifiesAuth(): void
-    {
-        $config = new HandlerConfig(
-            scopeField: 'organizationId',
-            sharedSecret: 'test-shared-secret',
-            signingSecret: 'test-signing-secret',
-            auth: fn($user) => ['credentials' => ['token' => 'test-token']],
-            factories: ['Organization' => $this->orgFactory()],
-            afterUp: function (array $hookCtx, array $auth): array {
-                $auth['headers'] = ['X-Custom' => 'enriched'];
-                return $auth;
-            },
-        );
-
-        $body = json_encode([
-            'action' => 'up',
-            'create' => ['Organization' => [['name' => 'Org', '_alias' => 'org1']]],
-            'testRunId' => 'run-123',
-        ]);
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
-
-        $this->assertSame(200, $res->status);
-        $this->assertArrayHasKey('auth', $res->body);
-        $this->assertSame('enriched', $res->body['auth']['headers']['X-Custom']);
-    }
-
-    public function testBeforeDownHookIsCalled(): void
-    {
-        $called = false;
-        $capturedScenarioName = null;
-
-        $config = new HandlerConfig(
-            scopeField: 'organizationId',
-            sharedSecret: 'test-shared-secret',
-            signingSecret: 'test-signing-secret',
-            auth: fn($user) => ['credentials' => ['token' => 'test-token']],
-            factories: ['Organization' => $this->orgFactory()],
-            beforeDown: function (array $hookCtx) use (&$called, &$capturedScenarioName): void {
-                $called = true;
-                $capturedScenarioName = $hookCtx['scenarioName'];
-            },
-        );
-
-        $refsToken = Refs::signRefs(
-            ['refs' => ['Organization' => [['id' => 'org-1']]], 'testRunId' => 'run-123', 'environment' => ''],
-            'test-signing-secret',
-        );
-
-        $body = json_encode(['action' => 'down', 'refsToken' => $refsToken]);
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
-
-        $this->assertSame(200, $res->status);
-        $this->assertTrue($called);
-        $this->assertSame('run-123', $capturedScenarioName);
-    }
-
-    public function testFactoryCreateUsedOnUp(): void
-    {
-        $factoryCallCount = 0;
-        $factoryReceivedData = null;
-
-        $config = $this->makeConfig([
-            'Organization' => Factory::define(
-                create: function (array $data, FactoryContext $ctx) use (&$factoryCallCount, &$factoryReceivedData): array {
-                    $factoryCallCount++;
-                    $factoryReceivedData = $data;
-                    return ['id' => 'factory-org-1', 'name' => $data['name']];
-                },
-                inputFields: [new FieldInfo('name', 'string', true)],
-            ),
-        ]);
-
-        $body = json_encode([
-            'action' => 'up',
-            'create' => ['Organization' => [['name' => 'FactoryOrg', '_alias' => 'org1']]],
-            'testRunId' => 'run-factory',
-        ]);
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
-
-        $this->assertSame(200, $res->status);
-        $this->assertSame(1, $factoryCallCount);
-        $this->assertSame('FactoryOrg', $factoryReceivedData['name']);
-        $this->assertSame('factory-org-1', $res->body['refs']['Organization'][0]['id']);
-    }
-
-    public function testFactoryReceivesPreResolvedFkIds(): void
-    {
-        $receivedData = null;
-
-        $config = $this->makeConfig([
-            'Organization' => $this->orgFactory(),
-            'User' => Factory::define(
-                create: function (array $data, FactoryContext $ctx) use (&$receivedData): array {
-                    $receivedData = $data;
-                    return ['id' => 'user-1', 'email' => $data['email'], 'organization_id' => $data['organization_id'] ?? null];
-                },
-                inputFields: [
-                    new FieldInfo('email', 'string', true),
-                    new FieldInfo('name', 'string', true),
-                    new FieldInfo('organization_id', 'string', true),
-                ],
-            ),
-        ]);
-
-        $body = json_encode([
-            'action' => 'up',
-            'create' => [
-                'Organization' => [['name' => 'Org', '_alias' => 'org1']],
-                'User' => [['email' => 'a@b.com', 'name' => 'A', 'organization_id' => ['_ref' => 'org1'], '_alias' => 'user1']],
+        $arrayScenario = Scenario::defineScenario(
+            name: 'plain',
+            description: 'up returns a plain array',
+            up: fn(ScenarioUpContext $ctx) => [
+                'auth' => ['headers' => ['X-Token' => 'plain']],
             ],
-            'testRunId' => 'run-fk',
-        ]);
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
-
+        );
+        $body = json_encode(['action' => 'up', 'scenario' => ['name' => 'plain'], 'testRunId' => 'r']);
+        $res = Handler::handleRequest($this->makeConfig([$arrayScenario]), $this->makeRequest($body));
         $this->assertSame(200, $res->status);
-        $this->assertNotNull($receivedData);
-        $this->assertSame('org-Org', $receivedData['organization_id']);
+        $this->assertSame('plain', $res->body['auth']['headers']['X-Token']);
     }
 
-    public function testErrorsWhenFactoryDoesNotReturnPk(): void
+    // --- down ---
+
+    public function testDownValidToken(): void
     {
-        $config = $this->makeConfig([
-            'Organization' => Factory::define(
-                create: fn(array $data, FactoryContext $ctx) => ['name' => $data['name']],
-                inputFields: [new FieldInfo('name', 'string', true)],
-            ),
-        ]);
+        $downCalls = [];
+        $down = function (ScenarioDownContext $ctx) use (&$downCalls): void {
+            $downCalls[] = $ctx->name . ':' . $ctx->testRunId;
+        };
+        $config = $this->makeConfig([$this->standardScenario($down), $this->emptyScenario()]);
 
-        $body = json_encode([
-            'action' => 'up',
-            'create' => ['Organization' => [['name' => 'NoPK', '_alias' => 'org1']]],
-            'testRunId' => 'run-nopk',
-        ]);
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
+        $upBody = json_encode(['action' => 'up', 'scenario' => ['name' => 'standard'], 'testRunId' => 'run-td']);
+        $upRes = Handler::handleRequest($config, $this->makeRequest($upBody));
+        $token = $upRes->body['teardownToken'];
 
-        $this->assertSame(500, $res->status);
-        $this->assertSame('FACTORY_MISSING_PK', $res->body['code']);
-    }
-
-    public function testFactoryTeardownCalledPerRecordInReverseOrder(): void
-    {
-        $teardownCalls = [];
-
-        $config = $this->makeConfig([
-            'Organization' => Factory::define(
-                create: fn(array $data, FactoryContext $ctx) => ['id' => 'org-' . $data['name'], 'name' => $data['name']],
-                inputFields: [new FieldInfo('name', 'string', true)],
-                teardown: function (array $record, FactoryContext $ctx) use (&$teardownCalls): void {
-                    $teardownCalls[] = $record['id'];
-                },
-            ),
-        ]);
-
-        $upBody = json_encode([
-            'action' => 'up',
-            'create' => ['Organization' => [
-                ['name' => 'A', '_alias' => 'orgA'],
-                ['name' => 'B', '_alias' => 'orgB'],
-            ]],
-            'testRunId' => 'run-teardown',
-        ]);
-        $upReq = $this->makeRequest($upBody);
-        $upRes = Handler::handleRequest($config, $upReq);
-        $this->assertSame(200, $upRes->status);
-        $refsToken = $upRes->body['refsToken'];
-
-        $downBody = json_encode(['action' => 'down', 'refsToken' => $refsToken]);
-        $downReq = $this->makeRequest($downBody);
-        $downRes = Handler::handleRequest($config, $downReq);
+        $downBody = json_encode(['action' => 'down', 'teardownToken' => $token, 'testRunId' => 'run-td']);
+        $downRes = Handler::handleRequest($config, $this->makeRequest($downBody));
 
         $this->assertSame(200, $downRes->status);
-        $this->assertCount(2, $teardownCalls);
-        $this->assertSame(['org-B', 'org-A'], $teardownCalls);
+        $this->assertTrue($downRes->body['ok']);
+        $this->assertSame(['standard:run-td'], $downCalls);
     }
 
-    public function testFactoryContextContainsRefsOfPreviouslyCreatedModels(): void
+    public function testDownRoutesByTokenEnvironment(): void
     {
-        $capturedCtx = null;
+        $downCalls = [];
+        $down = function (ScenarioDownContext $ctx) use (&$downCalls): void {
+            $downCalls[] = $ctx->name . ':' . $ctx->testRunId;
+        };
+        $config = $this->makeConfig([$this->standardScenario($down), $this->emptyScenario()]);
 
-        $config = $this->makeConfig([
-            'Organization' => $this->orgFactory(),
-            'User' => Factory::define(
-                create: function (array $data, FactoryContext $ctx) use (&$capturedCtx): array {
-                    $capturedCtx = $ctx;
-                    return ['id' => 'user-ctx', 'email' => $data['email'], 'organization_id' => $data['organization_id'] ?? null];
-                },
-                inputFields: [
-                    new FieldInfo('email', 'string', true),
-                    new FieldInfo('name', 'string', true),
-                    new FieldInfo('organization_id', 'string', true),
-                ],
-            ),
-        ]);
+        $upBody = json_encode(['action' => 'up', 'scenario' => ['name' => 'standard'], 'testRunId' => 'run-tok']);
+        $token = Handler::handleRequest($config, $this->makeRequest($upBody))->body['teardownToken'];
 
-        $body = json_encode([
-            'action' => 'up',
-            'create' => [
-                'Organization' => [['name' => 'Org', '_alias' => 'org1']],
-                'User' => [['email' => 'x@y.com', 'name' => 'X', 'organization_id' => ['_ref' => 'org1'], '_alias' => 'user1']],
-            ],
-            'testRunId' => 'run-ctx',
-        ]);
-        $req = $this->makeRequest($body);
-        Handler::handleRequest($config, $req);
+        // No scenario.name on the down request - the handler must recover it from
+        // the verified token's environment.
+        $downBody = json_encode(['action' => 'down', 'teardownToken' => $token]);
+        $downRes = Handler::handleRequest($config, $this->makeRequest($downBody));
 
-        $this->assertNotNull($capturedCtx);
-        $this->assertArrayHasKey('Organization', $capturedCtx->refs);
-        $this->assertCount(1, $capturedCtx->refs['Organization']);
-        $this->assertSame('org-Org', $capturedCtx->refs['Organization'][0]['id']);
-        $this->assertSame('run-ctx', $capturedCtx->testRunId);
+        $this->assertSame(200, $downRes->status);
+        $this->assertSame(['standard:run-tok'], $downCalls);
     }
 
-    public function testDiscoverReturnsSchemaFromFactories(): void
+    public function testDownInvalidTeardownToken(): void
     {
-        $config = $this->makeConfig([
-            'Organization' => $this->orgFactory(),
-        ]);
+        $body = json_encode(['action' => 'down', 'teardownToken' => 'tampered.token.value']);
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest($body));
+        $this->assertSame(403, $res->status);
+        $this->assertSame('INVALID_TEARDOWN_TOKEN', $res->body['code']);
+    }
 
-        $body = '{"action":"discover"}';
-        $req = $this->makeRequest($body);
-        $res = Handler::handleRequest($config, $req);
+    public function testDownMissingTeardownToken(): void
+    {
+        $res = Handler::handleRequest($this->makeConfig(), $this->makeRequest('{"action":"down"}'));
+        $this->assertSame(400, $res->status);
+        $this->assertSame('INVALID_BODY', $res->body['code']);
+    }
 
+    public function testEndpointAlwaysEnabled(): void
+    {
+        // allowProduction is a deprecated no-op: discover serves regardless.
+        $config = new HandlerConfig(
+            sharedSecret: 'shared',
+            signingSecret: 'signing',
+            scenarios: [$this->standardScenario()],
+            allowProduction: false,
+        );
+        $res = Handler::handleRequest($config, $this->makeRequest('{"action":"discover"}'));
         $this->assertSame(200, $res->status);
-        $this->assertArrayHasKey('schema', $res->body);
-        $this->assertArrayHasKey('models', $res->body['schema']);
-        $this->assertNotEmpty($res->body['schema']['models']);
-
-        $orgModel = null;
-        foreach ($res->body['schema']['models'] as $m) {
-            if ($m['name'] === 'Organization') {
-                $orgModel = $m;
-                break;
-            }
-        }
-        $this->assertNotNull($orgModel);
-        $this->assertSame('organizationId', $res->body['schema']['scopeField']);
     }
 }
