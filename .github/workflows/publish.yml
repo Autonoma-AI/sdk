@@ -4,7 +4,24 @@ on:
   release:
     types: [published]
   workflow_call:
+    inputs:
+      release_tag:
+        type: string
+        required: true
+      confirm_publish:
+        type: boolean
+        required: true
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing vX.Y.Z release tag to publish
+        type: string
+        required: true
+      confirm_publish:
+        description: Publish to external registries
+        type: boolean
+        default: false
+        required: true
 
 concurrency:
   group: publish
@@ -16,28 +33,53 @@ jobs:
   # ---------------------------------------------------------------------------
   guard:
     name: Verify tag is on main
-    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      release_tag: ${{ steps.release.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Check tagged commit is on main
+      - name: Resolve and validate release tag
+        id: release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          CONFIRM_PUBLISH: ${{ inputs.confirm_publish }}
         run: |
-          git fetch origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Tag $GITHUB_REF_NAME points to a commit not on main. Skipping publish."
+          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            RELEASE_TAG="$GITHUB_REF_NAME"
+          else
+            RELEASE_TAG="$INPUT_RELEASE_TAG"
+            if [ "$CONFIRM_PUBLISH" != "true" ]; then
+              echo "::error::confirm_publish must be true. Run package-preflight.yml for a non-publishing check."
+              exit 1
+            fi
+          fi
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid release tag: $RELEASE_TAG"
             exit 1
           fi
+          git fetch origin main "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          RELEASE_SHA=$(git rev-list -n1 "$RELEASE_TAG")
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+            echo "::error::Tag $RELEASE_TAG does not point to a commit on main."
+            exit 1
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create release branch
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-          BRANCH_NAME="release/${TAG_NAME}"
-          git checkout -b "$BRANCH_NAME"
+          BRANCH_NAME="release/${RELEASE_TAG}"
+          if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
+            echo "::notice::$BRANCH_NAME already exists."
+            exit 0
+          fi
+          git branch "$BRANCH_NAME" "$RELEASE_TAG"
           git push origin "$BRANCH_NAME"
 
   # ---------------------------------------------------------------------------
@@ -48,6 +90,7 @@ jobs:
     needs: guard
     if: ${{ !cancelled() && (needs.guard.result == 'success' || needs.guard.result == 'skipped') }}
     runs-on: ubuntu-latest
+    environment: npm
     permissions:
       contents: read
     defaults:
@@ -71,31 +114,20 @@ jobs:
 
       - run: pnpm build
 
-      - name: Check if version already on npm
-        id: npm_check
+      - name: Publish packages not already on npm
         run: |
-          VERSION=$(node -p "require('./packages/sdk/package.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if npm view "@autonoma-ai/sdk@$VERSION" version >/dev/null 2>&1; then
-            echo "already_published=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::@autonoma-ai/sdk@$VERSION already on npm — skipping npm publish."
-          else
-            echo "already_published=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish @autonoma-ai/sdk
-        if: steps.npm_check.outputs.already_published == 'false'
-        run: pnpm --filter @autonoma-ai/sdk publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Wait for registry propagation
-        if: steps.npm_check.outputs.already_published == 'false'
-        run: sleep 10
-
-      - name: Publish remaining packages
-        if: steps.npm_check.outputs.already_published == 'false'
-        run: pnpm -r --filter '!@autonoma-ai/sdk' publish --access public --no-git-checks
+          for PACKAGE in sdk server-web server-express server-hono server-node; do
+            NAME=$(node -p "require('./packages/$PACKAGE/package.json').name")
+            VERSION=$(node -p "require('./packages/$PACKAGE/package.json').version")
+            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+              echo "::notice::$NAME@$VERSION already on npm — skipping."
+              continue
+            fi
+            pnpm --filter "$NAME" publish --access public --no-git-checks
+            if [ "$PACKAGE" = "sdk" ]; then
+              sleep 10
+            fi
+          done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -154,6 +186,7 @@ jobs:
     needs: guard
     if: ${{ !cancelled() && (needs.guard.result == 'success' || needs.guard.result == 'skipped') }}
     runs-on: ubuntu-latest
+    environment: hex
     permissions:
       contents: read
     defaults:
@@ -197,6 +230,7 @@ jobs:
     needs: guard
     if: ${{ !cancelled() && (needs.guard.result == 'success' || needs.guard.result == 'skipped') }}
     runs-on: ubuntu-latest
+    environment: rubygems
     permissions:
       contents: read
     defaults:
@@ -235,7 +269,7 @@ jobs:
   # Go → git tag
   #
   # Go has no registry upload: the module proxy pulls straight from a git tag.
-  # The Go module lives at github.com/autonoma-ai/sdk/sdks/go (a submodule of
+  # The v2 Go module lives at github.com/autonoma-ai/sdk/sdks/go/v2 (a submodule of
   # this monorepo), so its version tag MUST carry the subdirectory prefix
   # `sdks/go/` — a plain vX.Y.Z tag would resolve the (non-existent) root
   # module. Consumers still write `@vX.Y.Z`; Go maps it to the prefixed tag.
@@ -245,6 +279,7 @@ jobs:
     needs: guard
     if: ${{ !cancelled() && (needs.guard.result == 'success' || needs.guard.result == 'skipped') }}
     runs-on: ubuntu-latest
+    environment: go
     permissions:
       contents: write
     steps:
@@ -277,6 +312,99 @@ jobs:
         continue-on-error: true
         run: |
           VERSION=$(jq -r '.["."]' .release-please-manifest.json)
-          curl -fsS "https://proxy.golang.org/github.com/autonoma-ai/sdk/sdks/go/@v/v${VERSION}.info" \
-            && echo "::notice::proxy.golang.org cached github.com/autonoma-ai/sdk/sdks/go@v${VERSION}" \
+          curl -fsS "https://proxy.golang.org/github.com/autonoma-ai/sdk/sdks/go/v2/@v/v${VERSION}.info" \
+            && echo "::notice::proxy.golang.org cached github.com/autonoma-ai/sdk/sdks/go/v2@v${VERSION}" \
             || echo "::notice::proxy warm skipped — it will fetch on first go get."
+
+  rust:
+    name: Publish to crates.io
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check whether the crate version exists
+        id: crate
+        run: |
+          VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if curl -fsS "https://crates.io/api/v1/crates/autonoma-sdk/$VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.crate.outputs.exists == 'false'
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  maven-central:
+    name: Publish Java to Maven Central
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: maven-central
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdks/java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_TOKEN
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      - name: Check whether the Java version exists
+        id: maven
+        run: |
+          VERSION=$(sed -n 's/.*<version>\([^<]*\)<\/version>.*x-release-please-version.*/\1/p' pom.xml | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          URL="https://repo1.maven.org/maven2/ai/autonoma/autonoma-sdk/$VERSION/autonoma-sdk-$VERSION.pom"
+          if curl -fsS "$URL" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.maven.outputs.exists == 'false'
+        run: mvn --batch-mode --activate-profiles release deploy
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+  php-split:
+    name: Publish PHP split repository
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: packagist
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push the PHP subtree and release tag
+        env:
+          PHP_SPLIT_TOKEN: ${{ secrets.PHP_SPLIT_TOKEN }}
+          RELEASE_TAG: ${{ needs.guard.outputs.release_tag }}
+        run: |
+          SPLIT_SHA=$(git subtree split --prefix=sdks/php "$RELEASE_TAG")
+          REMOTE="https://x-access-token:${PHP_SPLIT_TOKEN}@github.com/Autonoma-AI/sdk-php.git"
+          git push "$REMOTE" "$SPLIT_SHA:refs/heads/main"
+          if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::notice::$RELEASE_TAG already exists in the PHP split repository."
+            exit 0
+          fi
+          git push "$REMOTE" "$SPLIT_SHA:refs/tags/$RELEASE_TAG"
