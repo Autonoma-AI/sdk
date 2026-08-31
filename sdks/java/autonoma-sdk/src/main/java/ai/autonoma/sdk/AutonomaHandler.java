@@ -1,27 +1,50 @@
 package ai.autonoma.sdk;
 
-import ai.autonoma.sdk.types.*;
+import ai.autonoma.sdk.types.AuthCookie;
+import ai.autonoma.sdk.types.AuthResult;
+import ai.autonoma.sdk.types.HandlerConfig;
+import ai.autonoma.sdk.types.HandlerRequest;
+import ai.autonoma.sdk.types.HandlerResponse;
+import ai.autonoma.sdk.types.ScenarioDefinition;
+import ai.autonoma.sdk.types.ScenarioDownContext;
+import ai.autonoma.sdk.types.ScenarioUpContext;
+import ai.autonoma.sdk.types.ScenarioUpResult;
+import ai.autonoma.sdk.types.SdkInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Core request handler for the Autonoma Environment Factory protocol.
+ * Request routing for discover / up / down protocol actions (Scenario v2).
  *
- * <p>Factory-driven design: every model in {@code body.create} must have a
- * registered factory. The SDK uses the factory's {@code inputClass} both to
- * validate inputs and to build the discover schema. Ordering for up and down
- * comes from the create payload's {@code _alias}/{@code _ref} graph; there is
- * no SQL introspection.
+ * <p>{@code discover} lists the registered scenarios; {@code up} looks a
+ * scenario up by name, runs its free-form {@code up}, validates the returned
+ * {@code data} against the wire limits, signs a teardown token carrying the
+ * scenario name, and responds; {@code down} recovers the scenario name from the
+ * verified token and routes to that scenario's {@code down}. There is no
+ * create-graph interpreter and no factory-derived discover schema.
  */
 public final class AutonomaHandler {
 
     public static final String PROTOCOL_VERSION = loadProtocolVersion();
+
+    private static final int DEFAULT_EXPIRES_IN_SECONDS = 3600;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    // One-shot runtime signal for users who never see the deprecation note on
+    // the config field.
+    private static final AtomicBoolean WARNED_DEPRECATED_ALLOW_PRODUCTION = new AtomicBoolean(false);
+
+    private AutonomaHandler() {}
 
     private static String loadProtocolVersion() {
         try (InputStream is = AutonomaHandler.class.getResourceAsStream("/autonoma/version.txt")) {
@@ -31,10 +54,6 @@ public final class AutonomaHandler {
             throw new IllegalStateException("Failed to read protocol version", e);
         }
     }
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    private AutonomaHandler() {}
 
     private static Map<String, Object> buildSdkMeta(HandlerConfig config) {
         SdkInfo sdk = config.getSdk();
@@ -51,6 +70,11 @@ public final class AutonomaHandler {
 
     public static HandlerResponse handleRequest(HandlerConfig config, HandlerRequest req) {
         try {
+            if (config.isAllowProduction() && WARNED_DEPRECATED_ALLOW_PRODUCTION.compareAndSet(false, true)) {
+                System.err.println(
+                    "[autonoma] allowProduction is deprecated and ignored - the endpoint is always enabled");
+            }
+
             if (config.getSharedSecret().equals(config.getSigningSecret())) {
                 throw AutonomaError.sameSecrets();
             }
@@ -69,8 +93,11 @@ public final class AutonomaHandler {
                 throw AutonomaError.invalidBody("invalid JSON");
             }
 
-            String action = (String) body.get("action");
-            if (action == null) throw AutonomaError.invalidBody("missing action. expected one of 'discover', 'up' or 'down'");
+            Object actionRaw = body.get("action");
+            String action = actionRaw instanceof String s ? s : null;
+            if (action == null) {
+                throw AutonomaError.invalidBody("missing action. expected one of \"discover\", \"up\" or \"down\"");
+            }
 
             return switch (action) {
                 case "discover" -> handleDiscover(config);
@@ -91,11 +118,16 @@ public final class AutonomaHandler {
     // -----------------------------------------------------------------------
 
     private static HandlerResponse handleDiscover(HandlerConfig config) {
-        Map<String, FactoryDefinition> factories = config.getFactories();
-        if (factories == null) factories = Map.of();
-        SchemaInfo schema = SchemaBuilder.buildSchemaFromFactories(factories, config.getScopeField());
-        Map<String, Object> responseBody = new LinkedHashMap<>(buildSdkMeta(config));
-        responseBody.put("schema", SchemaBuilder.schemaToWire(schema));
+        List<Map<String, Object>> scenarios = new ArrayList<>();
+        for (ScenarioDefinition s : config.getScenarios()) {
+            Map<String, Object> descriptor = new LinkedHashMap<>();
+            descriptor.put("name", s.name());
+            descriptor.put("description", s.description());
+            scenarios.add(descriptor);
+        }
+
+        Map<String, Object> responseBody = buildSdkMeta(config);
+        responseBody.put("scenarios", scenarios);
         return new HandlerResponse(200, responseBody);
     }
 
@@ -103,131 +135,40 @@ public final class AutonomaHandler {
     // up
     // -----------------------------------------------------------------------
 
-    @SuppressWarnings("unchecked")
-    private static HandlerResponse handleUp(HandlerConfig config, Map<String, Object> body) {
-        Map<String, Object> create = (Map<String, Object>) body.get("create");
-        if (create == null) throw AutonomaError.invalidBody("missing \"create\" in request body");
-
-        String testRunId = body.containsKey("testRunId") ? (String) body.get("testRunId") : UUID.randomUUID().toString();
-
-        Map<String, FactoryDefinition> factories = config.getFactories();
-        if (factories == null || factories.isEmpty()) {
-            throw AutonomaError.invalidBody(
-                "no factories registered -- every model in `create` must have a factory.");
+    private static HandlerResponse handleUp(HandlerConfig config, Map<String, Object> body) throws Exception {
+        String name = readScenarioName(body);
+        if (name == null) {
+            throw AutonomaError.invalidBody("missing \"scenario.name\" in request body");
         }
 
-        ResolvedTree tree = PayloadTopo.resolvePayloadTree(create);
-
-        Map<String, List<Map<String, Object>>> refs = new LinkedHashMap<>();
-        Map<String, Object> idMap = new LinkedHashMap<>();
-        Map<String, Integer> modelIndex = new LinkedHashMap<>();
-
-        for (CreateOp op : tree.ops()) {
-            String model = op.model();
-            FactoryDefinition factory = factories.get(model);
-            if (factory == null) {
-                throw AutonomaError.invalidBody(
-                    "no factory registered for model \"" + model + "\". " +
-                    "Register one with defineFactory(...) and add it to HandlerConfig.factories.");
-            }
-
-            int idx = modelIndex.getOrDefault(model, 0);
-            modelIndex.put(model, idx + 1);
-
-            // Substitute built-in tokens then swap temp ids for real ids.
-            Map<String, Object> resolved = (Map<String, Object>) resolveTokens(
-                new LinkedHashMap<>(op.fields()), testRunId, idx);
-            resolved = swapTempIds(resolved, idMap);
-
-            // Validate through the factory's inputClass and call create.
-            Object callInput;
-            try {
-                callInput = MAPPER.convertValue(resolved, factory.getInputClass());
-            } catch (Exception e) {
-                throw AutonomaError.invalidBody(
-                    "Validation failed for model \"" + model + "\": " + e.getMessage());
-            }
-
-            FactoryContext ctx = new FactoryContext(refs, testRunId, testRunId);
-            Map<String, Object> record;
-            try {
-                record = factory.getCreate().create(callInput, ctx);
-            } catch (AutonomaError ae) {
-                throw ae;
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-
-            if (record == null || record.get("id") == null) {
-                throw new AutonomaError(
-                    "Factory for \"" + model + "\" must return a record dict with \"id\"",
-                    "FACTORY_MISSING_PK", 500);
-            }
-
-            refs.computeIfAbsent(model, k -> new ArrayList<>()).add(record);
-            idMap.put(op.tempId(), record.get("id"));
+        ScenarioDefinition scenario = findScenario(config, name);
+        if (scenario == null) {
+            throw AutonomaError.unknownEnvironment(name);
         }
 
-        // Auth callback gets the first User (case-insensitive).
-        Map<String, Object> firstUser = findFirstUser(refs);
-        String scopeValue = detectScopeValue(refs, config.getScopeField());
-        if (scopeValue == null) scopeValue = testRunId;
+        Object testRunIdRaw = body.get("testRunId");
+        String testRunId = testRunIdRaw instanceof String s && !s.isEmpty() ? s : UUID.randomUUID().toString();
 
-        AuthContext authContext = new AuthContext(scopeValue, refs);
-        AuthResult authResult = config.getAuth().apply(firstUser, authContext);
+        ScenarioUpResult result = scenario.up(new ScenarioUpContext(testRunId));
+        if (result == null) result = ScenarioUpResult.empty();
 
-        if (config.getAfterUp() != null) {
-            HookContext hookCtx = new HookContext(scopeValue, refs);
-            authResult = config.getAfterUp().apply(hookCtx, authResult);
-        }
+        Map<String, Object> teardown = result.teardown() != null ? result.teardown() : Map.of();
+        Map<String, Object> teardownPayload = new LinkedHashMap<>();
+        teardownPayload.put("refs", teardown);
+        teardownPayload.put("testRunId", testRunId);
+        teardownPayload.put("environment", name);
+        String teardownToken = RefsUtil.signRefs(teardownPayload, config.getSigningSecret());
 
-        Map<String, Object> auth = serializeAuthResult(authResult);
+        int expiresInSeconds = config.getExpiresInSeconds() != null
+            ? config.getExpiresInSeconds()
+            : DEFAULT_EXPIRES_IN_SECONDS;
 
-        // Sign refs token with alias dependency info for ordered teardown.
-        Map<String, Object> refsPayload = new LinkedHashMap<>();
-        refsPayload.put("refs", refs);
-        refsPayload.put("testRunId", scopeValue);
-        refsPayload.put("environment", "");
-        refsPayload.put("aliasDependencies", tree.aliasDependencies());
-        refsPayload.put("aliasOwnerModel", tree.aliasOwnerModel());
+        Map<String, Object> responseBody = buildSdkMeta(config);
+        if (result.auth() != null) responseBody.put("auth", serializeAuthResult(result.auth()));
+        responseBody.put("teardownToken", teardownToken);
+        responseBody.put("expiresInSeconds", expiresInSeconds);
 
-        String refsToken = RefsUtil.signRefs(refsPayload, config.getSigningSecret());
-
-        Map<String, Object> responseBody = new LinkedHashMap<>(buildSdkMeta(config));
-        responseBody.put("auth", auth);
-        responseBody.put("refs", refs);
-        responseBody.put("refsToken", refsToken);
         return new HandlerResponse(200, responseBody);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> swapTempIds(Map<String, Object> fields, Map<String, Object> idMap) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> entry : fields.entrySet()) {
-            result.put(entry.getKey(), swapTempIdValue(entry.getValue(), idMap));
-        }
-        return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Object swapTempIdValue(Object value, Map<String, Object> idMap) {
-        if (value instanceof String s && s.startsWith("__temp_")) {
-            Object real = idMap.get(s);
-            return real != null ? real : value;
-        }
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> result = new LinkedHashMap<>();
-            for (Map.Entry<?, ?> e : map.entrySet()) {
-                result.put((String) e.getKey(), swapTempIdValue(e.getValue(), idMap));
-            }
-            return result;
-        }
-        if (value instanceof List<?> list) {
-            List<Object> result = new ArrayList<>(list.size());
-            for (Object v : list) result.add(swapTempIdValue(v, idMap));
-            return result;
-        }
-        return value;
     }
 
     // -----------------------------------------------------------------------
@@ -235,72 +176,42 @@ public final class AutonomaHandler {
     // -----------------------------------------------------------------------
 
     @SuppressWarnings("unchecked")
-    private static HandlerResponse handleDown(HandlerConfig config, Map<String, Object> body) {
-        String refsToken = (String) body.get("refsToken");
-        if (refsToken == null) throw AutonomaError.invalidBody("missing refsToken");
+    private static HandlerResponse handleDown(HandlerConfig config, Map<String, Object> body) throws Exception {
+        Object teardownTokenRaw = body.get("teardownToken");
+        String teardownToken = teardownTokenRaw instanceof String s ? s : null;
+        if (teardownToken == null || teardownToken.isEmpty()) {
+            throw AutonomaError.invalidBody("missing teardownToken");
+        }
 
         Map<String, Object> payload;
         try {
-            payload = RefsUtil.verifyRefs(refsToken, config.getSigningSecret());
+            payload = RefsUtil.verifyRefs(teardownToken, config.getSigningSecret());
         } catch (Exception e) {
-            throw AutonomaError.invalidRefsToken(e.getMessage());
+            throw AutonomaError.invalidTeardownToken(e.getMessage());
         }
 
-        Map<String, List<Map<String, Object>>> refs = new LinkedHashMap<>();
-        Object refsRaw = payload.get("refs");
-        if (refsRaw instanceof Map<?, ?> refsMap) {
-            for (Map.Entry<?, ?> entry : refsMap.entrySet()) {
-                String model = (String) entry.getKey();
-                List<Map<String, Object>> records = (List<Map<String, Object>>) entry.getValue();
-                refs.put(model, records);
+        Map<String, Object> teardown = new LinkedHashMap<>();
+        Object teardownRaw = payload.get("refs");
+        if (teardownRaw instanceof Map<?, ?> teardownMap) {
+            teardown = (Map<String, Object>) teardownMap;
+        }
+
+        Object testRunIdRaw = payload.get("testRunId");
+        String testRunId = testRunIdRaw instanceof String s ? s : "";
+
+        // The verified token is authoritative for routing; any scenario name on
+        // the request body is ignored.
+        Object env = payload.get("environment");
+        String name = env instanceof String s ? s : "";
+
+        if (!name.isEmpty()) {
+            ScenarioDefinition scenario = findScenario(config, name);
+            if (scenario != null) {
+                scenario.down(new ScenarioDownContext(name, teardown, testRunId));
             }
         }
 
-        String testRunId = (String) payload.getOrDefault("testRunId", "");
-        Map<String, Object> aliasDeps = (Map<String, Object>) payload.get("aliasDependencies");
-        Map<String, Object> aliasOwnerModel = (Map<String, Object>) payload.get("aliasOwnerModel");
-
-        if (config.getBeforeDown() != null) {
-            HookContext hookCtx = new HookContext(testRunId, refs);
-            config.getBeforeDown().accept(hookCtx);
-        }
-
-        Map<String, FactoryDefinition> factories = config.getFactories();
-        if (factories == null) factories = Map.of();
-
-        List<String> teardownOrder = PayloadTopo.computeTeardownOrder(refs, aliasDeps, aliasOwnerModel);
-
-        for (String model : teardownOrder) {
-            FactoryDefinition factory = factories.get(model);
-            if (factory == null || factory.getTeardown() == null) {
-                continue;
-            }
-            List<Map<String, Object>> records = refs.getOrDefault(model, List.of());
-            FactoryContext ctx = new FactoryContext(refs, testRunId, testRunId);
-
-            List<Map<String, Object>> reversedRecords = new ArrayList<>(records);
-            Collections.reverse(reversedRecords);
-
-            for (Map<String, Object> record : reversedRecords) {
-                Object tdInput;
-                if (factory.getRefClass() != null) {
-                    try {
-                        tdInput = MAPPER.convertValue(record, factory.getRefClass());
-                    } catch (Exception e) {
-                        tdInput = record;
-                    }
-                } else {
-                    tdInput = record;
-                }
-                try {
-                    factory.getTeardown().teardown(tdInput, ctx);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        }
-
-        Map<String, Object> responseBody = new LinkedHashMap<>(buildSdkMeta(config));
+        Map<String, Object> responseBody = buildSdkMeta(config);
         responseBody.put("ok", true);
         return new HandlerResponse(200, responseBody);
     }
@@ -309,96 +220,19 @@ public final class AutonomaHandler {
     // helpers
     // -----------------------------------------------------------------------
 
-    private static final Pattern TOKEN_RE = Pattern.compile("\\{\\{\\s*([^{}]+?)\\s*\\}\\}");
-    private static final Pattern CYCLE_RE = Pattern.compile("^cycle\\((.*)\\)$");
-
-    /**
-     * Substitute built-in tokens in field values: {{testRunId}}, {{index}},
-     * {{cycle(a,b,c)}}. Throws AutonomaError with code UNRESOLVED_TOKEN for any
-     * other {{token}} that reaches the SDK.
-     */
-    @SuppressWarnings("unchecked")
-    public static Object resolveTokens(Object value, String testRunId, int index) {
-        if (value instanceof String s) {
-            Matcher m = TOKEN_RE.matcher(s);
-            StringBuilder sb = new StringBuilder();
-            while (m.find()) {
-                String token = m.group(1).trim();
-                String replacement;
-                if (token.equals("testRunId")) {
-                    replacement = testRunId;
-                } else if (token.equals("index")) {
-                    replacement = Integer.toString(index);
-                } else {
-                    Matcher cm = CYCLE_RE.matcher(token);
-                    if (cm.matches()) {
-                        String[] rawParts = cm.group(1).split(",", -1);
-                        List<String> parts = new ArrayList<>();
-                        for (String p : rawParts) {
-                            String t = p.trim();
-                            if (t.length() >= 2
-                                && ((t.charAt(0) == '\'' && t.charAt(t.length() - 1) == '\'')
-                                 || (t.charAt(0) == '"' && t.charAt(t.length() - 1) == '"'))) {
-                                t = t.substring(1, t.length() - 1);
-                            }
-                            parts.add(t);
-                        }
-                        replacement = parts.isEmpty() ? "" : parts.get(Math.floorMod(index, parts.size()));
-                    } else {
-                        throw new AutonomaError(
-                            "Unresolved token: {{" + token + "}}",
-                            "UNRESOLVED_TOKEN", 400
-                        );
-                    }
-                }
-                m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
-            }
-            m.appendTail(sb);
-            return sb.toString();
-        }
-        if (value instanceof List<?> list) {
-            List<Object> out = new ArrayList<>(list.size());
-            for (Object v : list) {
-                out.add(resolveTokens(v, testRunId, index));
-            }
-            return out;
-        }
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> out = new LinkedHashMap<>();
-            for (Map.Entry<?, ?> e : map.entrySet()) {
-                out.put((String) e.getKey(), resolveTokens(e.getValue(), testRunId, index));
-            }
-            return out;
-        }
-        return value;
-    }
-
-    private static Map<String, Object> findFirstUser(Map<String, List<Map<String, Object>>> refs) {
-        for (var entry : refs.entrySet()) {
-            String normalized = entry.getKey().toLowerCase();
-            if (("user".equals(normalized) || "users".equals(normalized)) && !entry.getValue().isEmpty()) {
-                return entry.getValue().get(0);
-            }
+    private static ScenarioDefinition findScenario(HandlerConfig config, String name) {
+        for (ScenarioDefinition s : config.getScenarios()) {
+            if (s.name().equals(name)) return s;
         }
         return null;
     }
 
-    private static String normalizeField(String name) {
-        return name.replace("_", "").toLowerCase();
-    }
-
-    private static String detectScopeValue(Map<String, List<Map<String, Object>>> refs, String scopeField) {
-        String scopeNormalized = normalizeField(scopeField);
-        for (List<Map<String, Object>> records : refs.values()) {
-            for (Map<String, Object> record : records) {
-                for (var entry : record.entrySet()) {
-                    if (normalizeField(entry.getKey()).equals(scopeNormalized) && entry.getValue() instanceof String s) {
-                        return s;
-                    }
-                }
-            }
-        }
-        return null;
+    /** Read {@code body.scenario.name} from an untrusted JSON body. */
+    private static String readScenarioName(Map<String, Object> body) {
+        Object scenario = body.get("scenario");
+        if (!(scenario instanceof Map<?, ?> map)) return null;
+        Object nameRaw = map.get("name");
+        return nameRaw instanceof String s ? s : null;
     }
 
     private static Map<String, Object> serializeAuthResult(AuthResult result) {

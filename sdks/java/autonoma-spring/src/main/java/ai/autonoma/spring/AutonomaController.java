@@ -27,9 +27,12 @@ import java.util.Map;
  * public class AutonomaConfig {
  *     @Bean
  *     public AutonomaController autonomaController() {
- *         HandlerConfig config = new HandlerConfig("organizationId", sharedSecret, signingSecret,
- *             (user, ctx) -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer " + generateToken(user))));
- *         config.setFactories(Map.of("User", userFactory, "Organization", orgFactory));
+ *         HandlerConfig config = new HandlerConfig(sharedSecret, signingSecret, List.of(
+ *             Scenario.define("single-user", "One verified user in a fresh org",
+ *                 ctx -> new ScenarioUpResult(
+ *                     AuthResult.ofHeaders(Map.of("Authorization", "Bearer " + mintToken(ctx.testRunId()))),
+ *                     Map.of("userId", userId)),
+ *                 ctx -> deleteUser((String) ctx.teardown().get("userId")))));
  *         return new AutonomaController(config);
  *     }
  * }

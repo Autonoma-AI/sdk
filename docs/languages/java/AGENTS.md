@@ -2,26 +2,24 @@
 
 # Autonoma SDK: read the bundled docs before wiring the endpoint
 
-This package implements the **Autonoma Environment Factory** - a backend endpoint that creates and tears down isolated test data. If you are integrating it, the accurate, version-matched docs ship inside this package. Read them before writing code; your training data may describe an older, adapter-based API that no longer exists.
+This package implements the **Autonoma Environment Factory**. The accurate, version-matched docs ship in the SDK JAR under `autonoma/docs/`; older material may describe the removed factory-driven protocol.
 
-**Start here:** `docs/implement.md`, bundled on the classpath under `autonoma/docs/` inside the `ai.autonoma:autonoma-sdk` JAR (copied there via Maven resources alongside `autonoma/version.txt`).
+Read in this order:
 
-Reading order:
+1. `docs/overview.md` - scenarios-as-code and the ownership model.
+2. `docs/implement.md` - dependencies, scenarios, handler, auth, and deployment.
+3. `docs/scenarios.md` - the `name`/`description`/`up`/`down` contract.
+4. `docs/validation.md` - direct JUnit validation through the real handler.
+5. `docs/protocol.md` - HTTP bodies, teardown tokens, and errors.
+6. `docs/factories.md` - legacy factory migration reference; do not use it for new v2 integrations.
 
-1. `docs/overview.md` - what the Environment Factory is and why it is factory-driven.
-2. `docs/implement.md` - step-by-step setup: dependencies, factories, handler, auth, validate.
-3. `docs/factories.md` - the `FactoryUtil.defineFactory` contract in Java.
-4. `docs/scenarios.md` - the `create` data format (`_alias`/`_ref`).
-5. `docs/protocol.md` - the HTTP wire protocol and error codes.
-6. `docs/validation.md` - dry-running scenarios by calling `AutonomaHandler.handleRequest` from a JUnit test.
+Scenario v2 uses protocol `2.0`. Define scenarios with `Scenario.define(...)`; `up` returns `ScenarioUpResult(auth, teardown)` and `down` receives only the verified teardown state. Register scenarios with `new HandlerConfig(sharedSecret, signingSecret, scenarios)`. There is no scope field, factory registry, create graph, or top-level auth callback. `AutonomaController` mounts the Spring endpoint; `AutonomaHandler.handleRequest` is the core entry point.
 
 Maven coordinates:
 
 | Artifact | Purpose |
 |----------|---------|
-| `ai.autonoma:autonoma-sdk` | Core protocol (HMAC, refs, graph, handler, factories). |
-| `ai.autonoma:autonoma-spring` | Spring Boot server adapter (`AutonomaController`). |
-
-Key facts that differ from older docs: the SDK is **factory-driven** (register factories with `ai.autonoma.sdk.FactoryUtil.defineFactory(create, inputClass[, teardown[, refClass]])`; there is no JDBC/ORM adapter and no SQL fallback). The core entry point is the static `ai.autonoma.sdk.AutonomaHandler.handleRequest(HandlerConfig, HandlerRequest)`, mounted by the Spring adapter's `ai.autonoma.spring.AutonomaController` at `@PostMapping("${autonoma.endpoint:/api/autonoma}")`. Build the config with `new HandlerConfig(scopeField, sharedSecret, signingSecret, auth)` then `setFactories(...)`. The auth callback is a `BiFunction<Map<String,Object>, AuthContext, AuthResult>` and returns an `AuthResult` of cookies, headers, or credentials (`AuthResult.ofCookies/ofHeaders/ofCredentials`) - there is no `token` field. The endpoint is always enabled - HMAC signing is the gate; `setAllowProduction` is deprecated and ignored (gate manually in your handler if you want it dark in your own production deployments). There is no `checkScenario` helper - validate by calling `AutonomaHandler.handleRequest` from a test.
+| `ai.autonoma:autonoma-sdk` | Core Scenario v2 SDK. |
+| `ai.autonoma:autonoma-spring` | Spring Boot adapter. |
 
 <!-- END:autonoma-agent-rules -->

@@ -7,12 +7,16 @@
     <parent>
         <groupId>ai.autonoma</groupId>
         <artifactId>autonoma-parent</artifactId>
-        <version>0.1.0</version>
+        <version>0.1.0</version> <!-- x-release-please-version -->
     </parent>
 
     <artifactId>autonoma-conformance-bridge</artifactId>
     <name>Autonoma SDK Conformance Bridge</name>
     <description>Conformance test bridge for the Java SDK</description>
+
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
 
     <dependencies>
         <dependency>
@@ -27,6 +31,7 @@
     </dependencies>
 
     <build>
+        <finalName>autonoma-conformance-bridge</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

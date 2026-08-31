@@ -106,7 +106,7 @@ public final class RefsUtil {
     }
 
     /**
-     * Verify and decode a refs token. Returns the payload or throws.
+     * Verify and decode a teardown token. Returns the payload or throws.
      */
     public static Map<String, Object> verifyRefs(String token, String secret) {
         String[] parts = token.split("\\.");

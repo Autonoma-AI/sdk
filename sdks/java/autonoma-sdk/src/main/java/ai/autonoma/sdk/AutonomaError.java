@@ -1,5 +1,8 @@
 package ai.autonoma.sdk;
 
+/**
+ * Base error carried across the wire with a stable code and HTTP status.
+ */
 public class AutonomaError extends RuntimeException {
 
     private final String code;
@@ -18,12 +21,17 @@ public class AutonomaError extends RuntimeException {
         return new AutonomaError("Unknown action: " + action, "UNKNOWN_ACTION", 400);
     }
 
+    /** Thrown by up when the request names a scenario that is not registered. */
+    public static AutonomaError unknownEnvironment(String name) {
+        return new AutonomaError("Unknown environment: " + name, "UNKNOWN_ENVIRONMENT", 400);
+    }
+
     public static AutonomaError invalidSignature() {
         return new AutonomaError("Invalid HMAC signature", "INVALID_SIGNATURE", 401);
     }
 
-    public static AutonomaError invalidRefsToken(String reason) {
-        return new AutonomaError("Invalid refs token: " + reason, "INVALID_REFS_TOKEN", 403);
+    public static AutonomaError invalidTeardownToken(String reason) {
+        return new AutonomaError("Invalid teardown token: " + reason, "INVALID_TEARDOWN_TOKEN", 403);
     }
 
     /** @deprecated The SDK no longer gates on production; this is never returned. */
