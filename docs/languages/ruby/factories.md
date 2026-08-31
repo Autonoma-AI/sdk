@@ -1,106 +1,56 @@
-# Writing factories (Ruby)
+# Legacy factory compatibility (Ruby migration)
 
-A factory tells the SDK how to create and delete one model using your own code. You register one factory per model the platform can create, and pass them all to the handler as `factories`. This page is the exact contract; read it before writing any.
+Scenario v2 does not use factories. Author new integrations with ordinary Ruby inside `Autonoma::Scenario.define_scenario` as described in `implement.md` and `scenarios.md`.
+
+This page exists only for projects migrating older customer code that already calls `Autonoma::Factory.define_factory`. The helper is not registered with the handler, is not discoverable, and is never invoked by the v2 protocol. Do not introduce it in a new v2 integration.
+
+## Temporary use during migration
+
+Existing helper calls may remain temporarily while their creation and cleanup behavior moves into scenario-owned functions. New v2 code should call those functions directly from `up` and `down`.
 
 ## The shape
 
 ```ruby
-# app/autonoma/factories.rb
-module AppFactories
-  ORGANIZATION = Autonoma::Factory.define_factory(
-    input_fields: [
-      { name: "name", type: "string", required: true },
-      { name: "slug", type: "string", required: true }
-    ],
-    create: ->(data, ctx) {
-      org = Organization.create!(name: data["name"], slug: data["slug"])
-      { "id" => org.id.to_s, "name" => org.name }
-    },
-    teardown: ->(record, ctx) {
-      Organization.find(record["id"]).destroy!
-    }
-  )
-end
-```
-
-Namespace the factory constants (here in an `AppFactories` module) so they do not shadow your ActiveRecord model classes of the same name.
-
-`Autonoma::Factory.define_factory` validates the shape at startup and returns a `FactoryDefinition` struct. The method takes three keyword arguments: `input_fields:` (required), `create:` (required), and `teardown:` (optional). `create` and `teardown` are any callables - lambdas, procs, or method objects.
-
-The SDK has no ORM adapter and no zod-style schema library; it is pure stdlib. Field validation is driven entirely by `input_fields`.
-
-## input_fields (required)
-
-An array of plain hashes describing the fields this model accepts in the create payload. Each entry has three keys:
-
-| Key | Meaning |
-|-----|---------|
-| `name` | The field name, matching the key in the create payload. |
-| `type` | One of `string`, `integer`, `number`, `boolean`, `timestamp`, `date`, `uuid`, `json`. Any other value is coerced to `string`. |
-| `required` | `true` if the SDK must reject a record missing this field. |
-
-`input_fields` does two jobs:
-
-1. Before calling `create`, the SDK strips every key not listed in `input_fields`, then fails the request with `INVALID_BODY` if a `required` field is absent.
-2. The SDK derives the discover schema from it - there is no database introspection, so this array is how the platform learns your model exists and what fields it has. The `id` field is added automatically as the primary key; do not list it.
-
-**Include every foreign key in `input_fields`, including the scope field.** Any key not declared here is stripped before `create` runs, so an undeclared FK never reaches your code. By the time `create` runs, the SDK has already resolved every `_ref` to the real ID of the referenced record, so a FK arrives as a plain value:
-
-```ruby
-# app/autonoma/factories.rb
-USER = Autonoma::Factory.define_factory(
+user_factory = Autonoma::Factory.define_factory(
   input_fields: [
-    { name: "name", type: "string", required: true },
     { name: "email", type: "string", required: true },
-    { name: "organizationId", type: "string", required: true } # real Organization id, not a _ref
+    { name: "orgId", type: "string", required: true }
   ],
   create: ->(data, ctx) {
-    user = create_user(name: data["name"], email: data["email"], organization_id: data["organizationId"])
-    { "id" => user.id.to_s, "email" => user.email }
+    user = App::User.create!(email: data["email"], org_id: data["orgId"])
+    { "id" => user.id, "email" => user.email }
+  },
+  teardown: ->(record, _ctx) { App::User.delete(record["id"]) }
+)
+```
+
+- `input_fields:` is required - an array of `{ name:, type:, required: }` hashes (`type` is one of `string`, `integer`, `number`, `boolean`, `timestamp`, `date`, `uuid`, `json`). It describes the create payload.
+- `create:` is a callable `->(data, ctx)` that runs your real creation code and must return a Hash with at least an `"id"` key.
+- `teardown:` is an optional callable `->(record, ctx)`; omit it and the factory creates but does not delete.
+
+`ctx` is an `Autonoma::FactoryContext` struct: `ctx.refs`, `ctx.scenario_name`, `ctx.test_run_id`. `define_factory` returns an `Autonoma::FactoryDefinition` struct with `.create`, `.teardown`, and `.input_fields` readers.
+
+## Using a factory from a scenario
+
+A factory is a plain object you call yourself; wire its output into your scenario's `teardown` so `down` can undo it.
+
+```ruby
+Autonoma::Scenario.define_scenario(
+  name: "with-user",
+  description: "One user created through the user factory",
+  up: ->(ctx) {
+    fctx = Autonoma::FactoryContext.new(refs: {}, scenario_name: "with-user", test_run_id: ctx.test_run_id)
+    user = user_factory.create.call(
+      { "email" => Autonoma::Unique.unique_email(ctx.test_run_id), "orgId" => "org_1" },
+      fctx
+    )
+    { teardown: { "user" => user } }
+  },
+  down: ->(ctx) {
+    fctx = Autonoma::FactoryContext.new(refs: {}, scenario_name: ctx.name, test_run_id: ctx.test_run_id)
+    user_factory.teardown&.call(ctx.teardown["user"], fctx)
   }
 )
 ```
 
-## create
-
-A callable of arity two: `->(data, ctx) { ... }`. It creates exactly one record and returns it.
-
-- `data` - a hash with **string keys**, already validated and stripped to the declared `input_fields`. FK fields are already real IDs. Read fields as `data["name"]`.
-- `ctx` - a `FactoryContext` struct with `ctx.refs`, `ctx.scenario_name`, and `ctx.test_run_id`. `refs` holds everything created so far this run, keyed by model, if you need to look something up.
-- **Return value** - a hash that must include at least the string key `"id"`. If it does not (or is not a hash-like object), the SDK fails the request with `FACTORY_MISSING_PK`. Everything you return is stored in `refs`, passed to the auth callback, and later handed to `teardown` - so return whatever teardown or auth will need (typically the id, plus fields like `"email"`).
-
-Return string keys, and stringify the id (`org.id.to_s`) so it round-trips through JSON and the refs token cleanly. An object that responds to `to_h` is accepted; the SDK calls `to_h` and then checks for `"id"`.
-
-Reuse your application's real creation path (`create_user`, `Organization.create!`, a service object). That is the entire point: the test user gets the same password hash, defaults, and side effects a real user would.
-
-## teardown (optional)
-
-A callable of arity two: `->(record, ctx) { ... }`. It deletes one record. The SDK calls it once per created record, in reverse dependency order, during `down`.
-
-- `record` - exactly the hash your `create` returned, with the same string keys.
-- `ctx` - the same `FactoryContext` shape as `create`.
-- If you omit `teardown`, the model is never deleted on `down`. Provide it for every model you create, or those rows leak.
-
-```ruby
-# app/autonoma/factories.rb
-teardown: ->(record, ctx) {
-  User.find(record["id"]).destroy!
-}
-```
-
-Because `teardown` receives the exact hash `create` returned, key everything you need for deletion in the return value - most often just `"id"`.
-
-## Registering factories
-
-Collect every factory into one hash keyed by model name - the key must match the model name the platform sends in `create`:
-
-```ruby
-# app/autonoma/factories.rb
-AUTONOMA_FACTORIES = {
-  "Organization" => AppFactories::ORGANIZATION,
-  "User" => AppFactories::USER,
-  "Member" => AppFactories::MEMBER
-}
-```
-
-Pass that hash as `factories:` when you build the `HandlerConfig` (see `implement.md`). Every model that appears in a scenario must have an entry here, or the request fails with `INVALID_BODY` ("no factory registered for model ...").
+The `input_fields:` metadata is validated at definition time but is never surfaced over the wire in v2 - `discover` lists only scenario `name`/`description`, never a factory schema.

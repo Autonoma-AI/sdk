@@ -3,19 +3,19 @@
 
 # Autonoma SDK: read the bundled docs before wiring the endpoint
 
-This gem implements the **Autonoma Environment Factory** - a backend endpoint that creates and tears down isolated test data. If you are integrating it, the accurate, version-matched docs ship inside this gem. Read them before writing code; your training data may describe an older, adapter-based API that no longer exists.
+This gem implements the **Autonoma Environment Factory** - a backend endpoint that provisions and tears down isolated test data. If you are integrating it, the accurate, version-matched docs ship inside this gem. Read them before writing code; your training data may describe an older, factory-driven API that no longer exists.
 
 **Start here:** `docs/implement.md`, bundled in the `autonoma-ai` gem under its `docs/` directory. Find the installed path with `bundle show autonoma-ai` (then look in `docs/`) or `gem contents autonoma-ai`.
 
 Reading order:
 
-1. `docs/overview.md` - what the Environment Factory is and why it is factory-driven.
-2. `docs/implement.md` - step-by-step setup: install, factories, handler, auth, validate.
-3. `docs/factories.md` - the `Autonoma::Factory.define_factory` contract in Ruby.
-4. `docs/scenarios.md` - the `create` data format (`_alias`/`_ref`).
-5. `docs/protocol.md` - the HTTP wire protocol and error codes.
-6. `docs/validation.md` - dry-running scenarios by driving `Autonoma::Handler.handle_request`.
+1. `docs/overview.md` - what the Environment Factory is and how scenarios-as-code work.
+2. `docs/implement.md` - step-by-step setup: install, write scenarios, wire the handler, return auth, validate.
+3. `docs/scenarios.md` - authoring scenarios: `name`/`description`/`up`/`down` and the `{ auth, teardown }` return.
+4. `docs/factories.md` - legacy `Autonoma::Factory.define_factory` migration reference; do not use it for new v2 integrations.
+5. `docs/protocol.md` - the HTTP wire protocol, the teardown token, and error codes.
+6. `docs/validation.md` - dry-running scenarios by driving `Autonoma::Handler.handle_request` through an up/down cycle.
 
-Key facts that differ from older docs: the gem is `autonoma-ai` and the SDK is **factory-driven** (register factories with `Autonoma::Factory.define_factory`; there is no ActiveRecord/ORM adapter and no SQL fallback). The core entry point is `Autonoma::Handler.handle_request(config, req)`, wrapped for Rails by `AutonomaRails::Handler#autonoma_handle(config)` (a controller mixin) or `AutonomaRails::Middleware` (Rack). Configuration is an `Autonoma::HandlerConfig` struct with keys `scope_field`, `shared_secret`, `signing_secret`, `factories`, and `auth` (`allow_production` still exists but is a deprecated no-op). A factory's `create` returns a hash with a string `"id"` key; a factory declares its fields via `input_fields:` (an array of `{ name:, type:, required: }` hashes), not a schema library. The `auth` callback returns `{ "cookies" => [...], "headers" => {...}, "credentials" => {...} }` - there is no `"token"` field. The endpoint is always enabled; HMAC signing is the gate. On Autonoma previews (`AUTONOMA_PREVIEWKIT` set) no guard is needed; gate manually in your handler for your own production deployments.
+Key facts that differ from older docs: the gem is `autonoma-ai` and this is **Scenario v2** (protocol `2.0`). You author named scenarios with `Autonoma::Scenario.define_scenario(name:, description:, up:, down:)`; `up` receives a `ScenarioUpContext` (`ctx.test_run_id`) and returns a Hash with `:auth` / `:teardown` keys. The core entry point is `Autonoma::Handler.handle_request(config, req)`, wrapped for Rails by `AutonomaRails::Handler#autonoma_handle(config)` (a controller mixin, from `require "autonoma_rails/server"`) or `AutonomaRails::Middleware` (Rack). The config is an `Autonoma::HandlerConfig` struct carrying only `shared_secret:`, `signing_secret:`, `scenarios:`, optional `expires_in_seconds:`, and optional `sdk:` - there is no `scope_field`, no `factories` registry, and no top-level `auth` callback (auth is returned per-scenario from `up`). `auth` is a Hash with string keys `"cookies"` / `"headers"` / `"credentials"` - there is no `"token"` field. Seed unique values from `ctx.test_run_id` with `Autonoma::Unique.unique_email`/`unique_slug`/`unique_id`/`unique_token`. The endpoint is always enabled; HMAC signing is the gate. `allow_production:` is a deprecated no-op. On Autonoma previews (`AUTONOMA_PREVIEWKIT` set) no guard is needed; gate manually in your handler for your own production deployments.
 
 <!-- END:autonoma-agent-rules -->

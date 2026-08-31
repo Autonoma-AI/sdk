@@ -8,8 +8,15 @@ require "date"
 require "time"
 
 module Autonoma
+  # Sign / verify the teardown token: a JWT-like token (header.payload.signature)
+  # over HMAC-SHA256 - not a full JWT library, to avoid dependencies.
+  #
+  # The payload is { "refs" => <arbitrary JSON>, "testRunId" => <string>,
+  # "environment" => <scenario name> }. refs is whatever a scenario's up
+  # returned; it is signed at up and handed back to the scenario's down verbatim.
+  # environment carries the scenario name so down can route to the right
+  # teardown (named "environment" for wire/back-compat reasons).
   module Refs
-    # Sign a refs payload into a 3-part token string.
     def self.sign_refs(payload, secret)
       header = base64url_encode(JSON.generate({ alg: "HS256", typ: "REFS" }))
       body = base64url_encode(JSON.generate(make_json_safe(payload)))
@@ -17,7 +24,7 @@ module Autonoma
       "#{header}.#{body}.#{signature}"
     end
 
-    # Verify and decode a refs token. Returns the payload hash or raises.
+    # Verify and decode a teardown token. Returns the payload hash or raises.
     def self.verify_refs(token, secret)
       parts = token.split(".")
       raise "malformed token" unless parts.length == 3
@@ -36,7 +43,6 @@ module Autonoma
     end
 
     def self.base64url_decode(data)
-      # Add padding back
       padding = 4 - (data.length % 4)
       data += "=" * padding if padding != 4
       Base64.urlsafe_decode64(data)
@@ -47,8 +53,9 @@ module Autonoma
       Base64.urlsafe_encode64(sig, padding: false)
     end
 
-    # Recursively convert non-JSON-safe types (Time, DateTime, BigDecimal, etc.)
-    # to strings so that JSON.generate does not raise.
+    # Recursively convert non-JSON-safe types (Time, DateTime, BigDecimal, ...)
+    # to strings so JSON.generate does not raise. The Rails adapter reuses this
+    # to serialize response bodies that may carry such values.
     def self.make_json_safe(obj)
       case obj
       when Hash

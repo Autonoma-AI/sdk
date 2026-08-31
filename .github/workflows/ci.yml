@@ -213,6 +213,11 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('sdks/rust/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      # Ruby (boots the stdlib-only Ruby protocol server; no gems needed).
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
       # tsx + the TS SDK source (the servers and runner import it directly).
       - name: Install TS dependencies
         working-directory: sdks/typescript
@@ -223,7 +228,7 @@ jobs:
         working-directory: sdks/python
         run: pip install -e ".[flask]"
 
-      # Boots the TypeScript, Python, Go, and Rust v2 endpoints and runs
+      # Boots the TypeScript, Python, Go, Rust, and Ruby v2 endpoints and runs
       # protocol/suites/* against each with protocol/test-runner.ts.
       - name: Run protocol suites
-        run: PYTHON=python node protocol/run-suites.mjs typescript python go rust
+        run: PYTHON=python node protocol/run-suites.mjs typescript python go rust ruby

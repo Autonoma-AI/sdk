@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 module Autonoma
+  # Base error carried across the wire with a stable code and HTTP status.
   class AutonomaError < StandardError
-    attr_reader :message, :code, :status
+    attr_reader :code, :status
 
     def initialize(message, code, status)
-      @message = message
       @code = code
       @status = status
       super(message)
@@ -14,24 +14,30 @@ module Autonoma
 
   module Errors
     def self.invalid_signature
-      AutonomaError.new("Invalid signature", "INVALID_SIGNATURE", 401)
+      AutonomaError.new("Invalid HMAC signature", "INVALID_SIGNATURE", 401)
     end
 
     def self.invalid_body(detail)
-      AutonomaError.new("Invalid body: #{detail}", "INVALID_BODY", 400)
+      AutonomaError.new("Invalid request body: #{detail}", "INVALID_BODY", 400)
     end
 
     def self.unknown_action(action)
       AutonomaError.new("Unknown action: #{action}", "UNKNOWN_ACTION", 400)
     end
 
+    # Raised by up when the request names a scenario that is not registered.
+    def self.unknown_environment(name)
+      AutonomaError.new("Unknown environment: #{name}", "UNKNOWN_ENVIRONMENT", 400)
+    end
+
     # Deprecated - the SDK no longer gates on production; this is never raised.
+    # HMAC signing is the gate.
     def self.production_blocked
       AutonomaError.new("Environment factory is disabled", "PRODUCTION_BLOCKED", 404)
     end
 
-    def self.invalid_refs_token(detail)
-      AutonomaError.new("Invalid refs token: #{detail}", "INVALID_REFS_TOKEN", 403)
+    def self.invalid_teardown_token(detail)
+      AutonomaError.new("Invalid teardown token: #{detail}", "INVALID_TEARDOWN_TOKEN", 403)
     end
 
     def self.same_secrets
