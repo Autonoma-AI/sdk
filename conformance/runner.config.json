@@ -32,6 +32,12 @@
       "args": ["-Ilib", "bridges/conformance_bridge.rb"],
       "cwd": "../sdks/ruby",
       "modules": ["hmac", "refs"]
+    },
+    "java": {
+      "command": "java",
+      "args": ["-jar", "conformance-bridge/target/autonoma-conformance-bridge.jar"],
+      "cwd": "../sdks/java",
+      "modules": ["hmac", "refs"]
     }
   }
 }

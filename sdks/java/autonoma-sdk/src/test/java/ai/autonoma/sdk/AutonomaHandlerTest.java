@@ -1,476 +1,229 @@
 package ai.autonoma.sdk;
 
-import ai.autonoma.sdk.types.*;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import ai.autonoma.sdk.types.AuthResult;
+import ai.autonoma.sdk.types.HandlerConfig;
+import ai.autonoma.sdk.types.HandlerRequest;
+import ai.autonoma.sdk.types.HandlerResponse;
+import ai.autonoma.sdk.types.ScenarioDefinition;
+import ai.autonoma.sdk.types.ScenarioUpResult;
 import org.junit.jupiter.api.Test;
 
-import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiFunction;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@SuppressWarnings("unused")
 class AutonomaHandlerTest {
 
-    // --- Input model classes for tests ---
+    private static final String SHARED = "shared";
+    private static final String SIGNING = "signing";
 
-    public static class OrganizationInput {
-        public String name;
+    // --- Helpers ---
+
+    private static HandlerRequest signedReq(Map<String, Object> body, String secret) {
+        String json = RefsUtil.serializeToJson(body);
+        return new HandlerRequest(json, Map.of("x-signature", HmacUtil.signBody(json, secret)));
     }
 
-    public static class UserInput {
-        public String email;
-        public String name;
-        @JsonProperty("organization_id")
-        public String organizationId;
+    private static HandlerRequest signedReqRaw(String body, String secret) {
+        return new HandlerRequest(body, Map.of("x-signature", HmacUtil.signBody(body, secret)));
     }
+
+    private static List<ScenarioDefinition> testScenarios(List<String> downCalls) {
+        return List.of(
+            Scenario.define(
+                "standard",
+                "A standard seeded environment",
+                ctx -> new ScenarioUpResult(
+                    AuthResult.ofHeaders(Map.of("Authorization", "Bearer " + ctx.testRunId())),
+                    Map.of("userId", "user-" + ctx.testRunId())),
+                ctx -> {
+                    if (downCalls != null) downCalls.add(ctx.name() + ":" + ctx.testRunId());
+                }),
+            Scenario.define(
+                "empty",
+                "Nothing seeded",
+                ctx -> ScenarioUpResult.empty())
+        );
+    }
+
+    private static HandlerConfig baseConfig(List<String> downCalls) {
+        return new HandlerConfig(SHARED, SIGNING, testScenarios(downCalls));
+    }
+
+    private static Map<String, Object> body(Object... kv) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        for (int i = 0; i < kv.length; i += 2) {
+            m.put((String) kv[i], kv[i + 1]);
+        }
+        return m;
+    }
+
+    // --- Request gate ---
 
     @Test
     void handleRequest_invalidSignature() {
-        HandlerConfig config = new HandlerConfig("orgId", "shared", "signing", dummyAuth());
-        config.setFactories(Map.of());
-        HandlerRequest req = new HandlerRequest(
-            "{\"action\":\"discover\"}",
-            Map.of("x-signature", "wrong")
-        );
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null),
+            new HandlerRequest("{\"action\":\"discover\"}", Map.of("x-signature", "invalid")));
         assertEquals(401, resp.status());
         assertEquals("INVALID_SIGNATURE", resp.body().get("code"));
     }
 
     @Test
     void handleRequest_sameSecrets() {
-        HandlerConfig config = new HandlerConfig("orgId", "same", "same", dummyAuth());
-        HandlerRequest req = new HandlerRequest("{}", Map.of());
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+        HandlerConfig config = new HandlerConfig("same", "same");
+        HandlerResponse resp = AutonomaHandler.handleRequest(config,
+            new HandlerRequest("{\"action\":\"discover\"}", Map.of("x-signature", "x")));
         assertEquals(500, resp.status());
         assertEquals("SAME_SECRETS", resp.body().get("code"));
     }
 
     @Test
-    void handleRequest_validSignature_missingAction() {
-        String body = "{}";
-        String secret = "shared-secret";
-        String sig = HmacUtil.signBody(body, secret);
+    void handleRequest_invalidBody() {
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null), signedReqRaw("not json", SHARED));
+        assertEquals(400, resp.status());
+        assertEquals("INVALID_BODY", resp.body().get("code"));
+    }
 
-        HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+    @Test
+    void handleRequest_missingAction() {
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null), signedReq(body(), SHARED));
         assertEquals(400, resp.status());
         assertEquals("INVALID_BODY", resp.body().get("code"));
     }
 
     @Test
     void handleRequest_unknownAction() {
-        String body = "{\"action\":\"nope\"}";
-        String secret = "shared-secret";
-        String sig = HmacUtil.signBody(body, secret);
-
-        HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null),
+            signedReq(body("action", "nonexistent"), SHARED));
         assertEquals(400, resp.status());
         assertEquals("UNKNOWN_ACTION", resp.body().get("code"));
     }
 
-    @Test
-    void handleRequest_invalidJson() {
-        String body = "not json";
-        String secret = "shared-secret";
-        String sig = HmacUtil.signBody(body, secret);
+    // --- discover ---
 
-        HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-        assertEquals(400, resp.status());
-        assertEquals("INVALID_BODY", resp.body().get("code"));
+    @Test
+    @SuppressWarnings("unchecked")
+    void discover() {
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null), signedReq(body("action", "discover"), SHARED));
+        assertEquals(200, resp.status());
+        assertEquals("2.0", resp.body().get("version"));
+
+        assertInstanceOf(List.class, resp.body().get("scenarios"));
+        List<Map<String, Object>> scenarios = (List<Map<String, Object>>) resp.body().get("scenarios");
+        assertEquals(2, scenarios.size());
+        assertEquals("standard", scenarios.get(0).get("name"));
+        assertFalse(((String) scenarios.get(0).get("description")).isEmpty());
+
+        // discover must never leak a create/schema shape.
+        assertFalse(resp.body().containsKey("schema"));
     }
 
+    // --- up ---
+
     @Test
-    void afterUpHookModifiesAuthResult() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
-            (data, ctx) -> {
-                OrganizationInput input = (OrganizationInput) data;
-                Map<String, Object> result = new LinkedHashMap<>();
-                result.put("id", "org-1");
-                result.put("name", input.name);
-                return result;
-            },
-            OrganizationInput.class
-        )));
-        config.setAfterUp((hookCtx, authResult) -> {
-            assertNotNull(hookCtx.scenarioName());
-            assertNotNull(hookCtx.refs());
-            return new AuthResult(
-                authResult.cookies(),
-                authResult.headers(),
-                Map.of("extraKey", "extraValue")
-            );
-        });
-
-        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"Org\"}]},\"testRunId\":\"run-123\"}";
-        String sig = HmacUtil.signBody(body, secret);
-
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-
+    @SuppressWarnings("unchecked")
+    void up_returnsEnvelope() {
+        Map<String, Object> req = body("action", "up", "scenario", Map.of("name", "standard"), "testRunId", "run-1");
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null), signedReq(req, SHARED));
         assertEquals(200, resp.status());
-        @SuppressWarnings("unchecked")
+        assertEquals("2.0", resp.body().get("version"));
+
+        String token = (String) resp.body().get("teardownToken");
+        assertEquals(3, token.split("\\.").length);
+        assertEquals(3600, ((Number) resp.body().get("expiresInSeconds")).intValue());
+
         Map<String, Object> auth = (Map<String, Object>) resp.body().get("auth");
-        assertNotNull(auth);
-        @SuppressWarnings("unchecked")
-        Map<String, String> credentials = (Map<String, String>) auth.get("credentials");
-        assertNotNull(credentials);
-        assertEquals("extraValue", credentials.get("extraKey"));
+        Map<String, Object> headers = (Map<String, Object>) auth.get("headers");
+        assertEquals("Bearer run-1", headers.get("Authorization"));
+
+        // The duplicated plaintext refs and the old refsToken field are gone.
+        assertFalse(resp.body().containsKey("refs"));
+        assertFalse(resp.body().containsKey("refsToken"));
     }
 
     @Test
-    void beforeDownHookIsCalled() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
+    void up_customExpires() {
+        HandlerConfig config = baseConfig(null).setExpiresInSeconds(60);
+        Map<String, Object> req = body("action", "up", "scenario", Map.of("name", "empty"), "testRunId", "r");
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, signedReq(req, SHARED));
+        assertEquals(60, ((Number) resp.body().get("expiresInSeconds")).intValue());
+        // The empty scenario returns nothing, so no auth on the envelope.
+        assertFalse(resp.body().containsKey("auth"));
+    }
 
-        AtomicBoolean hookCalled = new AtomicBoolean(false);
+    @Test
+    void up_unknownEnvironment() {
+        Map<String, Object> req = body("action", "up", "scenario", Map.of("name", "does-not-exist"), "testRunId", "r");
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null), signedReq(req, SHARED));
+        assertEquals(400, resp.status());
+        assertEquals("UNKNOWN_ENVIRONMENT", resp.body().get("code"));
+    }
 
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of());
-        config.setBeforeDown(hookCtx -> {
-            hookCalled.set(true);
-            assertEquals("run-123", hookCtx.scenarioName());
-            assertNotNull(hookCtx.refs());
-        });
+    @Test
+    void up_missingScenarioName() {
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null),
+            signedReq(body("action", "up", "testRunId", "r"), SHARED));
+        assertEquals(400, resp.status());
+        assertEquals("INVALID_BODY", resp.body().get("code"));
+    }
 
-        String refsToken = RefsUtil.signRefs(
-            Map.of("refs", Map.of("Organization", List.of(Map.of("id", "org-1"))), "testRunId", "run-123", "environment", ""),
-            signingSecret
-        );
+    // --- down ---
 
-        String body = "{\"action\":\"down\",\"refsToken\":\"" + refsToken + "\"}";
-        String sig = HmacUtil.signBody(body, secret);
+    @Test
+    void down_validToken() {
+        List<String> downCalls = new ArrayList<>();
+        HandlerConfig config = baseConfig(downCalls);
 
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
+        Map<String, Object> upReq = body("action", "up", "scenario", Map.of("name", "standard"), "testRunId", "run-td");
+        String token = (String) AutonomaHandler.handleRequest(config, signedReq(upReq, SHARED)).body().get("teardownToken");
 
+        Map<String, Object> downReq = body("action", "down", "teardownToken", token, "testRunId", "run-td");
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, signedReq(downReq, SHARED));
         assertEquals(200, resp.status());
-        assertTrue(hookCalled.get(), "beforeDown hook should have been called");
+        assertEquals(Boolean.TRUE, resp.body().get("ok"));
+        assertEquals(List.of("standard:run-td"), downCalls);
     }
 
-    // -- Factory tests --
-
     @Test
-    void factoryCreateCalled() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-        AtomicBoolean factoryCalled = new AtomicBoolean(false);
+    void down_routesByTokenEnvironment() {
+        List<String> downCalls = new ArrayList<>();
+        HandlerConfig config = baseConfig(downCalls);
 
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
-            (data, ctx) -> {
-                factoryCalled.set(true);
-                OrganizationInput input = (OrganizationInput) data;
-                Map<String, Object> result = new LinkedHashMap<>();
-                result.put("id", "factory-org-1");
-                result.put("name", input.name);
-                return result;
-            },
-            OrganizationInput.class
-        )));
+        Map<String, Object> upReq = body("action", "up", "scenario", Map.of("name", "standard"), "testRunId", "run-tok");
+        String token = (String) AutonomaHandler.handleRequest(config, signedReq(upReq, SHARED)).body().get("teardownToken");
 
-        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"FactoryOrg\"}]},\"testRunId\":\"run-factory\"}";
-        String sig = HmacUtil.signBody(body, secret);
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-
+        // No scenario.name on the down request - the handler must recover it
+        // from the verified token's environment.
+        Map<String, Object> downReq = body("action", "down", "teardownToken", token);
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, signedReq(downReq, SHARED));
         assertEquals(200, resp.status());
-        assertTrue(factoryCalled.get(), "Factory create should have been called");
-
-        @SuppressWarnings("unchecked")
-        Map<String, List<Map<String, Object>>> refs = (Map<String, List<Map<String, Object>>>) resp.body().get("refs");
-        assertEquals("factory-org-1", refs.get("Organization").get(0).get("id"));
+        assertEquals(List.of("standard:run-tok"), downCalls);
     }
 
     @Test
-    void factoryWithAliasRefResolution() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-        AtomicReference<Object> receivedData = new AtomicReference<>();
-
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of(
-            "Organization", FactoryUtil.defineFactory(
-                (data, ctx) -> {
-                    OrganizationInput input = (OrganizationInput) data;
-                    Map<String, Object> r = new LinkedHashMap<>();
-                    r.put("id", "resolved-org-id");
-                    r.put("name", input.name);
-                    return r;
-                },
-                OrganizationInput.class
-            ),
-            "User", FactoryUtil.defineFactory(
-                (data, ctx) -> {
-                    receivedData.set(data);
-                    UserInput input = (UserInput) data;
-                    Map<String, Object> r = new LinkedHashMap<>();
-                    r.put("id", "user-1");
-                    r.put("email", input.email);
-                    r.put("organization_id", input.organizationId);
-                    return r;
-                },
-                UserInput.class
-            )
-        ));
-
-        // Use _alias/_ref to wire the FK
-        String body = "{\"action\":\"up\",\"create\":{" +
-            "\"Organization\":[{\"name\":\"Org\",\"_alias\":\"org1\"}]," +
-            "\"User\":[{\"email\":\"a@b.com\",\"name\":\"A\",\"organization_id\":{\"_ref\":\"org1\"}}]" +
-            "},\"testRunId\":\"run-fk\"}";
-        String sig = HmacUtil.signBody(body, secret);
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-
-        assertEquals(200, resp.status());
-        assertNotNull(receivedData.get(), "User factory should have been called");
-        UserInput userInput = (UserInput) receivedData.get();
-        assertEquals("resolved-org-id", userInput.organizationId,
-            "Factory should receive the resolved org ID, not a temp ID");
+    void down_invalidTeardownToken() {
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null),
+            signedReq(body("action", "down", "teardownToken", "tampered.token.value"), SHARED));
+        assertEquals(403, resp.status());
+        assertEquals("INVALID_TEARDOWN_TOKEN", resp.body().get("code"));
     }
 
     @Test
-    void factoryMissingPKFieldReturnsError() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
-            (data, ctx) -> {
-                Map<String, Object> r = new LinkedHashMap<>();
-                r.put("name", ((OrganizationInput) data).name); // missing "id"
-                return r;
-            },
-            OrganizationInput.class
-        )));
-
-        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"NoPK\"}]},\"testRunId\":\"run-nopk\"}";
-        String sig = HmacUtil.signBody(body, secret);
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-
-        assertEquals(500, resp.status());
-        assertEquals("FACTORY_MISSING_PK", resp.body().get("code"));
-    }
-
-    @Test
-    void factoryTeardownCalledPerRecordInReverseOrder() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-        List<String> teardownCalls = Collections.synchronizedList(new ArrayList<>());
-
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
-            (data, ctx) -> {
-                OrganizationInput input = (OrganizationInput) data;
-                Map<String, Object> r = new LinkedHashMap<>();
-                r.put("id", "org-" + input.name);
-                r.put("name", input.name);
-                return r;
-            },
-            OrganizationInput.class,
-            (record, ctx) -> {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> rec = (Map<String, Object>) record;
-                teardownCalls.add((String) rec.get("id"));
-            }
-        )));
-
-        // First create
-        String upBody = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"A\"},{\"name\":\"B\"}]},\"testRunId\":\"run-teardown\"}";
-        String upSig = HmacUtil.signBody(upBody, secret);
-        HandlerRequest upReq = new HandlerRequest(upBody, Map.of("x-signature", upSig));
-        HandlerResponse upResp = AutonomaHandler.handleRequest(config, upReq);
-        assertEquals(200, upResp.status());
-        String refsToken = (String) upResp.body().get("refsToken");
-
-        // Then teardown
-        String downBody = "{\"action\":\"down\",\"refsToken\":\"" + refsToken + "\"}";
-        String downSig = HmacUtil.signBody(downBody, secret);
-        HandlerRequest downReq = new HandlerRequest(downBody, Map.of("x-signature", downSig));
-        HandlerResponse downResp = AutonomaHandler.handleRequest(config, downReq);
-
-        assertEquals(200, downResp.status());
-        assertEquals(2, teardownCalls.size());
-        // Reverse order: B first, then A
-        assertEquals(List.of("org-B", "org-A"), teardownCalls);
-    }
-
-    @Test
-    void noFactoryTeardownSkipsModel() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of("Organization", FactoryUtil.defineFactory(
-            (data, ctx) -> {
-                OrganizationInput input = (OrganizationInput) data;
-                Map<String, Object> r = new LinkedHashMap<>();
-                r.put("id", "org-1");
-                r.put("name", input.name);
-                return r;
-            },
-            OrganizationInput.class
-            // No teardown
-        )));
-
-        String upBody = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"Org\"}]},\"testRunId\":\"run-no-td\"}";
-        String upSig = HmacUtil.signBody(upBody, secret);
-        HandlerRequest upReq = new HandlerRequest(upBody, Map.of("x-signature", upSig));
-        HandlerResponse upResp = AutonomaHandler.handleRequest(config, upReq);
-        assertEquals(200, upResp.status());
-
-        String refsToken = (String) upResp.body().get("refsToken");
-        String downBody = "{\"action\":\"down\",\"refsToken\":\"" + refsToken + "\"}";
-        String downSig = HmacUtil.signBody(downBody, secret);
-        HandlerRequest downReq = new HandlerRequest(downBody, Map.of("x-signature", downSig));
-        HandlerResponse downResp = AutonomaHandler.handleRequest(config, downReq);
-
-        assertEquals(200, downResp.status());
-        // No teardown and no SQL fallback -- just skipped
-    }
-
-    @Test
-    void factoryContextContainsRefsOfPreviouslyCreatedModels() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-        AtomicReference<FactoryContext> userCtx = new AtomicReference<>();
-
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of(
-            "Organization", FactoryUtil.defineFactory(
-                (data, ctx) -> {
-                    OrganizationInput input = (OrganizationInput) data;
-                    Map<String, Object> r = new LinkedHashMap<>();
-                    r.put("id", "org-ctx");
-                    r.put("name", input.name);
-                    return r;
-                },
-                OrganizationInput.class
-            ),
-            "User", FactoryUtil.defineFactory(
-                (data, ctx) -> {
-                    userCtx.set(ctx);
-                    UserInput input = (UserInput) data;
-                    Map<String, Object> r = new LinkedHashMap<>();
-                    r.put("id", "user-ctx");
-                    r.put("email", input.email);
-                    r.put("organization_id", input.organizationId);
-                    return r;
-                },
-                UserInput.class
-            )
-        ));
-
-        // Use _alias/_ref so topo order puts Organization before User
-        String body = "{\"action\":\"up\",\"create\":{" +
-            "\"Organization\":[{\"name\":\"Org\",\"_alias\":\"org1\"}]," +
-            "\"User\":[{\"email\":\"x@y.com\",\"name\":\"X\",\"organization_id\":{\"_ref\":\"org1\"}}]" +
-            "},\"testRunId\":\"run-ctx\"}";
-        String sig = HmacUtil.signBody(body, secret);
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        AutonomaHandler.handleRequest(config, req);
-
-        assertNotNull(userCtx.get(), "User factory should have been called with context");
-        assertNotNull(userCtx.get().refs().get("Organization"));
-        assertEquals(1, userCtx.get().refs().get("Organization").size());
-        assertEquals("org-ctx", userCtx.get().refs().get("Organization").get(0).get("id"));
-        assertEquals("run-ctx", userCtx.get().testRunId());
-    }
-
-    @Test
-    void discoverReturnsSchemaFromFactories() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of(
-            "Organization", FactoryUtil.defineFactory(
-                (data, ctx) -> Map.of("id", "x"),
-                OrganizationInput.class
-            )
-        ));
-
-        String body = "{\"action\":\"discover\"}";
-        String sig = HmacUtil.signBody(body, secret);
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-
-        assertEquals(200, resp.status());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> schema = (Map<String, Object>) resp.body().get("schema");
-        assertNotNull(schema);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> models = (List<Map<String, Object>>) schema.get("models");
-        assertEquals(1, models.size());
-        assertEquals("Organization", models.get(0).get("name"));
-        assertEquals("organization", models.get(0).get("tableName"));
-    }
-
-    @Test
-    void missingFactoryForModelReturnsError() {
-        String secret = "shared-secret";
-        String signingSecret = "signing-secret";
-
-        HandlerConfig config = new HandlerConfig("organizationId", secret, signingSecret, dummyAuth());
-        config.setFactories(Map.of()); // no factories
-
-        String body = "{\"action\":\"up\",\"create\":{\"Organization\":[{\"name\":\"Org\"}]},\"testRunId\":\"run-miss\"}";
-        String sig = HmacUtil.signBody(body, secret);
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-
+    void down_missingTeardownToken() {
+        HandlerResponse resp = AutonomaHandler.handleRequest(baseConfig(null),
+            signedReq(body("action", "down"), SHARED));
         assertEquals(400, resp.status());
         assertEquals("INVALID_BODY", resp.body().get("code"));
     }
 
     @Test
-    void handleRequest_servesWithoutAllowProduction() {
-        String body = "{\"action\":\"discover\"}";
-        String secret = "shared-secret";
-        String sig = HmacUtil.signBody(body, secret);
-
-        HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
-        config.setFactories(Map.of());
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-
+    void endpointAlwaysEnabled() {
+        // allowProduction is a deprecated no-op: discover serves regardless.
+        HandlerConfig config = baseConfig(null).setAllowProduction(false);
+        HandlerResponse resp = AutonomaHandler.handleRequest(config, signedReq(body("action", "discover"), SHARED));
         assertEquals(200, resp.status());
-        assertNotNull(resp.body().get("schema"));
-    }
-
-    @Test
-    @SuppressWarnings("deprecation")
-    void handleRequest_servesWhenAllowProductionExplicitlyFalse() {
-        String body = "{\"action\":\"discover\"}";
-        String secret = "shared-secret";
-        String sig = HmacUtil.signBody(body, secret);
-
-        HandlerConfig config = new HandlerConfig("orgId", secret, "signing-secret", dummyAuth());
-        // Deprecated no-op: even an explicit false must not block the endpoint.
-        config.setAllowProduction(false);
-        config.setFactories(Map.of());
-        HandlerRequest req = new HandlerRequest(body, Map.of("x-signature", sig));
-        HandlerResponse resp = AutonomaHandler.handleRequest(config, req);
-
-        assertEquals(200, resp.status());
-        assertNotNull(resp.body().get("schema"));
-    }
-
-    private BiFunction<Map<String, Object>, AuthContext, AuthResult> dummyAuth() {
-        return (user, ctx) -> AuthResult.ofHeaders(Map.of("Authorization", "Bearer test-token"));
     }
 }
