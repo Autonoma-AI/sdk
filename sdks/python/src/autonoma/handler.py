@@ -1,81 +1,41 @@
-"""Request routing for discover/up/down protocol actions.
+"""Request routing for discover/up/down protocol actions (Scenario v2).
 
-Factory-driven design: every model in ``body.create`` must have a
-registered factory. The SDK uses the factory's Pydantic ``input_model``
-both to validate inputs and to build the ``discover`` schema. Ordering
-for ``up`` and ``down`` comes from the create payload's
-``_alias`` / ``_ref`` graph (see :mod:`autonoma.payload_topo`); there is
-no SQL introspection.
+``discover`` lists the registered scenarios; ``up`` looks a scenario up by
+name, runs its free-form ``up``, signs a teardown token carrying the scenario
+name, and responds; ``down`` recovers the scenario name from the verified
+token and routes to that scenario's ``down``. There is no create-graph
+interpreter and no factory-derived discover schema.
 """
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
-import re
 import uuid
 from typing import Any
 
 from autonoma.errors import (
     AutonomaError,
     invalid_body,
-    invalid_refs_token,
+    invalid_teardown_token,
     invalid_signature,
     same_secrets,
     unknown_action,
+    unknown_environment,
 )
 from autonoma.hmac_util import verify_signature
-from autonoma.payload_topo import compute_teardown_order, resolve_payload_tree
 from autonoma.refs import sign_refs, verify_refs
-from autonoma.schema import build_schema_from_factories, schema_to_wire
 from autonoma.types import (
-    AuthContext,
-    FactoryContext,
     HandlerConfig,
     HandlerRequest,
     HandlerResponse,
-    HookContext,
+    ScenarioDefinition,
+    ScenarioDownContext,
+    ScenarioUpContext,
+    ScenarioUpResult,
 )
 
-_TOKEN_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
-_CYCLE_RE = re.compile(r"^cycle\((.*)\)$")
-
-
-def _resolve_tokens(value: Any, test_run_id: str, index: int) -> Any:
-    """Substitute built-in tokens: ``{{testRunId}}``, ``{{index}}``, ``{{cycle(a,b,c)}}``.
-
-    The dashboard expands recipe variables before sending the payload, so
-    the SDK normally sees no placeholders here. This is defense-in-depth
-    for tokens that slip through — anything else raises
-    ``UNRESOLVED_TOKEN`` rather than landing literally in the database.
-    """
-    if isinstance(value, str):
-
-        def replace(match: re.Match) -> str:
-            token = match.group(1).strip()
-            if token == "testRunId":
-                return test_run_id
-            if token == "index":
-                return str(index)
-            cycle = _CYCLE_RE.match(token)
-            if cycle:
-                parts = [
-                    p.strip().strip('"').strip("'") for p in cycle.group(1).split(",")
-                ]
-                return parts[index % len(parts)] if parts else ""
-            raise AutonomaError(
-                f"Unresolved token: {{{{{token}}}}}",
-                "UNRESOLVED_TOKEN",
-                400,
-            )
-
-        return _TOKEN_RE.sub(replace, value)
-    if isinstance(value, list):
-        return [_resolve_tokens(v, test_run_id, index) for v in value]
-    if isinstance(value, dict):
-        return {k: _resolve_tokens(v, test_run_id, index) for k, v in value.items()}
-    return value
+_DEFAULT_EXPIRES_IN_SECONDS = 3600
 
 
 def _load_protocol_version() -> str:
@@ -88,7 +48,7 @@ def _load_protocol_version() -> str:
             .strip()
         )
     except (OSError, IndexError):
-        return "1.0"
+        return "2.0"
 
 
 PROTOCOL_VERSION = _load_protocol_version()
@@ -123,7 +83,7 @@ async def handle_request(config: HandlerConfig, req: HandlerRequest) -> HandlerR
         except (json.JSONDecodeError, ValueError):
             raise invalid_body("invalid JSON")
 
-        action: str | None = body.get("action")
+        action = body.get("action")
         if not action:
             raise invalid_body(
                 "missing action. expected one of 'discover', 'up' or 'down'"
@@ -153,10 +113,12 @@ async def handle_request(config: HandlerConfig, req: HandlerRequest) -> HandlerR
 
 
 async def _handle_discover(config: HandlerConfig) -> HandlerResponse:
-    schema = build_schema_from_factories(config.factories or {}, config.scope_field)
+    scenarios = [
+        {"name": s.name, "description": s.description} for s in config.scenarios
+    ]
     return HandlerResponse(
         status=200,
-        body={**_build_sdk_meta(config), "schema": schema_to_wire(schema)},
+        body={**_build_sdk_meta(config), "scenarios": scenarios},
     )
 
 
@@ -166,114 +128,58 @@ async def _handle_discover(config: HandlerConfig) -> HandlerResponse:
 
 
 async def _handle_up(config: HandlerConfig, body: dict[str, Any]) -> HandlerResponse:
-    create = body.get("create")
-    if not create:
-        raise invalid_body('missing "create" in request body')
+    name = _read_scenario_name(body)
+    if name is None:
+        raise invalid_body('missing "scenario.name" in request body')
 
-    test_run_id: str = body.get("testRunId", str(uuid.uuid4()))
+    scenario = _find_scenario(config, name)
+    if scenario is None:
+        raise unknown_environment(name)
 
-    factories = config.factories or {}
-    if not factories:
-        raise invalid_body(
-            "no factories registered — every model in `create` must have a factory."
-        )
+    test_run_id: str = body.get("testRunId") or str(uuid.uuid4())
 
-    tree = resolve_payload_tree(create)
+    result = scenario.up(ScenarioUpContext(test_run_id=test_run_id))
+    if inspect.isawaitable(result):
+        result = await result
 
-    refs: dict[str, list[dict[str, Any]]] = {}
-    id_map: dict[str, Any] = {}
+    auth, teardown = _unpack_up_result(result)
 
-    # Track per-model run index for {{index}} / {{cycle()}} substitution.
-    model_index: dict[str, int] = {}
-
-    for op in tree.ops:
-        model = op.model
-        factory = factories.get(model)
-        if factory is None:
-            raise invalid_body(
-                f'no factory registered for model "{model}". '
-                "Register one with `define_factory(...)` and add it to HandlerConfig.factories."
-            )
-
-        idx = model_index.get(model, 0)
-        model_index[model] = idx + 1
-
-        # Substitute built-in tokens then swap temp ids for real ids.
-        resolved = _resolve_tokens(op.fields, test_run_id, idx)
-        resolved = _swap_temp_ids(resolved, id_map)
-
-        # Validate through the factory's input model and call create.
-        call_input = factory.input_model.model_validate(resolved)
-        ctx = FactoryContext(
-            refs=refs, scenario_name=test_run_id, test_run_id=test_run_id
-        )
-        record = factory.create(call_input, ctx)
-        if inspect.isawaitable(record):
-            record = await record
-
-        # Normalise Pydantic returns to dicts so downstream lookups are uniform.
-        if hasattr(record, "model_dump") and not isinstance(record, dict):
-            record = record.model_dump()
-        if not isinstance(record, dict) or record.get("id") is None:
-            raise AutonomaError(
-                f'Factory for "{model}" must return a record dict with "id"',
-                "FACTORY_MISSING_PK",
-                500,
-            )
-
-        refs.setdefault(model, []).append(record)
-        id_map[op.temp_id] = record["id"]
-
-    # auth callback gets the first User (case-insensitive on model name).
-    auth_user = _find_first_user(refs)
-    scope_value = _detect_scope_value(refs, config.scope_field) or test_run_id
-    auth_context = AuthContext(scope_value=scope_value, refs=refs)
-    auth = config.auth(auth_user, auth_context)
-    if inspect.isawaitable(auth):
-        auth = await auth
-
-    if config.after_up is not None:
-        hook_ctx = HookContext(scenario_name=scope_value, refs=refs)
-        result = config.after_up(hook_ctx, auth)
-        if asyncio.iscoroutine(result):
-            auth = await result
-        else:
-            auth = result
-
-    refs_token = sign_refs(
-        {
-            "refs": refs,
-            "testRunId": scope_value,
-            "environment": "",
-            # Captured for ordered teardown without re-parsing the create
-            # payload. Older tokens that omit this fall back to refs-key
-            # reversal.
-            "aliasDependencies": tree.alias_dependencies,
-            "aliasOwnerModel": tree.alias_owner_model,
-        },
+    teardown_token = sign_refs(
+        {"refs": teardown or {}, "testRunId": test_run_id, "environment": name},
         config.signing_secret,
     )
 
-    return HandlerResponse(
-        status=200,
-        body={
-            **_build_sdk_meta(config),
-            "auth": auth,
-            "refs": refs,
-            "refsToken": refs_token,
-        },
+    expires_in_seconds = (
+        config.expires_in_seconds
+        if config.expires_in_seconds is not None
+        else _DEFAULT_EXPIRES_IN_SECONDS
     )
 
+    response_body: dict[str, Any] = {**_build_sdk_meta(config)}
+    if auth is not None:
+        response_body["auth"] = auth
+    response_body["teardownToken"] = teardown_token
+    response_body["expiresInSeconds"] = expires_in_seconds
 
-def _swap_temp_ids(value: Any, id_map: dict[str, Any]) -> Any:
-    """Replace any ``__temp_*`` placeholder string with its real id."""
-    if isinstance(value, str) and value.startswith("__temp_"):
-        return id_map.get(value, value)
-    if isinstance(value, dict):
-        return {k: _swap_temp_ids(v, id_map) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_swap_temp_ids(v, id_map) for v in value]
-    return value
+    return HandlerResponse(status=200, body=response_body)
+
+
+def _unpack_up_result(
+    result: Any,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Accept either a ``ScenarioUpResult`` or a plain dict from a scenario's ``up``."""
+    if result is None:
+        return None, None
+    if isinstance(result, ScenarioUpResult):
+        return result.auth, result.teardown
+    if isinstance(result, dict):
+        return result.get("auth"), result.get("teardown")
+    raise AutonomaError(
+        "Scenario up() must return a dict or ScenarioUpResult with optional "
+        "auth/teardown keys",
+        "INTERNAL_ERROR",
+        500,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -282,46 +188,28 @@ def _swap_temp_ids(value: Any, id_map: dict[str, Any]) -> Any:
 
 
 async def _handle_down(config: HandlerConfig, body: dict[str, Any]) -> HandlerResponse:
-    refs_token = body.get("refsToken")
-    if not refs_token:
-        raise invalid_body("missing refsToken")
+    teardown_token = body.get("teardownToken")
+    if not teardown_token:
+        raise invalid_body("missing teardownToken")
 
     try:
-        payload = verify_refs(refs_token, config.signing_secret)
+        payload = verify_refs(teardown_token, config.signing_secret)
     except Exception as e:
-        raise invalid_refs_token(str(e))
+        raise invalid_teardown_token(str(e))
 
-    refs: dict[str, list[dict[str, Any]]] = payload.get("refs") or {}
+    teardown: dict[str, Any] = payload.get("refs") or {}
     test_run_id: str = payload.get("testRunId", "")
-    alias_deps = payload.get("aliasDependencies") or {}
-    alias_owner_model = payload.get("aliasOwnerModel") or {}
+    # The verified token is authoritative for routing; any scenario name on
+    # the request body is ignored.
+    name = payload.get("environment") or ""
 
-    if config.before_down is not None:
-        hook_ctx = HookContext(scenario_name=test_run_id, refs=refs)
-        result = config.before_down(hook_ctx)
-        if asyncio.iscoroutine(result):
-            await result
-
-    factories = config.factories or {}
-    teardown_order = compute_teardown_order(refs, alias_deps, alias_owner_model)
-
-    for model in teardown_order:
-        factory = factories.get(model)
-        if factory is None or factory.teardown is None:
-            # No teardown means the host has decided not to delete this
-            # model; skip. The SDK has no SQL fallback.
-            continue
-        records = refs.get(model, [])
-        ctx = FactoryContext(
-            refs=refs, scenario_name=test_run_id, test_run_id=test_run_id
+    scenario = _find_scenario(config, name) if name else None
+    if scenario is not None and scenario.down is not None:
+        result = scenario.down(
+            ScenarioDownContext(name=name, teardown=teardown, test_run_id=test_run_id)
         )
-        for record in reversed(records):
-            td_input: Any = record
-            if factory.ref_model is not None:
-                td_input = factory.ref_model.model_validate(record)
-            result = factory.teardown(td_input, ctx)
-            if inspect.isawaitable(result):
-                await result
+        if inspect.isawaitable(result):
+            await result
 
     return HandlerResponse(status=200, body={**_build_sdk_meta(config), "ok": True})
 
@@ -331,22 +219,17 @@ async def _handle_down(config: HandlerConfig, body: dict[str, Any]) -> HandlerRe
 # ---------------------------------------------------------------------------
 
 
-def _find_first_user(refs: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
-    for model, records in refs.items():
-        normalised = model.lower()
-        if (normalised == "user" or normalised == "users") and records:
-            return records[0]
+def _find_scenario(config: HandlerConfig, name: str) -> ScenarioDefinition | None:
+    for scenario in config.scenarios:
+        if scenario.name == name:
+            return scenario
     return None
 
 
-def _detect_scope_value(
-    refs: dict[str, list[dict[str, Any]]], scope_field: str
-) -> str | None:
-    """Find the first record value whose key matches ``scope_field`` modulo underscores/case."""
-    target = scope_field.replace("_", "").lower()
-    for records in refs.values():
-        for record in records:
-            for key, value in record.items():
-                if key.replace("_", "").lower() == target and isinstance(value, str):
-                    return value
+def _read_scenario_name(body: dict[str, Any]) -> str | None:
+    scenario = body.get("scenario")
+    if isinstance(scenario, dict):
+        name = scenario.get("name")
+        if isinstance(name, str):
+            return name
     return None

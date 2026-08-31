@@ -15,6 +15,10 @@ def invalid_signature() -> AutonomaError:
     return AutonomaError("Invalid signature", "INVALID_SIGNATURE", 401)
 
 
+def unknown_environment(name: str) -> AutonomaError:
+    return AutonomaError(f"Unknown environment: {name}", "UNKNOWN_ENVIRONMENT", 400)
+
+
 def invalid_body(detail: str) -> AutonomaError:
     return AutonomaError(f"Invalid body: {detail}", "INVALID_BODY", 400)
 
@@ -33,8 +37,8 @@ def production_blocked(detail: Optional[str] = None) -> AutonomaError:
     )
 
 
-def invalid_refs_token(detail: str) -> AutonomaError:
-    return AutonomaError(f"Invalid refs token: {detail}", "INVALID_REFS_TOKEN", 403)
+def invalid_teardown_token(detail: str) -> AutonomaError:
+    return AutonomaError(f"Invalid teardown token: {detail}", "INVALID_TEARDOWN_TOKEN", 403)
 
 
 def same_secrets() -> AutonomaError:

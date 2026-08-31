@@ -16,11 +16,18 @@ SIGNING_SECRET = "test-signing-secret-5678"
 
 
 def _make_config() -> HandlerConfig:
+    from autonoma.scenario import define_scenario
+
     return HandlerConfig(
-        scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,
-        auth=lambda user, ctx: {"headers": {"Authorization": "Bearer test-token"}},
+        scenarios=[
+            define_scenario(
+                name="standard",
+                description="A standard environment",
+                up=lambda ctx: {"data": {"run": ctx.test_run_id}},
+            )
+        ],
     )
 
 
@@ -39,13 +46,15 @@ def _post(client: TestClient, body: dict, secret: str = SHARED_SECRET) -> dict:
     return {"status": resp.status_code, "body": resp.json()}
 
 
-def test_discover_returns_schema():
+def test_discover_returns_scenarios():
     client = _make_client()
     result = _post(client, {"action": "discover"})
     assert result["status"] == 200
     assert result["body"]["sdk"]["server"] == "fastapi"
     assert result["body"]["sdk"]["language"] == "python"
-    assert "models" in result["body"]["schema"]
+    assert result["body"]["scenarios"] == [
+        {"name": "standard", "description": "A standard environment"}
+    ]
 
 
 def test_rejects_invalid_signature():

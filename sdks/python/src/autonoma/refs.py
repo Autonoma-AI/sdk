@@ -1,4 +1,4 @@
-"""JWT-like refs token: header.payload.signature using HMAC-SHA256."""
+"""JWT-like teardown token: header.payload.signature using HMAC-SHA256."""
 
 import base64
 import hashlib
@@ -9,7 +9,12 @@ from autonoma.serializer import default_serializer as _default_serializer
 
 
 def sign_refs(payload: dict, secret: str) -> str:
-    """Sign a refs payload into a 3-part token string."""
+    """Sign a refs payload into a 3-part token string.
+
+    In v2 the payload carries ``refs`` (whatever the scenario returned),
+    ``testRunId``, and ``environment`` (the scenario name, so ``down`` can
+    route to the right teardown).
+    """
     header = _base64url_encode(json.dumps({"alg": "HS256", "typ": "REFS"}, separators=(",", ":")).encode())
     body = _base64url_encode(json.dumps(payload, separators=(",", ":"), default=_default_serializer).encode())
     signature = _hmac_sign(f"{header}.{body}", secret)
@@ -17,7 +22,7 @@ def sign_refs(payload: dict, secret: str) -> str:
 
 
 def verify_refs(token: str, secret: str) -> dict:
-    """Verify and decode a refs token. Returns the payload dict or raises."""
+    """Verify and decode a teardown token. Returns the payload dict or raises."""
     parts = token.split(".")
     if len(parts) != 3:
         raise ValueError("malformed token")

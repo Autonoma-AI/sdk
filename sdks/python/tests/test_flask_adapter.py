@@ -7,6 +7,7 @@ import json
 from flask import Flask
 
 from autonoma.hmac_util import sign_body
+from autonoma.scenario import define_scenario
 from autonoma.types import HandlerConfig
 from autonoma_flask import create_flask_handler
 
@@ -18,10 +19,15 @@ SIGNING_SECRET = "test-signing-secret-5678"
 def _make_app():
     app = Flask(__name__)
     config = HandlerConfig(
-        scope_field="organizationId",
         shared_secret=SHARED_SECRET,
         signing_secret=SIGNING_SECRET,
-        auth=lambda user, ctx: {"headers": {"Authorization": "Bearer test-token"}},
+        scenarios=[
+            define_scenario(
+                name="standard",
+                description="A standard environment",
+                up=lambda ctx: {"data": {"run": ctx.test_run_id}},
+            )
+        ],
     )
     bp = create_flask_handler(config)
     app.register_blueprint(bp, url_prefix="/api/autonoma")
@@ -39,14 +45,16 @@ def _post(client, body: dict, secret: str = SHARED_SECRET) -> dict:
     return {"status": resp.status_code, "body": resp.get_json()}
 
 
-def test_discover_returns_schema():
+def test_discover_returns_scenarios():
     app = _make_app()
     with app.test_client() as client:
         result = _post(client, {"action": "discover"})
         assert result["status"] == 200
         assert result["body"]["sdk"]["server"] == "flask"
         assert result["body"]["sdk"]["language"] == "python"
-        assert "models" in result["body"]["schema"]
+        assert result["body"]["scenarios"] == [
+            {"name": "standard", "description": "A standard environment"}
+        ]
 
 
 def test_rejects_invalid_signature():

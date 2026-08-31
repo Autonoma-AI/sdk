@@ -1,35 +1,14 @@
-"""Tests for handler.py — handle_request.
-
-Factory-driven design: every test registers Pydantic-typed factories.
-There is no executor or SQL fallback to exercise.
-"""
+"""Tests for handler.py - handle_request (Scenario v2)."""
 
 import json
 
 import pytest
-from pydantic import BaseModel, ConfigDict
 
-from autonoma.factory import define_factory
 from autonoma.handler import handle_request
 from autonoma.hmac_util import sign_body
+from autonoma.refs import sign_refs
+from autonoma.scenario import define_scenario
 from autonoma.types import HandlerConfig, HandlerRequest
-
-
-# ---------------------------------------------------------------------------
-# Test models
-# ---------------------------------------------------------------------------
-
-
-class OrganizationInput(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    name: str
-
-
-class UserInput(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    email: str
-    name: str
-    organizationId: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -37,22 +16,12 @@ class UserInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _make_config(
-    *,
-    factories=None,
-    shared="shared-secret",
-    signing="signing-secret",
-):
+def _make_config(*, scenarios=None, shared="shared-secret", signing="signing-secret", **kwargs):
     return HandlerConfig(
-        scope_field="organizationId",
         shared_secret=shared,
         signing_secret=signing,
-        auth=lambda user, ctx: {
-            "headers": {
-                "Authorization": f"Bearer test-token-{user['id'] if user else 'anon'}"
-            }
-        },
-        factories=factories or {},
+        scenarios=scenarios or [],
+        **kwargs,
     )
 
 
@@ -61,15 +30,15 @@ def _signed_request(body_dict, secret="shared-secret"):
     return HandlerRequest(body=body_str, headers={"x-signature": sign_body(body_str, secret)})
 
 
-def _org_factory(records=None):
-    records = records if records is not None else []
-
-    async def create(data: OrganizationInput, ctx):
-        record = {"id": f"org-{len(records) + 1}", "name": data.name}
-        records.append(record)
-        return record
-
-    return define_factory(create=create, input_model=OrganizationInput)
+def _single_user():
+    return define_scenario(
+        name="single-user",
+        description="One user in a fresh org",
+        up=lambda ctx: {
+            "auth": {"headers": {"Authorization": f"Bearer jwt-{ctx.test_run_id}"}},
+            "teardown": {"user_id": f"user-{ctx.test_run_id}"},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -92,16 +61,6 @@ class TestHandleRequest:
         result = await handle_request(config, req)
         assert result.status == 500
         assert result.body["code"] == "SAME_SECRETS"
-
-    async def test_serves_even_when_allow_production_is_false(self):
-        # allow_production is a deprecated no-op: even an explicit False must
-        # not block the endpoint. HMAC signing is the gate.
-        config = _make_config()
-        config.allow_production = False
-        req = _signed_request({"action": "discover"})
-        result = await handle_request(config, req)
-        assert result.status == 200
-        assert result.body["sdk"]["language"] == "python"
 
     async def test_returns_400_for_unknown_action(self):
         config = _make_config()
@@ -126,37 +85,28 @@ class TestHandleRequest:
 
 @pytest.mark.asyncio
 class TestDiscover:
-    async def test_empty_factories_returns_empty_models(self):
+    async def test_empty_scenarios_returns_empty_list(self):
         config = _make_config()
         result = await handle_request(config, _signed_request({"action": "discover"}))
         assert result.status == 200
-        assert result.body["schema"]["models"] == []
-        assert result.body["schema"]["edges"] == []
-        assert result.body["schema"]["relations"] == []
-        assert result.body["schema"]["scopeField"] == "organizationId"
+        assert result.body["scenarios"] == []
+        assert result.body["version"] == "2.0"
 
-    async def test_returns_factory_models(self):
+    async def test_lists_registered_scenarios(self):
         config = _make_config(
-            factories={
-                "Organization": _org_factory(),
-                "User": define_factory(
-                    create=lambda data, ctx: {"id": "u-1", "email": data.email, "name": data.name},
-                    input_model=UserInput,
-                ),
-            },
+            scenarios=[
+                _single_user(),
+                define_scenario(name="empty", description="Nothing seeded", up=lambda ctx: {}),
+            ],
         )
         result = await handle_request(config, _signed_request({"action": "discover"}))
         assert result.status == 200
-        names = [m["name"] for m in result.body["schema"]["models"]]
-        assert names == ["Organization", "User"]
-        org_fields = {f["name"] for f in result.body["schema"]["models"][0]["fields"]}
-        assert {"id", "name"}.issubset(org_fields)
-
-    async def test_includes_version_and_sdk_metadata(self):
-        config = _make_config(factories={"Organization": _org_factory()})
-        result = await handle_request(config, _signed_request({"action": "discover"}))
+        assert result.body["scenarios"] == [
+            {"name": "single-user", "description": "One user in a fresh org"},
+            {"name": "empty", "description": "Nothing seeded"},
+        ]
+        assert "schema" not in result.body
         assert result.body["sdk"]["language"] == "python"
-        assert "version" in result.body
 
 
 # ---------------------------------------------------------------------------
@@ -166,148 +116,57 @@ class TestDiscover:
 
 @pytest.mark.asyncio
 class TestUp:
-    async def test_factory_create_called_with_validated_input(self):
-        captured = []
-
-        async def create(data, ctx):
-            captured.append((type(data).__name__, data.name))
-            return {"id": "org-1", "name": data.name}
-
-        config = _make_config(
-            factories={"Organization": define_factory(create=create, input_model=OrganizationInput)},
-        )
+    async def test_runs_scenario_up_and_returns_envelope(self):
+        config = _make_config(scenarios=[_single_user()])
         result = await handle_request(
             config,
             _signed_request(
-                {
-                    "action": "up",
-                    "create": {"Organization": [{"name": "Acme"}]},
-                    "testRunId": "run-1",
-                },
+                {"action": "up", "scenario": {"name": "single-user"}, "testRunId": "run-1"}
             ),
         )
         assert result.status == 200, result.body
-        assert captured == [("OrganizationInput", "Acme")]
-        assert result.body["refs"]["Organization"][0]["id"] == "org-1"
+        assert result.body["version"] == "2.0"
+        assert result.body["auth"]["headers"]["Authorization"] == "Bearer jwt-run-1"
+        assert isinstance(result.body["teardownToken"], str)
+        # The duplicated plaintext refs and the old refsToken field are gone.
+        assert "refs" not in result.body
+        assert "refsToken" not in result.body
+        assert result.body["expiresInSeconds"] == 3600
 
-    async def test_alias_ref_resolves_to_real_id(self):
-        async def org_create(data, ctx):
-            return {"id": "org-resolved", "name": data.name}
+    async def test_applies_configured_expiry(self):
+        config = _make_config(scenarios=[_single_user()], expires_in_seconds=900)
+        result = await handle_request(
+            config,
+            _signed_request({"action": "up", "scenario": {"name": "single-user"}, "testRunId": "r"}),
+        )
+        assert result.body["expiresInSeconds"] == 900
 
-        received = {}
-
-        async def user_create(data, ctx):
-            received["organizationId"] = data.organizationId
-            return {
-                "id": "user-1",
-                "email": data.email,
-                "organizationId": data.organizationId,
-            }
-
+    async def test_omits_auth_when_absent(self):
         config = _make_config(
-            factories={
-                "Organization": define_factory(create=org_create, input_model=OrganizationInput),
-                "User": define_factory(create=user_create, input_model=UserInput),
-            },
+            scenarios=[define_scenario(name="bare", description="x", up=lambda ctx: {})]
         )
         result = await handle_request(
             config,
-            _signed_request(
-                {
-                    "action": "up",
-                    "create": {
-                        "Organization": [{"_alias": "org", "name": "Acme"}],
-                        "User": [
-                            {
-                                "email": "a@b.com",
-                                "name": "A",
-                                "organizationId": {"_ref": "org"},
-                            }
-                        ],
-                    },
-                    "testRunId": "run-2",
-                },
-            ),
-        )
-        assert result.status == 200, result.body
-        assert received["organizationId"] == "org-resolved"
-
-    async def test_missing_pk_returns_factory_missing_pk_error(self):
-        async def create(data, ctx):
-            return {"name": data.name}  # no id
-
-        config = _make_config(
-            factories={"Organization": define_factory(create=create, input_model=OrganizationInput)},
-        )
-        result = await handle_request(
-            config,
-            _signed_request(
-                {
-                    "action": "up",
-                    "create": {"Organization": [{"name": "NoPK"}]},
-                    "testRunId": "run-3",
-                },
-            ),
-        )
-        assert result.status == 500
-        assert result.body["code"] == "FACTORY_MISSING_PK"
-
-    async def test_unknown_model_in_create_is_invalid_body(self):
-        config = _make_config(factories={"Organization": _org_factory()})
-        result = await handle_request(
-            config,
-            _signed_request(
-                {
-                    "action": "up",
-                    "create": {"Mystery": [{"foo": "bar"}]},
-                    "testRunId": "run-4",
-                },
-            ),
-        )
-        assert result.status == 400
-        assert result.body["code"] == "INVALID_BODY"
-
-    async def test_dangling_ref_is_invalid_body(self):
-        config = _make_config(factories={"Organization": _org_factory()})
-        result = await handle_request(
-            config,
-            _signed_request(
-                {
-                    "action": "up",
-                    "create": {
-                        "Organization": [
-                            {"name": "Acme", "tenantId": {"_ref": "does-not-exist"}}
-                        ]
-                    },
-                    "testRunId": "run-5",
-                },
-            ),
-        )
-        assert result.status == 400
-        assert result.body["code"] == "INVALID_BODY"
-
-    async def test_token_substitution_in_payload(self):
-        captured = {}
-
-        async def create(data, ctx):
-            captured["name"] = data.name
-            return {"id": "org-1", "name": data.name}
-
-        config = _make_config(
-            factories={"Organization": define_factory(create=create, input_model=OrganizationInput)},
-        )
-        result = await handle_request(
-            config,
-            _signed_request(
-                {
-                    "action": "up",
-                    "create": {"Organization": [{"name": "Acme {{testRunId}}"}]},
-                    "testRunId": "run-token",
-                },
-            ),
+            _signed_request({"action": "up", "scenario": {"name": "bare"}, "testRunId": "r"}),
         )
         assert result.status == 200
-        assert captured["name"] == "Acme run-token"
+        assert "auth" not in result.body
+        assert isinstance(result.body["teardownToken"], str)
+
+    async def test_unknown_scenario_name_is_unknown_environment(self):
+        config = _make_config(scenarios=[_single_user()])
+        result = await handle_request(
+            config,
+            _signed_request({"action": "up", "scenario": {"name": "nope"}, "testRunId": "r"}),
+        )
+        assert result.status == 400
+        assert result.body["code"] == "UNKNOWN_ENVIRONMENT"
+
+    async def test_missing_scenario_name_is_invalid_body(self):
+        config = _make_config(scenarios=[_single_user()])
+        result = await handle_request(config, _signed_request({"action": "up", "testRunId": "r"}))
+        assert result.status == 400
+        assert result.body["code"] == "INVALID_BODY"
 
 
 # ---------------------------------------------------------------------------
@@ -317,83 +176,78 @@ class TestUp:
 
 @pytest.mark.asyncio
 class TestDown:
-    async def test_teardown_called_in_reverse_order(self):
-        teardown_calls = []
+    async def test_routes_to_scenario_down_with_token_teardown(self):
+        captured = {}
 
-        async def org_create(data, ctx):
-            return {"id": f"org-{data.name}", "name": data.name}
+        def down(ctx):
+            captured["name"] = ctx.name
+            captured["teardown"] = ctx.teardown
+            captured["test_run_id"] = ctx.test_run_id
 
-        async def org_teardown(record, ctx):
-            teardown_calls.append(record["id"])
-
-        config = _make_config(
-            factories={
-                "Organization": define_factory(
-                    create=org_create,
-                    teardown=org_teardown,
-                    input_model=OrganizationInput,
-                ),
-            },
+        scenario = define_scenario(
+            name="teardownable",
+            description="x",
+            up=lambda ctx: {"teardown": {"handle": f"h-{ctx.test_run_id}"}},
+            down=down,
         )
+        config = _make_config(scenarios=[scenario])
+
         up_res = await handle_request(
             config,
-            _signed_request(
-                {
-                    "action": "up",
-                    "create": {"Organization": [{"name": "A"}, {"name": "B"}]},
-                    "testRunId": "run-td",
-                },
-            ),
+            _signed_request({"action": "up", "scenario": {"name": "teardownable"}, "testRunId": "run-x"}),
         )
         assert up_res.status == 200
-        refs_token = up_res.body["refsToken"]
+        teardown_token = up_res.body["teardownToken"]
 
         down_res = await handle_request(
             config,
-            _signed_request({"action": "down", "refsToken": refs_token}),
-        )
-        assert down_res.status == 200
-        assert teardown_calls == ["org-B", "org-A"]
-
-    async def test_teardown_skips_models_without_teardown(self):
-        # Org has teardown; User does not. Both are torn down only if teardown is present.
-        org_td_calls = []
-
-        async def org_create(data, ctx):
-            return {"id": "org-1", "name": data.name}
-
-        async def org_teardown(record, ctx):
-            org_td_calls.append(record["id"])
-
-        async def user_create(data, ctx):
-            return {"id": "u-1", "email": data.email, "name": data.name}
-
-        config = _make_config(
-            factories={
-                "Organization": define_factory(
-                    create=org_create, teardown=org_teardown, input_model=OrganizationInput,
-                ),
-                "User": define_factory(create=user_create, input_model=UserInput),
-            },
-        )
-        up_res = await handle_request(
-            config,
             _signed_request(
-                {
-                    "action": "up",
-                    "create": {
-                        "Organization": [{"name": "Acme"}],
-                        "User": [{"email": "a@b.com", "name": "A"}],
-                    },
-                    "testRunId": "run-mixed",
-                },
+                {"action": "down", "teardownToken": teardown_token, "testRunId": "run-x"}
             ),
         )
-        assert up_res.status == 200
-
-        down_res = await handle_request(
-            config,
-            _signed_request({"action": "down", "refsToken": up_res.body["refsToken"]}),
-        )
         assert down_res.status == 200
-        assert org_td_calls == ["org-1"]
+        assert down_res.body["ok"] is True
+        assert captured == {
+            "name": "teardownable",
+            "teardown": {"handle": "h-run-x"},
+            "test_run_id": "run-x",
+        }
+
+    async def test_recovers_name_from_token_when_request_omits_it(self):
+        ran = {"down": False}
+
+        def down(ctx):
+            ran["down"] = True
+
+        scenario = define_scenario(
+            name="from-token", description="x", up=lambda ctx: {"teardown": {}}, down=down
+        )
+        config = _make_config(scenarios=[scenario])
+        teardown_token = sign_refs(
+            {"refs": {}, "testRunId": "r", "environment": "from-token"}, config.signing_secret
+        )
+        res = await handle_request(
+            config, _signed_request({"action": "down", "teardownToken": teardown_token})
+        )
+        assert res.status == 200
+        assert ran["down"] is True
+
+    async def test_no_op_when_scenario_has_no_down(self):
+        scenario = define_scenario(name="no-down", description="x", up=lambda ctx: {"teardown": {}})
+        config = _make_config(scenarios=[scenario])
+        teardown_token = sign_refs(
+            {"refs": {}, "testRunId": "r", "environment": "no-down"}, config.signing_secret
+        )
+        res = await handle_request(
+            config, _signed_request({"action": "down", "teardownToken": teardown_token})
+        )
+        assert res.status == 200
+        assert res.body["ok"] is True
+
+    async def test_rejects_tampered_teardown_token(self):
+        config = _make_config()
+        res = await handle_request(
+            config, _signed_request({"action": "down", "teardownToken": "bad.token.here"})
+        )
+        assert res.status == 403
+        assert res.body["code"] == "INVALID_TEARDOWN_TOKEN"
