@@ -95,9 +95,42 @@ func dispatch(input bridgeInput) {
 			"environment": result.Environment,
 		})
 
+	case "unique.uniqueToken":
+		testRunID, _ := input.Input["testRunId"].(string)
+		writeResult(autonoma.UniqueToken(testRunID, toStringSlice(input.Input["parts"])...))
+
+	case "unique.uniqueId":
+		testRunID, _ := input.Input["testRunId"].(string)
+		prefix, _ := input.Input["prefix"].(string)
+		writeResult(autonoma.UniqueID(testRunID, prefix, toStringSlice(input.Input["parts"])...))
+
+	case "unique.uniqueSlug":
+		testRunID, _ := input.Input["testRunId"].(string)
+		base, _ := input.Input["base"].(string)
+		writeResult(autonoma.UniqueSlug(testRunID, base, toStringSlice(input.Input["parts"])...))
+
+	case "unique.uniqueEmail":
+		testRunID, _ := input.Input["testRunId"].(string)
+		local, _ := input.Input["local"].(string)
+		domain, _ := input.Input["domain"].(string)
+		writeResult(autonoma.UniqueEmail(testRunID, local, domain))
+
 	default:
 		writeError(fmt.Sprintf("Unknown function: %s", key))
 	}
+}
+
+func toStringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		s, _ := e.(string)
+		out = append(out, s)
+	}
+	return out
 }
 
 func writeResult(result any) {

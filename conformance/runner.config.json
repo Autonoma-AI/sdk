@@ -7,49 +7,49 @@
       "command": "npx",
       "args": ["tsx", "bridges/typescript.ts"],
       "cwd": ".",
-      "modules": ["hmac", "refs"]
+      "modules": ["hmac", "refs", "unique"]
     },
     "elixir": {
       "command": "mix",
       "args": ["run", "bridges/conformance_bridge.exs"],
       "cwd": "../sdks/elixir",
-      "modules": ["hmac", "refs"]
+      "modules": ["hmac", "refs", "unique"]
     },
     "python": {
       "command": "python3",
       "args": ["bridges/conformance_bridge.py"],
       "cwd": "../sdks/python",
-      "modules": ["hmac", "refs"]
+      "modules": ["hmac", "refs", "unique"]
     },
     "php": {
       "command": "php",
       "args": ["bridges/conformance_bridge.php"],
       "cwd": "../sdks/php",
-      "modules": ["hmac", "refs"]
+      "modules": ["hmac", "refs", "unique"]
     },
     "java": {
       "command": "java",
       "args": ["-jar", "conformance-bridge/target/autonoma-conformance-bridge.jar"],
       "cwd": "../sdks/java",
-      "modules": ["hmac", "refs"]
+      "modules": ["hmac", "refs", "unique"]
     },
     "ruby": {
       "command": "ruby",
       "args": ["-Ilib", "bridges/conformance_bridge.rb"],
       "cwd": "../sdks/ruby",
-      "modules": ["hmac", "refs"]
+      "modules": ["hmac", "refs", "unique"]
     },
     "rust": {
       "command": "../sdks/rust/target/release/conformance_bridge",
       "args": [],
       "cwd": ".",
-      "modules": ["hmac", "refs"]
+      "modules": ["hmac", "refs", "unique"]
     },
     "go": {
       "command": "./bridges/conformance_bridge",
       "args": [],
       "cwd": "../sdks/go",
-      "modules": ["hmac", "refs"]
+      "modules": ["hmac", "refs", "unique"]
     }
   }
 }

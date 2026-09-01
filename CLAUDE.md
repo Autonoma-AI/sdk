@@ -179,7 +179,7 @@ This SDK exists in eight languages: **TypeScript**, **Python**, **Elixir**, **PH
 ### Adding features or fixing bugs
 
 - Any change to protocol behavior (handler routing, HMAC, the teardown token, the uniqueness helpers) **must be implemented in all eight languages**.
-- The conformance suite now exercises only the unchanged `hmac` + `refs` primitives: every bridge in `conformance/runner.config.json` overrides `modules` to `["hmac", "refs"]`. The `graph`/`fingerprint` fixtures are v1 leftovers and are no longer run by any language. Add or update conformance cases as needed, then verify all eight pass: `cd conformance && npx tsx run.ts`.
+- The conformance suite exercises the version-agnostic primitives - `hmac`, `refs`, and the `unique` helpers: every bridge in `conformance/runner.config.json` overrides `modules` to `["hmac", "refs", "unique"]`. The `unique` cases pin the `sha256(testRunId + " " + parts...)` digest byte-for-byte across all eight languages (a token minted in `up` by one language must recompute identically in a later `down` by another). The `graph`/`fingerprint` fixtures are v1 leftovers and are no longer run by any language. Add or update conformance cases as needed, then verify all eight pass: `cd conformance && npx tsx run.ts`.
 - Run each language's own unit tests after changes.
 
 ### Bundled agent docs

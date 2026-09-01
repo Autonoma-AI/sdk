@@ -1,0 +1,66 @@
+{
+  "module": "unique",
+  "_comment": "Golden vectors for the deterministic uniqueness helpers. The digest is sha256(testRunId + ' ' + parts...) sliced to 12 hex; every SDK must produce these exact strings, or a value minted in one language will not match another. `parts` are strings and prefix/base/local/domain are always explicit (default-value handling is covered per-language and is not portable across the omit-vs-empty-string split).",
+  "functions": [
+    {
+      "name": "uniqueToken",
+      "cases": [
+        {
+          "description": "no parts - just the testRunId",
+          "input": { "testRunId": "run-1", "parts": [] },
+          "assert": { "equals": "4e65d3fbe8ad" }
+        },
+        {
+          "description": "one part",
+          "input": { "testRunId": "run-1", "parts": ["a"] },
+          "assert": { "equals": "549f29f78d6d" }
+        },
+        {
+          "description": "two parts - space-joined in order",
+          "input": { "testRunId": "run-1", "parts": ["a", "b"] },
+          "assert": { "equals": "0d0c0de19528" }
+        }
+      ]
+    },
+    {
+      "name": "uniqueId",
+      "cases": [
+        {
+          "description": "prefix + token",
+          "input": { "testRunId": "run-1", "prefix": "user", "parts": [] },
+          "assert": { "equals": "user_776b5cbfd0f0" }
+        }
+      ]
+    },
+    {
+      "name": "uniqueSlug",
+      "cases": [
+        {
+          "description": "already-clean base",
+          "input": { "testRunId": "run-1", "base": "Acme", "parts": [] },
+          "assert": { "equals": "acme-b6446df155f8" }
+        },
+        {
+          "description": "normalization - lowercase, non-alphanumeric to dashes, trimmed",
+          "input": { "testRunId": "run-1", "base": "Acme Inc!", "parts": [] },
+          "assert": { "equals": "acme-inc-b52c5d50f0d1" }
+        }
+      ]
+    },
+    {
+      "name": "uniqueEmail",
+      "cases": [
+        {
+          "description": "default-style local/domain, passed explicitly",
+          "input": { "testRunId": "run-1", "local": "user", "domain": "example.com" },
+          "assert": { "equals": "user+039af36014b8@example.com" }
+        },
+        {
+          "description": "custom local/domain",
+          "input": { "testRunId": "run-1", "local": "qa", "domain": "x.dev" },
+          "assert": { "equals": "qa+0d4f7c37d402@x.dev" }
+        }
+      ]
+    }
+  ]
+}

@@ -16,6 +16,7 @@ if (file_exists($autoload)) {
 
 use Autonoma\Sdk\Hmac;
 use Autonoma\Sdk\Refs;
+use Autonoma\Sdk\Unique;
 
 $data = json_decode(file_get_contents('php://stdin'), true);
 
@@ -25,13 +26,17 @@ try {
     $inp = $data['input'];
 
     // Scenario-v2 dropped the create-graph interpreter and fingerprint(); the PHP
-    // bridge conforms only on the unchanged hmac + refs primitives. verifyRefs
-    // returns the decoded { refs, testRunId, environment } payload.
+    // bridge conforms on the version-agnostic hmac, refs, and unique primitives.
+    // verifyRefs returns the decoded { refs, testRunId, environment } payload.
     $result = match ("{$mod}.{$fn}") {
         'hmac.signBody' => Hmac::signBody($inp['body'], $inp['secret']),
         'hmac.verifySignature' => Hmac::verifySignature($inp['body'], $inp['signature'], $inp['secret']),
         'refs.signRefs' => Refs::signRefs($inp['payload'], $inp['secret']),
         'refs.verifyRefs' => Refs::verifyRefs($inp['token'], $inp['secret']),
+        'unique.uniqueToken' => Unique::uniqueToken($inp['testRunId'], ...$inp['parts']),
+        'unique.uniqueId' => Unique::uniqueId($inp['testRunId'], $inp['prefix'], ...$inp['parts']),
+        'unique.uniqueSlug' => Unique::uniqueSlug($inp['testRunId'], $inp['base'], ...$inp['parts']),
+        'unique.uniqueEmail' => Unique::uniqueEmail($inp['testRunId'], $inp['local'], $inp['domain']),
         default => throw new \RuntimeException("Unknown dispatch: {$mod}.{$fn}"),
     };
 

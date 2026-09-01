@@ -2,14 +2,15 @@
 //!
 //! Reads a JSON test case from stdin, dispatches to the appropriate SDK
 //! function, and writes the result to stdout. Scenario-v2 dropped the
-//! create-graph interpreter and `fingerprint`, so the Rust SDK conforms only on
-//! the unchanged `hmac` and `refs` primitives.
+//! create-graph interpreter and `fingerprint`; the Rust SDK conforms on the
+//! version-agnostic `hmac`, `refs`, and `unique` primitives.
 
 use serde_json::{json, Value};
 use std::io::{self, Read};
 
 use autonoma_sdk::hmac::{sign_body, verify_signature};
 use autonoma_sdk::refs::{sign_refs, verify_refs, RefsPayload};
+use autonoma_sdk::unique::{unique_email, unique_id, unique_slug, unique_token};
 
 fn main() {
     let mut input = String::new();
@@ -55,6 +56,38 @@ fn dispatch(module: &str, function: &str, inp: &Value) -> Result<Value, String> 
                 "testRunId": payload.test_run_id,
                 "environment": payload.environment,
             }))
+        }
+        ("unique", "uniqueToken") => {
+            let test_run_id = inp["testRunId"].as_str().ok_or("missing testRunId")?;
+            let parts: Vec<&str> = inp["parts"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            Ok(Value::String(unique_token(test_run_id, &parts)))
+        }
+        ("unique", "uniqueId") => {
+            let test_run_id = inp["testRunId"].as_str().ok_or("missing testRunId")?;
+            let prefix = inp["prefix"].as_str().ok_or("missing prefix")?;
+            let parts: Vec<&str> = inp["parts"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            Ok(Value::String(unique_id(test_run_id, prefix, &parts)))
+        }
+        ("unique", "uniqueSlug") => {
+            let test_run_id = inp["testRunId"].as_str().ok_or("missing testRunId")?;
+            let base = inp["base"].as_str().ok_or("missing base")?;
+            let parts: Vec<&str> = inp["parts"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            Ok(Value::String(unique_slug(test_run_id, base, &parts)))
+        }
+        ("unique", "uniqueEmail") => {
+            let test_run_id = inp["testRunId"].as_str().ok_or("missing testRunId")?;
+            let local = inp["local"].as_str().ok_or("missing local")?;
+            let domain = inp["domain"].as_str().ok_or("missing domain")?;
+            Ok(Value::String(unique_email(test_run_id, local, domain)))
         }
         _ => Err(format!("Unknown function: {}.{}", module, function)),
     }
