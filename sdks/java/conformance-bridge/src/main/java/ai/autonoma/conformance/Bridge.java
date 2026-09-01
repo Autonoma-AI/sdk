@@ -2,6 +2,7 @@ package ai.autonoma.conformance;
 
 import ai.autonoma.sdk.HmacUtil;
 import ai.autonoma.sdk.RefsUtil;
+import ai.autonoma.sdk.UniqueUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -16,8 +17,8 @@ import java.util.stream.Collectors;
  *
  * <p>Reads JSON from stdin, dispatches to the appropriate module/function, and
  * writes the result as JSON to stdout. Scenario v2 dropped the create-graph
- * interpreter and fingerprinting, so the bridge only conforms on the unchanged
- * {@code hmac} and {@code refs} primitives.
+ * interpreter and fingerprinting; the bridge conforms on the version-agnostic
+ * {@code hmac}, {@code refs}, and {@code unique} primitives.
  */
 public class Bridge {
 
@@ -61,6 +62,28 @@ public class Bridge {
                     out.put("environment", payload.get("environment"));
                     result = out;
                 }
+                case "unique.uniqueToken" -> {
+                    result = UniqueUtil.uniqueToken(
+                        (String) inputData.get("testRunId"), toStringArray(inputData.get("parts")));
+                }
+                case "unique.uniqueId" -> {
+                    result = UniqueUtil.uniqueId(
+                        (String) inputData.get("testRunId"),
+                        (String) inputData.get("prefix"),
+                        toStringArray(inputData.get("parts")));
+                }
+                case "unique.uniqueSlug" -> {
+                    result = UniqueUtil.uniqueSlug(
+                        (String) inputData.get("testRunId"),
+                        (String) inputData.get("base"),
+                        toStringArray(inputData.get("parts")));
+                }
+                case "unique.uniqueEmail" -> {
+                    result = UniqueUtil.uniqueEmail(
+                        (String) inputData.get("testRunId"),
+                        (String) inputData.get("local"),
+                        (String) inputData.get("domain"));
+                }
                 default -> throw new RuntimeException("Unknown function: " + key);
             }
 
@@ -79,5 +102,13 @@ public class Bridge {
                 System.out.println("{\"ok\":false,\"error\":\"" + e2.getMessage() + "\"}");
             }
         }
+    }
+
+    /** JSON arrays decode as {@code List<Object>}; the unique helpers take a {@code String...} tail. */
+    private static String[] toStringArray(Object parts) {
+        if (!(parts instanceof java.util.List<?> list)) {
+            return new String[0];
+        }
+        return list.stream().map(String::valueOf).toArray(String[]::new);
     }
 }

@@ -20,6 +20,18 @@ result =
         {"refs", "verifyRefs"} ->
           Autonoma.Refs.verify!(inp["token"], inp["secret"])
 
+        {"unique", "uniqueToken"} ->
+          Autonoma.Unique.unique_token(inp["testRunId"], inp["parts"] || [])
+
+        {"unique", "uniqueId"} ->
+          Autonoma.Unique.unique_id(inp["testRunId"], inp["prefix"], inp["parts"] || [])
+
+        {"unique", "uniqueSlug"} ->
+          Autonoma.Unique.unique_slug(inp["testRunId"], inp["base"], inp["parts"] || [])
+
+        {"unique", "uniqueEmail"} ->
+          Autonoma.Unique.unique_email(inp["testRunId"], inp["local"], inp["domain"])
+
         _ ->
           raise "Unknown function: #{mod}.#{func}"
       end

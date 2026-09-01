@@ -5,8 +5,8 @@
 #
 # Reads a JSON test case from stdin, dispatches to the appropriate SDK function,
 # and writes the result to stdout. Scenario-v2 dropped the create-graph
-# interpreter and fingerprint(), so the Ruby SDK conforms only on the unchanged
-# hmac and refs primitives.
+# interpreter and fingerprint(); the Ruby SDK conforms on the version-agnostic
+# hmac, refs, and unique primitives.
 
 $LOAD_PATH.unshift(File.join(__dir__, "..", "lib"))
 
@@ -34,6 +34,14 @@ begin
                "testRunId" => payload["testRunId"],
                "environment" => payload["environment"]
              }
+           when ["unique", "uniqueToken"]
+             Autonoma::Unique.unique_token(inp["testRunId"], *inp["parts"])
+           when ["unique", "uniqueId"]
+             Autonoma::Unique.unique_id(inp["testRunId"], inp["prefix"], *inp["parts"])
+           when ["unique", "uniqueSlug"]
+             Autonoma::Unique.unique_slug(inp["testRunId"], inp["base"], *inp["parts"])
+           when ["unique", "uniqueEmail"]
+             Autonoma::Unique.unique_email(inp["testRunId"], local: inp["local"], domain: inp["domain"])
            else
              raise "Unknown module/function: #{mod}.#{fn}"
            end

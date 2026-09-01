@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from autonoma.hmac_util import sign_body, verify_signature
 from autonoma.refs import sign_refs, verify_refs
+from autonoma.unique import unique_email, unique_id, unique_slug, unique_token
 
 data = json.loads(sys.stdin.read())
 
@@ -20,6 +21,10 @@ try:
         ("hmac", "verifySignature"): lambda: verify_signature(inp["body"], inp["signature"], inp["secret"]),
         ("refs", "signRefs"): lambda: sign_refs(inp["payload"], inp["secret"]),
         ("refs", "verifyRefs"): lambda: verify_refs(inp["token"], inp["secret"]),
+        ("unique", "uniqueToken"): lambda: unique_token(inp["testRunId"], *inp["parts"]),
+        ("unique", "uniqueId"): lambda: unique_id(inp["testRunId"], inp["prefix"], *inp["parts"]),
+        ("unique", "uniqueSlug"): lambda: unique_slug(inp["testRunId"], inp["base"], *inp["parts"]),
+        ("unique", "uniqueEmail"): lambda: unique_email(inp["testRunId"], inp["local"], inp["domain"]),
     }
 
     result = dispatch[(mod, fn)]()
