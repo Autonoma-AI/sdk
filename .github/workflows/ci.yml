@@ -83,14 +83,34 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Protocol suites (HTTP-level, against a live v2 endpoint per migrated SDK)
+  #
+  # One matrix leg per migrated language: each boots that SDK's own v2 endpoint
+  # and runs the shared protocol/suites/* against it via run-suites.mjs. This is
+  # the protocol-level analogue of the `conformance` job, which auto-discovers
+  # bridges from conformance/runner.config.json.
+  #
+  # The matrix is the registration point. ADD A LANGUAGE HERE the moment its
+  # protocol/servers/<lang> server lands (in that language's stacked PR),
+  # together with any extra toolchain setup its server needs — the same way that
+  # PR registers its conformance bridge. Until then a language cannot run here:
+  # you can't boot e.g. the Go v2 endpoint before the Go v2 server exists. #81
+  # (top of the stack) gates that all eight languages are listed, so a broken
+  # wire in any language turns this job red instead of surfacing in prod.
   # ---------------------------------------------------------------------------
   protocol:
-    name: Protocol Suites (v2)
+    name: Protocol Suites (v2) — ${{ matrix.language }}
     runs-on: ubuntu-latest
     needs: [ts-unit]
+    strategy:
+      fail-fast: false
+      matrix:
+        # Extend as each language's v2 protocol server lands in its stacked PR.
+        language: [typescript]
     steps:
       - uses: actions/checkout@v4
 
+      # Every leg needs Node + the TS workspace deps: run-suites.mjs and
+      # test-runner.ts run on tsx regardless of the target language.
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: sdks/typescript/package.json
@@ -101,11 +121,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: sdks/typescript/pnpm-lock.yaml
 
-      # tsx + the TS SDK source (the server and runner import it directly).
       - name: Install TS dependencies
         working-directory: sdks/typescript
         run: pnpm install --frozen-lockfile
 
-      # Boots the TypeScript v2 endpoint and runs protocol/suites/* against it.
+      # --- Per-language toolchain setup --------------------------------------
+      # A stacked language PR adds its setup step(s) here, each guarded by
+      # `if: matrix.language == '<lang>'` (e.g. actions/setup-go for Go,
+      # erlef/setup-beam for Elixir). run-suites.mjs builds/boots the server.
+
+      # Boots the selected language's v2 endpoint and runs protocol/suites/*.
       - name: Run protocol suites
-        run: node protocol/run-suites.mjs typescript
+        run: node protocol/run-suites.mjs ${{ matrix.language }}
