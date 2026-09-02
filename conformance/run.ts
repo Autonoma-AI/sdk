@@ -25,6 +25,8 @@ interface BridgeConfig {
   command: string
   args: string[]
   cwd: string
+  /** Optional per-language module override. Falls back to the global list. */
+  modules?: string[]
 }
 
 interface RunnerConfig {
@@ -252,7 +254,8 @@ function main() {
     console.log(`  ${lang.toUpperCase()}`)
     console.log(`${'='.repeat(60)}`)
 
-    for (const moduleName of config.modules) {
+    const modules = bridge.modules ?? config.modules
+    for (const moduleName of modules) {
       const casesPath = join(__dirname, moduleName, 'cases.json')
       let moduleDef: ModuleDef
       try {

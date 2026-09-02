@@ -1,46 +1,13 @@
 {
   "version": 1,
+  "_comment": "`modules` is the default suite for unmigrated (v1) languages, which still ship graph + fingerprint. Scenario-v2 languages override it per bridge with `modules`: they dropped the create-graph interpreter and fingerprint(), so they only conform on the unchanged hmac + refs primitives.",
   "modules": ["graph", "hmac", "refs", "fingerprint"],
   "bridges": {
     "typescript": {
       "command": "npx",
       "args": ["tsx", "bridges/typescript.ts"],
-      "cwd": "."
-    },
-    "elixir": {
-      "command": "mix",
-      "args": ["run", "bridges/conformance_bridge.exs"],
-      "cwd": "../sdks/elixir"
-    },
-    "python": {
-      "command": "python3",
-      "args": ["bridges/conformance_bridge.py"],
-      "cwd": "../sdks/python"
-    },
-    "php": {
-      "command": "php",
-      "args": ["bridges/conformance_bridge.php"],
-      "cwd": "../sdks/php"
-    },
-    "java": {
-      "command": "java",
-      "args": ["-jar", "conformance-bridge/target/autonoma-conformance-bridge-0.1.0.jar"],
-      "cwd": "../sdks/java"
-    },
-    "ruby": {
-      "command": "ruby",
-      "args": ["-Ilib", "bridges/conformance_bridge.rb"],
-      "cwd": "../sdks/ruby"
-    },
-    "rust": {
-      "command": "../sdks/rust/target/release/conformance_bridge",
-      "args": [],
-      "cwd": "."
-    },
-    "go": {
-      "command": "./bridges/conformance_bridge",
-      "args": [],
-      "cwd": "../sdks/go"
+      "cwd": ".",
+      "modules": ["hmac", "refs"]
     }
   }
 }

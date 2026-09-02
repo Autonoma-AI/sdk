@@ -1,8 +1,8 @@
 # Protocol
 
-The Environment Factory protocol is a request-response protocol over a single HTTP POST endpoint, authenticated with HMAC-SHA256. It is identical across every language SDK. This page is the wire contract; you rarely need it to integrate, but it is the source of truth when debugging.
+The Environment Factory protocol is a request-response protocol over a single HTTP POST endpoint, authenticated with HMAC-SHA256. This page is the wire contract; you rarely need it to integrate, but it is the source of truth when debugging.
 
-Protocol version: `1.0`
+Protocol version: `2.0`
 
 ## Transport and authentication
 
@@ -22,12 +22,12 @@ Every successful response includes:
 
 ```json
 {
-  "version": "1.0",
+  "version": "2.0",
   "sdk": { "language": "typescript", "orm": "unknown", "server": "web" }
 }
 ```
 
-`orm` is `"unknown"` in factory-driven mode - the SDK does not talk to an ORM. Error responses replace the payload with `{ "error": "...", "code": "..." }`.
+The platform detects the protocol per deployment from the `version` field. Error responses replace the payload with `{ "error": "...", "code": "..." }`.
 
 ## Actions
 
@@ -41,22 +41,16 @@ Every successful response includes:
 ```json
 // response 200
 {
-  "version": "1.0",
+  "version": "2.0",
   "sdk": { "language": "typescript", "orm": "unknown", "server": "web" },
-  "schema": {
-    "models": [
-      { "name": "Organization", "tableName": "organization", "fields": [
-        { "name": "name", "type": "string", "isRequired": true, "isId": false, "hasDefault": false }
-      ] }
-    ],
-    "edges": [],
-    "relations": [],
-    "scopeField": "organizationId"
-  }
+  "scenarios": [
+    { "name": "single-user", "description": "One verified user in a fresh org" },
+    { "name": "large-catalog", "description": "An org with 500 products for pagination" }
+  ]
 }
 ```
 
-The schema is built from your factories' input schemas, not from database introspection. `models` and `scopeField` are the meaningful parts. `edges` and `relations` are always empty arrays - the SDK does not introspect foreign keys, so it emits nothing there. Dependency order is not carried in the schema; it is derived per request from the `_alias`/`_ref` graph in the `up` payload.
+`scenarios` lists every registered scenario's `name` and `description`. There is no model/field schema - scenarios are code, not a declarative graph.
 
 ### up
 
@@ -64,72 +58,65 @@ The schema is built from your factories' input schemas, not from database intros
 // request
 {
   "action": "up",
-  "testRunId": "optional-uuid",
-  "create": {
-    "Organization": [{ "_alias": "org", "name": "Acme", "slug": "acme" }],
-    "User": [{ "_alias": "alice", "email": "alice@test.com", "organizationId": { "_ref": "org" } }],
-    "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "alice" } }]
-  }
+  "scenario": { "name": "single-user" },
+  "testRunId": "optional-uuid"
 }
 ```
 
-`create` is a flat map keyed by model name; each value is an array of records. Cross-model links use `_alias`/`_ref` (see [scenarios.md](scenarios.md)). If `testRunId` is omitted the SDK generates a UUID.
+The platform sends only the scenario `name` and a `testRunId`. If `testRunId` is omitted the SDK generates a UUID. An unknown name returns `UNKNOWN_ENVIRONMENT`.
 
 ```json
 // response 200
 {
-  "version": "1.0",
+  "version": "2.0",
   "sdk": { "language": "typescript", "orm": "unknown", "server": "web" },
-  "auth": { "cookies": [], "headers": {}, "credentials": {} },
-  "refs": { "Organization": [{ "id": "..." }], "User": [{ "id": "..." }] },
-  "refsToken": "header.payload.signature"
+  "auth": { "cookies": [], "headers": { "Authorization": "Bearer ..." }, "credentials": {} },
+  "teardownToken": "header.payload.signature",
+  "expiresInSeconds": 3600
 }
 ```
 
-- `auth` - whatever your auth callback returned: `cookies`, `headers`, and/or `credentials`. There is no top-level `token` field; a bearer token goes in `headers` (e.g. `{ "Authorization": "Bearer ..." }`).
-- `refs` - every created record, keyed by model, exactly as each factory returned it.
-- `refsToken` - a signed token encoding the created IDs, passed back on `down`.
+- `auth` - whatever the scenario's `up` returned; omitted when the scenario returns none.
+- `teardownToken` - a signed token carrying the scenario name and the scenario's `teardown` handle, passed back on `down`. The `teardown` handle rides inside this token and is not sent back in the clear.
+- `expiresInSeconds` - the environment lifetime (default one hour; configurable on the handler).
 
 ### down
 
 ```json
 // request
-{ "action": "down", "refsToken": "header.payload.signature" }
+{
+  "action": "down",
+  "teardownToken": "header.payload.signature",
+  "testRunId": "optional-uuid"
+}
 ```
 
 ```json
 // response 200
-{ "version": "1.0", "sdk": { ... }, "ok": true }
+{ "version": "2.0", "sdk": { ... }, "ok": true }
 ```
 
-The SDK verifies the token, then calls each factory's `teardown` in reverse dependency order. A model whose factory defines no teardown is skipped.
+The platform sends the opaque `teardownToken` and the same `testRunId` used for `up`. The SDK verifies the token, recovers the authoritative scenario name, teardown handle, and run id signed into it, and calls that scenario's `down({ name, teardown, testRunId })`. The request does not carry scenario identity or teardown state. A scenario that defines no `down` is a no-op.
 
-## The refs token
+## The teardown token
 
-The refs token is a JWT-like structure (`header.payload.signature`) signed with your signing secret. It carries the scope value, every created record ID keyed by model, and the alias dependency graph needed to reverse the create order. Because only your backend knows the signing secret, neither the platform nor any third party can forge or alter it. This is what guarantees `down` can only delete what `up` created.
+The teardown token is a JWT-like structure (`header.payload.signature`) signed with your signing secret. It carries the scenario name and the `teardown` handle the scenario returned from `up`. Because only your backend knows the signing secret, neither the platform nor any third party can forge or alter it. This is what lets `down` trust the scenario name and teardown handle it is handed.
 
 ## Safety model
 
-The protocol enforces five hard constraints:
-
-1. **The production guard is yours.** The SDK has no on/off switch - on Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no guard is needed, previews are isolated and never production. In your own deployments, mount the route only outside production with a condition you own (for example, register the endpoint only when `NODE_ENV` is not `production`). The old `allowProduction` option is deprecated and ignored.
-2. **Up can only create.** Every record routes through a factory's `create`. The SDK never updates, deletes, drops, truncates, or runs SQL of its own.
-3. **Down can only delete what up created.** The signed token names the exact record IDs. `down` verifies it before deleting and touches nothing else.
-4. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401` - the endpoint serves no unauthenticated caller.
-5. **Factory-driven writes.** There is no executor and no SQL fallback. A factory body may run a raw insert internally, but that code is yours, not the SDK's.
+1. **The production guard is yours.** The SDK has no on/off switch - on Autonoma preview environments (`AUTONOMA_PREVIEWKIT` is set) no guard is needed. In your own deployments, mount the route only outside production with a condition you own. The old `allowProduction` option is deprecated and ignored.
+2. **Requests are authenticated.** Every request is HMAC-signed with the shared secret. Unsigned or tampered requests get `401`.
+3. **`down` trusts only a signed token.** The scenario name and teardown handle come from the token your signing secret produced, so `down` cannot be pointed at data a forged request invented.
+4. **Your code owns the writes.** `up`/`down` run your own provisioning code. The SDK never runs SQL of its own.
 
 ## Error codes
 
 | Code | HTTP | Meaning |
 |------|------|---------|
 | `INVALID_SIGNATURE` | 401 | HMAC signature missing or does not match the shared secret. |
-| `INVALID_BODY` | 400 | Body is not valid JSON, is missing `action`/`create`, or references an unknown alias. |
+| `INVALID_BODY` | 400 | Body is not valid JSON, is missing `action`, or is missing `scenario.name` (on `up`) / `teardownToken` (on `down`). |
 | `UNKNOWN_ACTION` | 400 | `action` is not `discover`, `up`, or `down`. |
-| `UNKNOWN_ENVIRONMENT` | 400 | The requested environment name does not exist. |
-| `INVALID_REFS_TOKEN` | 403 | The refs token is missing, malformed, or failed signature verification. |
-| `UNRESOLVED_TOKEN` | 400 | A literal `{{...}}` placeholder reached the SDK unresolved. |
-| `FACTORY_MISSING_PK` | 500 | A factory's `create` returned a record without its primary key. |
+| `UNKNOWN_ENVIRONMENT` | 400 | The requested scenario name is not registered. |
+| `INVALID_TEARDOWN_TOKEN` | 403 | The teardown token is missing, malformed, or failed signature verification. |
 | `SAME_SECRETS` | 500 | `sharedSecret` and `signingSecret` are the same value. |
-| `INTERNAL_ERROR` | 500 | Unexpected error, or a create payload failed a factory's input schema. |
-
-These are the shared codes. A given language may surface an extra, more specific code for a failure another language folds into `INTERNAL_ERROR` (for example, some SDKs emit `FACTORY_TEARDOWN_ERROR` when a factory's teardown throws). See your language's `validation.md` for any language-specific codes.
+| `INTERNAL_ERROR` | 500 | Unexpected error thrown by a scenario's `up`/`down`. |

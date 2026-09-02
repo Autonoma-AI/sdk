@@ -1,16 +1,15 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 export interface RefsPayload {
-  refs: Record<string, Record<string, unknown>[]>
+  /** Whatever the scenario's `up` returned as `refs`; handed back to `down`. */
+  refs: Record<string, unknown>
   testRunId: string
-  environment: string
   /**
-   * Captured at `up` time so `down` can topo-sort teardown without
-   * re-parsing the create payload. Optional — older tokens omitted it
-   * and `down` falls back to refs-key insertion order.
+   * The scenario name. Named `environment` for wire/back-compat reasons
+   * (v1 always signed `""` here); `down` reads it to route to the right
+   * scenario's teardown.
    */
-  aliasDependencies?: Record<string, string[]>
-  aliasOwnerModel?: Record<string, string>
+  environment: string
 }
 
 /**
@@ -25,7 +24,7 @@ export function signRefs(payload: RefsPayload, secret: string): string {
 }
 
 /**
- * Verify and decode a refs token. Returns the payload or throws.
+ * Verify and decode a teardown token. Returns the payload or throws.
  */
 export function verifyRefs(
   token: string,

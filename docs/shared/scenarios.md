@@ -1,108 +1,99 @@
-# Scenario data
+# Authoring scenarios
 
-Scenario data describes the records a test run needs. The platform generates it from your discover schema, but you write it yourself for integration tests and when debugging. The format is identical across every language SDK.
+A **scenario** is a named piece of your own code that provisions an isolated environment for a test run and tears it down afterward. You author scenarios with `defineScenario` (or your language's equivalent) and register them on the handler. This page is language-agnostic; see `implement.md` for the exact idiom in your language.
 
-## The shape: a flat map
+A scenario's `up` is ordinary async code that you write exactly as you would write it by hand. The SDK owns only the envelope around it: authentication, the signed teardown token, and expiry.
 
-Data is a flat map. Top-level keys are model names; each value is an array of records to create for that model.
+## Anatomy of a scenario
 
-```json
-{
-  "create": {
-    "Organization": [{ "_alias": "org", "name": "Test Org", "slug": "test-org" }],
-    "User": [{ "_alias": "admin", "name": "Admin", "email": "admin@test.com", "organizationId": { "_ref": "org" } }],
-    "Member": [{ "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "admin" } }]
-  }
-}
+Every scenario has four parts:
+
+| Part | What it is |
+|------|------------|
+| `name` | Stable identifier the platform calls `up`/`down` by. Must be a non-empty string, unique across your registered scenarios. Name it after the data shape, not a test (`single-user`, `large-catalog`), because many tests reuse one scenario. |
+| `description` | Human-readable summary shown in `discover`. One line explaining what environment this provisions. |
+| `up` | Free-form code that provisions the environment and returns `{ auth?, teardown? }`. |
+| `down` | Optional code that tears the environment back down. Omitting it is a no-op. |
+
+```
+scenario "single-user":
+  description = "One verified user in a fresh org"
+
+  up(ctx):
+    email = uniqueEmail(ctx.testRunId)
+    user  = createUser(email)                 # your real creation code
+    token = mintToken(user)                    # your real auth code
+    return {
+      auth:     { headers: { Authorization: "Bearer " + token } },
+      teardown: { userId: user.id },
+    }
+
+  down(ctx):
+    deleteUser(ctx.teardown.userId)
 ```
 
-Two rules cover almost everything:
+## `up`: free-form provisioning
 
-- **A model is created only when it is a top-level key.** There is no nesting. You never place one model's records inside another model's fields. (If you do, the SDK treats that array as opaque field data and hands it to the factory verbatim - it is not created as separate records.)
-- **Every cross-model link is an `_alias`/`_ref` pair.** Name a record with `_alias`, then point a foreign key at it with `{ "_ref": "alias" }`. This is the only way to link records.
+`up` receives a context whose one field is `testRunId` (a unique id for this run) and returns up to two optional things. It can do anything: loops, conditionals, real API calls, calls into your own service layer. Whatever you would do to set up this state by hand, do it here.
 
-## How ordering works
+- **`auth`** - credentials the test runner uses to act as the seeded user: `cookies`, `headers`, and/or `credentials`. This is where secrets live. `auth` keeps its redaction discipline; it never lands in prompts or debug panels. Return real, working credentials produced by your app's actual session/JWT logic - a hardcoded or fake token makes every test fail at login.
+- **`teardown`** - any JSON handle your `down` needs to find and delete what `up` created (an id, a list of ids, a tenant slug). It is signed into the teardown token at `up` and handed back to `down` verbatim; it never reaches a test in the clear.
 
-The SDK builds a dependency graph purely from the `_alias`/`_ref` edges in the payload and topologically sorts it: a record that another record `_ref`s is created first. Key order in the JSON is irrelevant. There is no relation introspection - the graph comes entirely from the `_ref` edges you write.
+Both are optional. A scenario with nothing to tear down might return only `auth`; a purely side-effecting scenario might return only `teardown`.
 
-By the time your factory's `create` runs, every `_ref` has already been replaced with the real ID of the referenced record. Your factory receives a plain FK value (a string or number), never a `_ref` object and never a temporary ID.
+## Seeding unique values
 
-A `_ref` to an alias that no record in the same payload declares fails with `INVALID_BODY` ("references unknown alias(es)").
+When your `up` provisions records with unique columns - a user email, an org slug, an external id - two concurrent runs of the same scenario must not collide on those columns. Seed every such value from `testRunId` so it is unique per run yet reproducible between `up` and a later `down`.
 
-## Setting foreign keys and the scope field
+The SDK ships uniqueness helpers seeded from `testRunId` to give you unique-yet-deterministic values without storing anything:
 
-You set every foreign key yourself, including the scope field. There is no "FK direction" to reason about - every link, up or across, is just a `_ref` from the record holding the column to the record it depends on. Use the exact column name from your schema, whatever you called it (`organizationId`, `orgId`, `tenant_fk`).
+| Helper | Produces (example) |
+|--------|--------------------|
+| `uniqueEmail(testRunId)` | `user+1a2b3c4d5e6f@example.com` |
+| `uniqueSlug(testRunId, base)` | `acme-1a2b3c4d5e6f` |
+| `uniqueId(testRunId, prefix)` | `user_1a2b3c4d5e6f` |
+| `uniqueToken(testRunId, ...parts)` | `1a2b3c4d5e6f` |
 
-```json
-{
-  "create": {
-    "Organization": [{ "_alias": "org", "name": "Acme", "slug": "acme" }],
-    "Application": [{ "name": "Marketing Site", "architecture": "WEB", "organizationId": { "_ref": "org" } }],
-    "Member": [
-      { "role": "owner", "organizationId": { "_ref": "org" }, "userId": { "_ref": "alice" } }
-    ],
-    "User": [{ "_alias": "alice", "name": "Alice", "email": "alice@test.com", "organizationId": { "_ref": "org" } }]
-  }
-}
+They are pure functions of `(testRunId, ...inputs)`: the same inputs always produce the same output within a run, and different runs get different `testRunId`s and therefore different values. Because they are deterministic, `up` and a later `down` can each recompute the same value from the same `testRunId` without either one storing it - though the usual pattern is to return whatever `down` needs in `teardown`.
+
+Do not reach for a random UUID or `Date.now()` for a unique value: those break the determinism `down` and debugging rely on. Seed every unique value from `testRunId`.
+
+## `down`: teardown
+
+`down` receives a context with the scenario `name`, the `teardown` handle your `up` returned, and the `testRunId` from `up`. Use the handle to delete exactly what `up` created. `down` is where you undo side effects; if your scenario creates nothing that outlives the run (or you rely on ephemeral preview databases that are discarded), you can omit `down` entirely.
+
+```
+down(ctx):
+  for id in ctx.teardown.userIds:
+    deleteUser(id)
 ```
 
-The scope field is a foreign key like any other. The SDK does not inject it - set it explicitly on every model that has it.
+`down` is only ever called with a `teardown`, scenario name, and run id recovered from a signed token that your own signing secret produced (see `protocol.md`), so it can trust the context it is handed - a forged request cannot point `down` at state it invented.
 
-## What to include and omit in a record
+## The wire, in one glance
 
-Include every field your factory's input schema marks required and does not default:
+You never write any of this - the SDK does - but it is the mental model for what your scenario code plugs into:
 
-- Required fields with no default value.
-- Every foreign key, as a `{ "_ref": "alias" }`.
-- The scope field, as a `_ref`.
-- Unique fields, with values distinct across records so parallel runs do not collide.
+| Action | Platform sends | SDK does | Responds with |
+|--------|----------------|----------|---------------|
+| `discover` | `{ action: "discover" }` | lists registered scenarios | `{ scenarios: [{ name, description }] }` |
+| `up` | `{ action: "up", scenario: { name }, testRunId }` | runs that scenario's `up`, signs a teardown token | `{ auth?, teardownToken, expiresInSeconds }` |
+| `down` | `{ action: "down", teardownToken, testRunId }` | verifies the token, recovers the name + `teardown` + run id, runs that scenario's `down` | `{ ok: true }` |
 
-Omit anything the factory or database fills in:
+The platform sends only a scenario **name** plus `testRunId` on `up`, and only the opaque **`teardownToken`** plus that same `testRunId` on `down`. The `teardown` handle rides inside the token; it is not sent back over the wire in the clear. See `protocol.md` for the full contract.
 
-- Primary keys / IDs - generated by your creation code.
-- Fields with default values.
-- Auto-managed timestamps (`createdAt`, `updatedAt`).
+## Choosing the scenario set
 
-## Built-in placeholder tokens
+Design scenarios from meaningful user journeys and roles in this application. A scenario should establish one coherent environment that several tests can reuse, and its stable name should communicate the state or actor it provides.
 
-The platform normally resolves all values before calling `up`, but the SDK also understands three placeholder tokens inside string values, as defense in depth:
+- Prefer names such as `admin-catalog`, `billing-owner`, or `empty-workspace` when those are real journeys in the product.
+- Create multiple scenarios when roles or prerequisites differ materially.
+- Provision only what the tests for that journey actually need.
+- Do not force every entity, enum, or screen into a universal baseline scenario.
+- Add a high-volume scenario only when pagination, sorting, or scale behavior is part of the journey being tested.
 
-| Token | Resolves to |
-|-------|-------------|
-| `{{testRunId}}` | The current run's ID - useful for making unique values. |
-| `{{index}}` | The record's zero-based position within its model array. |
-| `{{cycle(a,b,c)}}` | `a`, `b`, `c` in turn, cycling by record index. |
+Keep the set small enough to maintain, but do not collapse unrelated journeys into a single catch-all state. Scenario code and the application deploy together, so normal code review owns changes to both.
 
-Any other `{{...}}` that reaches the SDK fails loudly with `UNRESOLVED_TOKEN` rather than being inserted as a literal string.
+## Migrating legacy factory code
 
-## More link examples
-
-Join table (each row references two aliases):
-
-```json
-{
-  "create": {
-    "Tag": [
-      { "_alias": "tag1", "name": "Critical", "color": "#DC2626", "organizationId": { "_ref": "org" } },
-      { "_alias": "tag2", "name": "Flaky", "color": "#EAB308", "organizationId": { "_ref": "org" } }
-    ],
-    "Test": [{ "_alias": "t1", "name": "Homepage", "testGenerationId": { "_ref": "gen1" } }],
-    "TestTag": [
-      { "testId": { "_ref": "t1" }, "tagId": { "_ref": "tag1" } },
-      { "testId": { "_ref": "t1" }, "tagId": { "_ref": "tag2" } }
-    ]
-  }
-}
-```
-
-Distinct users for distinct members (the common "one member per user" case): give each `User` its own `_alias`, then point each `Member.userId` at a different one. A shared alias would try to make the same user a member twice and hit a unique constraint.
-
-## The three standard scenarios
-
-When setting up a project, create three scenarios as a baseline. Name files after the shape, not the test.
-
-- **empty** - organization + one user + their membership. Tests empty states, onboarding, and "no data yet" screens.
-- **standard** - realistic variety: several users with different roles, at least one record per enum value, descriptive names ("Marketing Website", not "App 1"), enough data to exercise every filter and status.
-- **large** - high volume: many explicitly listed records so pagination, sort stability, and filter performance get tested.
-
-Add more targeted scenarios later, only when a specific test needs a data shape these three do not cover. Do not generate dozens up front.
+SDK v1 used registered factories and a stored declarative graph. That wire path is gone in v2. When migrating, move the old creation and cleanup behavior into ordinary `up` and `down` code; `factories.md` exists only as a compatibility reference for projects that must temporarily call a legacy helper while completing that migration.

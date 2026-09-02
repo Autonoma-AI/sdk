@@ -1,12 +1,18 @@
 # Overview
 
-The Autonoma Environment Factory is a single endpoint in your backend that creates fresh, isolated test data before an end-to-end test run and deletes it afterward. This SDK implements that endpoint for you.
+The Autonoma Environment Factory is a single endpoint in your backend that provisions fresh, isolated test data before an end-to-end test run and tears it down afterward. This SDK implements that endpoint for you.
 
 ## Why it exists
 
 Every end-to-end test needs data. A test for "user adds an item to the cart" needs a user, some products, and a cart. A test for "admin views analytics" needs an organization with users, runs, and history.
 
-Tests cannot share data. If one test deletes a product, another test that expects ten products fails. Running tests in parallel makes this worse. The Environment Factory gives each test run its own organization, its own users, and its own records, then tears all of it down when the run finishes. No interference, no leftover rows.
+Tests cannot share data. If one test deletes a product, another test that expects ten products fails. Running tests in parallel makes this worse. The Environment Factory gives each test run its own data, then tears it down when the run finishes. No interference, no leftover rows.
+
+## Scenarios: ordinary code in your repo
+
+In this SDK a **scenario** is a named piece of your own code that provisions an environment. You author it with `defineScenario` (or your language's equivalent): a `name`, a `description`, an `up` function, and an optional `down` function. `up` is free-form async code - loops, conditionals, real API calls, calls into your own service layer - that provisions the environment a test needs. `down` tears it back down.
+
+There is no declarative "create graph", no schema introspection, and no ORM adapter. You write the provisioning logic exactly as you would write it by hand; the SDK owns only the envelope around it.
 
 ## How it works
 
@@ -14,48 +20,39 @@ The platform talks to one HTTP POST endpoint that you mount in your app (you cho
 
 | Action | What the platform asks | What the SDK does |
 |--------|------------------------|-------------------|
-| `discover` | "What models can you create?" | Returns the model + field list, derived from your registered factories. |
-| `up` | "Create this data." | Runs each record through its factory in dependency order, returns login credentials and a signed teardown token. |
-| `down` | "Delete what you created." | Verifies the token and calls each factory's teardown in reverse order. |
+| `discover` | "What scenarios can you run?" | Returns the `{ name, description }` of every registered scenario. |
+| `up` | "Run scenario X for this test run." | Looks the scenario up by name, runs its `up({ testRunId })`, signs a teardown token carrying the scenario name and `teardown` handle, and returns `auth` and the `teardownToken`. |
+| `down` | "Tear scenario X down." | Verifies the token, recovers the scenario name and `teardown` handle, and calls that scenario's `down({ name, teardown })`. |
 
-You do not write routing, signature checks, dependency sorting, or teardown logic. You write factories and an auth callback, and the SDK does the rest.
+You do not write routing, signature checks, token signing, or expiry handling. You write scenarios, and the SDK does the rest.
 
-## Factory-driven: you own every write
+## What `up` returns
 
-This SDK never runs SQL and never touches your database directly. Every model it creates goes through a factory you register - a small function that calls your own code to make one record. This is the core design decision, and it has two consequences worth internalizing before you write anything:
+A scenario's `up` returns up to two optional things:
 
-- **Test data is created the way production data is.** If your app hashes passwords in `createUser`, your factory calls `createUser`, so the test user has a real password hash. A raw database seed could never reproduce that. Factories reuse your real creation logic - password hashing, external-service calls, state-machine defaults - instead of guessing at column values.
-- **The endpoint is safe by construction.** `up` can only insert (through your factories). `down` can only delete records that `up` created (proven by a signed token). The SDK has no code path that can `UPDATE`, `DROP`, `TRUNCATE`, or run an arbitrary query. See [protocol.md](protocol.md) for the full safety model.
+- **`auth`** - credentials the test runner uses to act as the seeded user (`cookies`, `headers`, and/or `credentials`). Secrets live here. `auth` keeps its redaction discipline.
+- **`teardown`** - any JSON handle your `down` needs to find and delete what `up` created. Signed into the teardown token; handed back to `down` verbatim. It never reaches a test in the clear.
 
-There is no ORM adapter, no schema introspection, and no SQL fallback. A model with no registered factory simply cannot be created.
+### Seeding unique values
+
+When `up` provisions records with unique columns (a user email, an org slug), the values must differ per run so parallel runs never collide, yet be reproducible so a later `down` can recompute them. The SDK ships uniqueness helpers seeded from `testRunId` (`uniqueEmail`, `uniqueSlug`, `uniqueId`, `uniqueToken`) that give you deterministic-per-run values without storing anything - `up` and a later `down` compute identical values from the same `testRunId`.
 
 ## What you provide
 
-Four things, passed as configuration when you create the handler:
+Three things, passed as configuration when you create the handler:
 
 | Config | What it is |
 |--------|------------|
-| `scopeField` | The single column name that isolates test data (e.g. `organizationId`). |
-| `factories` | One factory per model the platform can create. |
+| `scenarios` | The scenarios the platform can run, each built with `defineScenario`. |
 | `sharedSecret` | Shared with Autonoma. Verifies that incoming requests are authentic (HMAC). |
 | `signingSecret` | Known only to you. Signs the teardown token so it cannot be forged. |
-| `auth` | A callback that returns real login credentials for the created test user. |
-
-## The scope field
-
-Most multi-tenant apps have one foreign key on nearly every model - `organizationId`, `orgId`, `tenantId`, `workspaceId`. That column is your scope field: the boundary that keeps one test run's data separate from another's.
-
-Two things to know:
-
-- **You set it; the SDK does not.** The SDK never injects the scope field into a record. Every model that has it must set it explicitly in the create payload, normally as a `_ref` pointing at the scope record. Your factory writes it. The SDK only *reads* the scope field after creation, to derive the value it hands your auth callback.
-- **It must be a single column.** Compound scope keys (e.g. `organizationId` + `countryId`) are not supported. If your app scopes by several fields, use one root entity whose ID the child models reference. If your app is not multi-tenant at all, add a dedicated field like `testRunId` to every model and use that.
 
 ## The two secrets
 
 You need two different secret values. The SDK throws `SAME_SECRETS` at startup if they match.
 
 - **Shared secret** - both you and Autonoma hold it. Autonoma signs every request with it (HMAC-SHA256); your endpoint verifies the signature. This stops anyone else from calling your endpoint.
-- **Signing secret** - only you hold it. During `up` the SDK signs a token listing every created record's ID. During `down` it verifies that token before deleting. Autonoma stores the token opaquely and passes it back; it can neither read nor forge it.
+- **Signing secret** - only you hold it. During `up` the SDK signs a token carrying the scenario name and your `teardown` handle. During `down` it verifies that token before routing to teardown. Autonoma stores the token opaquely and passes it back; it can neither read nor forge it.
 
 Generate them as two distinct random values:
 
@@ -64,19 +61,23 @@ openssl rand -hex 32   # AUTONOMA_SHARED_SECRET
 openssl rand -hex 32   # AUTONOMA_SIGNING_SECRET (must differ)
 ```
 
+## Migrating from SDK v1
+
+SDK v1 used a stored declarative graph and registered model factories. That wire path is gone. Move its creation and cleanup behavior into ordinary scenario `up` and `down` code so the application and its test setup logic change in the same repository and deployment. The language-specific `factories.md` is a temporary compatibility reference, not v2 authoring guidance.
+
 ## Language availability
 
-The SDK ships for eight languages, each an independent implementation that passes the same conformance suite. The protocol behavior is identical everywhere; only package names and syntax differ.
+The SDK ships for eight languages, each an independent implementation that passes the same conformance suite. All eight are on Scenario v2 (protocol `2.0`).
 
 | Language | Server adapters |
 |----------|-----------------|
 | TypeScript | Web standard (Next.js App Router, Bun, Deno), Express, Hono, Node http |
 | Python | FastAPI, Flask, Django |
-| Elixir | Plug (Phoenix) |
-| PHP | Laravel |
-| Java | Spring Boot |
-| Ruby | Rails / Rack |
-| Rust | Actix, Axum |
 | Go | Gin |
+| Ruby | Rails, Rack |
+| Rust | Actix Web, Axum |
+| Java | Spring Boot (Spring MVC) |
+| PHP | Laravel |
+| Elixir | Plug (Phoenix) |
 
-See `implement.md` for the step-by-step setup in your language, `factories.md` for how to write factories, `scenarios.md` for the data format, and `protocol.md` for the wire protocol.
+See `implement.md` for the step-by-step setup in your language, `scenarios.md` for how to author scenarios, and `protocol.md` for the wire protocol.

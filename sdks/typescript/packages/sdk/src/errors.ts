@@ -31,10 +31,10 @@ export const Errors = {
       401,
     );
   },
-  invalidRefsToken(reason: string) {
+  invalidTeardownToken(reason: string) {
     return new AutonomaError(
-      `Invalid refs token: ${reason}`,
-      "INVALID_REFS_TOKEN",
+      `Invalid teardown token: ${reason}`,
+      "INVALID_TEARDOWN_TOKEN",
       403,
     );
   },

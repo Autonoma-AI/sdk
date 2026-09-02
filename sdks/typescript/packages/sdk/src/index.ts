@@ -1,42 +1,44 @@
 // Public API
-export { handleRequest, PROTOCOL_VERSION, resolveTokens } from './handler'
+export { handleRequest, PROTOCOL_VERSION } from './handler'
 export { signBody, verifySignature } from './hmac'
 export { signRefs, verifyRefs } from './refs'
-export { fingerprint } from './fingerprint'
-export { topoSort, findDeferrableEdge } from './graph'
-export { resolvePayloadTree, computeTeardownOrder } from './payload-topo'
-export {
-  buildSchemaFromFactories,
-  fieldTypeFromZod,
-  schemaToWire,
-} from './schema'
+export { defineScenario } from './scenario'
 export { checkScenario, checkAllScenarios } from './check'
-export { defineFactory } from './factory'
+export {
+  uniqueToken,
+  uniqueId,
+  uniqueSlug,
+  uniqueEmail,
+} from './unique'
 export { AutonomaError, Errors } from './errors'
+
+// Optional factory helper (not wired to the v2 wire protocol; a scenario's
+// up/down may use it internally).
+export { defineFactory } from './factory'
 
 // Types
 export type {
-  SchemaInfo,
-  ModelInfo,
-  FieldInfo,
-  FKEdge,
+  JsonScalar,
+  JsonValue,
+  ScenarioTeardown,
+  ScenarioDefinition,
+  ScenarioDescriptor,
+  ScenarioUpContext,
+  ScenarioUpResult,
+  ScenarioDownContext,
   HandlerConfig,
   HandlerRequest,
   HandlerResponse,
-  AuthContext,
   AuthCookie,
   AuthResult,
   DiscoverResponse,
   UpResponse,
   DownResponse,
-  SchemaRelation,
   SdkInfo,
-  HookContext,
   FactoryContext,
   FactoryDefinition,
   FactoryRegistry,
 } from './types'
 
-export type { CheckResult, CheckError, CheckScenario } from './check'
-export type { CreateOp, ResolvedTree } from './payload-topo'
+export type { CheckResult, CheckError } from './check'
 export type { RefsPayload } from './refs'

@@ -1,0 +1,26 @@
+{
+  "name": "teardown token validation rejects tampered tokens",
+  "steps": [
+    {
+      "action": "down",
+      "body": {
+        "teardownToken": "tampered.token.value",
+        "testRunId": "teardown-token-suite"
+      },
+      "expect": {
+        "status": 403,
+        "body": { "code": "INVALID_TEARDOWN_TOKEN" }
+      }
+    },
+    {
+      "action": "down",
+      "body": {
+        "teardownToken": "",
+        "testRunId": "teardown-token-suite"
+      },
+      "expect": {
+        "status": 400
+      }
+    }
+  ]
+}

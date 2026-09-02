@@ -1,6 +1,7 @@
-import type { FactoryRegistry, HandlerConfig } from './types'
+import type { HandlerConfig, ScenarioDefinition } from './types'
 import { handleRequest } from './handler'
 import { signBody } from './hmac'
+import { readError, readString } from './json'
 
 export interface CheckResult {
   valid: boolean
@@ -15,37 +16,34 @@ export interface CheckError {
   fix?: string
 }
 
-export interface CheckScenario {
-  /** Flat map: model name → list of entity payloads (with `_alias` / `_ref`). */
-  create: Record<string, Record<string, unknown>[]>
-}
-
 /**
- * Dry-run a scenario through the same handler the dashboard hits. Runs
- * `up` then `down` and returns structured errors if either fails.
+ * Dry-run a scenario through the same handler the platform hits. Runs `up`
+ * then `down` by name, and returns structured errors if either fails. No
+ * HTTP server required.
  */
 export async function checkScenario(
-  factories: FactoryRegistry,
-  scenario: CheckScenario,
+  scenario: ScenarioDefinition,
   options?: {
-    scopeField?: string
+    testRunId?: string
     sharedSecret?: string
     signingSecret?: string
-    auth?: HandlerConfig['auth']
   },
 ): Promise<CheckResult> {
   const sharedSecret = options?.sharedSecret ?? 'autonoma-check-shared'
   const signingSecret = options?.signingSecret ?? 'autonoma-check-signing'
+  const testRunId = options?.testRunId ?? `check-${scenario.name}`
 
   const config: HandlerConfig = {
-    scopeField: options?.scopeField ?? 'organizationId',
     sharedSecret,
     signingSecret,
-    factories,
-    auth: options?.auth ?? (async () => ({ headers: { Authorization: 'Bearer check-token' } })),
+    scenarios: [scenario],
   }
 
-  const upBody = JSON.stringify({ action: 'up', create: scenario.create })
+  const upBody = JSON.stringify({
+    action: 'up',
+    scenario: { name: scenario.name },
+    testRunId,
+  })
   const upReq = {
     body: upBody,
     headers: { 'x-signature': signBody(upBody, sharedSecret) },
@@ -56,7 +54,7 @@ export async function checkScenario(
   const upMs = Math.round(performance.now() - t0)
 
   if (upRes.status !== 200) {
-    const errorMsg = (upRes.body as Record<string, string>).error ?? 'Unknown error'
+    const errorMsg = readError(upRes.body)
     return {
       valid: false,
       phase: 'up',
@@ -65,8 +63,11 @@ export async function checkScenario(
     }
   }
 
-  const refsToken = (upRes.body as Record<string, string>).refsToken
-  const downBody = JSON.stringify({ action: 'down', refsToken })
+  const teardownToken = readString(upRes.body, 'teardownToken')
+  const downBody = JSON.stringify({
+    action: 'down',
+    teardownToken,
+  })
   const downReq = {
     body: downBody,
     headers: { 'x-signature': signBody(downBody, sharedSecret) },
@@ -77,7 +78,7 @@ export async function checkScenario(
   const downMs = Math.round(performance.now() - t1)
 
   if (downRes.status !== 200) {
-    const errorMsg = (downRes.body as Record<string, string>).error ?? 'Unknown error'
+    const errorMsg = readError(downRes.body)
     return {
       valid: false,
       phase: 'down',
@@ -90,13 +91,15 @@ export async function checkScenario(
 }
 
 export async function checkAllScenarios(
-  factories: FactoryRegistry,
-  scenarios: CheckScenario[],
-  options?: Parameters<typeof checkScenario>[2],
+  scenarios: ScenarioDefinition[],
+  options?: Parameters<typeof checkScenario>[1],
 ): Promise<CheckResult[]> {
+  // Run serially on purpose: each check performs a real up/down against a dev
+  // DB or API, so bounded, deterministic load is preferable to the parallelism
+  // `Promise.all` would allow. The checks are independent if that ever changes.
   const results: CheckResult[] = []
   for (const scenario of scenarios) {
-    results.push(await checkScenario(factories, scenario, options))
+    results.push(await checkScenario(scenario, options))
   }
   return results
 }

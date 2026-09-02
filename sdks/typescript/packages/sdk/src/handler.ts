@@ -1,76 +1,33 @@
 /**
- * Request routing for discover / up / down protocol actions.
+ * Request routing for discover / up / down protocol actions (Scenario v2).
  *
- * Factory-driven design: every model in `body.create` must have a
- * registered factory. The SDK uses each factory's `inputSchema` (Zod)
- * to validate inputs and to build the `discover` schema. Ordering for
- * `up` and `down` comes from the create payload's `_alias` / `_ref`
- * graph (see `payload-topo.ts`); there is no SQL introspection.
+ * `discover` lists the registered scenarios; `up` looks a scenario up by
+ * name, runs its free-form `up`, signs a teardown token carrying the scenario
+ * name, and responds; `down` recovers the scenario name from the verified
+ * token and routes to that scenario's `down`. There is no create-graph
+ * interpreter and no factory-derived discover schema.
  */
 import type {
-  AuthResult,
-  FactoryContext,
+  DiscoverResponse,
+  DownResponse,
   HandlerConfig,
   HandlerRequest,
   HandlerResponse,
-  HookContext,
+  ScenarioDefinition,
+  ScenarioTeardown,
   SdkInfo,
+  UpResponse,
 } from "./types";
 import { verifySignature } from "./hmac";
+import { readString, isRecord } from "./json";
 import { signRefs, verifyRefs, type RefsPayload } from "./refs";
 import { AutonomaError, Errors } from "./errors";
-import { resolvePayloadTree, computeTeardownOrder } from "./payload-topo";
-import { buildSchemaFromFactories, schemaToWire } from "./schema";
 
-const TOKEN_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
-const CYCLE_RE = /^cycle\((.*)\)$/;
-
-/**
- * Substitute built-in tokens in field values: {{testRunId}}, {{index}},
- * {{cycle(a,b,c)}}. Defense-in-depth: the test runner should substitute
- * recipe variables before calling /up, but if a literal {{…}} slips
- * through we fail loudly with UNRESOLVED_TOKEN rather than INSERT the
- * raw string.
- */
-export function resolveTokens(
-  value: unknown,
-  testRunId: string,
-  index: number,
-): unknown {
-  if (typeof value === "string") {
-    return value.replace(TOKEN_RE, (_match, rawToken: string) => {
-      const token = rawToken.trim();
-      if (token === "testRunId") return testRunId;
-      if (token === "index") return String(index);
-      const cycle = CYCLE_RE.exec(token);
-      if (cycle) {
-        const parts = cycle[1]!
-          .split(",")
-          .map((p) => p.trim().replace(/^['"]|['"]$/g, ""));
-        return parts.length ? parts[index % parts.length]! : "";
-      }
-      throw new AutonomaError(
-        `Unresolved token: {{${token}}}`,
-        "UNRESOLVED_TOKEN",
-        400,
-      );
-    });
-  }
-  if (Array.isArray(value))
-    return value.map((v) => resolveTokens(v, testRunId, index));
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = resolveTokens(v, testRunId, index);
-    }
-    return out;
-  }
-  return value;
-}
+const DEFAULT_EXPIRES_IN_SECONDS = 3600;
 
 declare const __PROTOCOL_VERSION__: string;
 export const PROTOCOL_VERSION =
-  typeof __PROTOCOL_VERSION__ === "string" ? __PROTOCOL_VERSION__ : "1.0";
+  typeof __PROTOCOL_VERSION__ === "string" ? __PROTOCOL_VERSION__ : "2.0";
 
 function buildSdkMeta(config: HandlerConfig): {
   version: string;
@@ -123,8 +80,8 @@ export async function handleRequest(
       throw Errors.invalidBody("invalid JSON");
     }
 
-    const action = body.action as string;
-    if (!action)
+    const action = readString(body, "action");
+    if (action == null)
       throw Errors.invalidBody(
         'missing action. expected one of "discover", "up" or "down"',
       );
@@ -152,237 +109,89 @@ export async function handleRequest(
 }
 
 async function handleDiscover(config: HandlerConfig): Promise<HandlerResponse> {
-  const schema = buildSchemaFromFactories(
-    config.factories ?? {},
-    config.scopeField,
-  );
-  return {
-    status: 200,
-    body: { ...buildSdkMeta(config), schema: schemaToWire(schema) },
-  };
+  const scenarios = (config.scenarios ?? []).map((s) => ({
+    name: s.name,
+    description: s.description,
+  }));
+  const body: DiscoverResponse = { ...buildSdkMeta(config), scenarios };
+  return { status: 200, body };
 }
 
 async function handleUp(
   config: HandlerConfig,
   body: Record<string, unknown>,
 ): Promise<HandlerResponse> {
-  const create = body.create as Record<string, unknown> | undefined;
-  if (!create) throw Errors.invalidBody('missing "create" in request body');
+  const name = readScenarioName(body);
+  if (name == null)
+    throw Errors.invalidBody('missing "scenario.name" in request body');
 
-  const testRunId = (body.testRunId as string) ?? randomUUID();
+  const scenario = findScenario(config, name);
+  if (!scenario) throw Errors.unknownEnvironment(name);
 
-  const factories = config.factories ?? {};
-  if (Object.keys(factories).length === 0) {
-    throw Errors.invalidBody(
-      "no factories registered — every model in `create` must have a factory.",
-    );
-  }
+  const testRunId = readString(body, "testRunId") ?? randomUUID();
 
-  const tree = resolvePayloadTree(create);
+  const result = (await scenario.up({ testRunId })) ?? {};
 
-  const refs: Record<string, Record<string, unknown>[]> = {};
-  const idMap = new Map<string, string | number>();
-
-  // Track per-model run index for {{index}} / {{cycle()}} substitution.
-  const modelIndex: Record<string, number> = {};
-
-  for (const op of tree.ops) {
-    const model = op.model;
-    const factory = factories[model];
-    if (!factory) {
-      throw Errors.invalidBody(
-        `no factory registered for model "${model}". ` +
-          "Register one with `defineFactory(...)` and add it to HandlerConfig.factories.",
-      );
-    }
-
-    const idx = modelIndex[model] ?? 0;
-    modelIndex[model] = idx + 1;
-
-    // Substitute built-in tokens then swap temp ids for real ids.
-    const tokenResolved = resolveTokens(op.fields, testRunId, idx) as Record<
-      string,
-      unknown
-    >;
-    const swapped = swapTempIds(tokenResolved, idMap) as Record<
-      string,
-      unknown
-    >;
-
-    // Validate through the factory's input schema and call create.
-    const parsed = factory.inputSchema.safeParse(swapped);
-    if (!parsed.success) {
-      const formatted = parsed.error.issues
-        .map(
-          (i: { path: (string | number)[]; message: string }) =>
-            `${i.path.join(".") || "<root>"}: ${i.message}`,
-        )
-        .join("; ");
-      throw new AutonomaError(
-        `Invalid input for "${model}": ${formatted}`,
-        "INTERNAL_ERROR",
-        500,
-      );
-    }
-    const ctx: FactoryContext = { refs, scenarioName: testRunId, testRunId };
-    const recordRaw = await factory.create(parsed.data, ctx);
-
-    const record = normaliseRecord(recordRaw);
-    if (!record || record.id == null) {
-      throw new AutonomaError(
-        `Factory for "${model}" must return a record with "id"`,
-        "FACTORY_MISSING_PK",
-        500,
-      );
-    }
-
-    (refs[model] ??= []).push(record);
-    idMap.set(op.tempId, record.id as string | number);
-  }
-
-  const authUser = findFirstUser(refs);
-  const scopeValue = detectScopeValue(refs, config.scopeField) ?? testRunId;
-  let auth: AuthResult = await config.auth(authUser, { scopeValue, refs });
-
-  if (config.afterUp) {
-    const hookCtx: HookContext = { scenarioName: scopeValue, refs };
-    auth = await config.afterUp(hookCtx, auth);
-  }
-
-  const refsToken = signRefs(
-    {
-      refs,
-      testRunId: scopeValue,
-      environment: "",
-      aliasDependencies: tree.aliasDependencies,
-      aliasOwnerModel: tree.aliasOwnerModel,
-    },
+  const teardown: ScenarioTeardown = result.teardown ?? {};
+  const teardownToken = signRefs(
+    { refs: teardown, testRunId, environment: name },
     config.signingSecret,
   );
 
-  return {
-    status: 200,
-    body: { ...buildSdkMeta(config), auth, refs, refsToken },
+  const expiresInSeconds = config.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS;
+
+  const responseBody: UpResponse = {
+    ...buildSdkMeta(config),
+    teardownToken,
+    expiresInSeconds,
   };
+  if (result.auth !== undefined) responseBody.auth = result.auth;
+
+  return { status: 200, body: responseBody };
 }
 
 async function handleDown(
   config: HandlerConfig,
   body: Record<string, unknown>,
 ): Promise<HandlerResponse> {
-  const refsToken = body.refsToken as string;
-  if (!refsToken) throw Errors.invalidBody("missing refsToken");
+  const teardownToken = readString(body, "teardownToken");
+  if (teardownToken == null || teardownToken.length === 0)
+    throw Errors.invalidBody("missing teardownToken");
 
   let payload: RefsPayload;
   try {
-    payload = verifyRefs(refsToken, config.signingSecret);
+    payload = verifyRefs(teardownToken, config.signingSecret);
   } catch (err) {
     const message = err instanceof Error ? err.message : "invalid token";
-    throw Errors.invalidRefsToken(message);
+    throw Errors.invalidTeardownToken(message);
   }
 
-  const refs = payload.refs ?? {};
+  const teardown: ScenarioTeardown = payload.refs ?? {};
   const testRunId = payload.testRunId ?? "";
+  // The verified token is authoritative for routing; any scenario name on
+  // the request body is ignored.
+  const name = payload.environment ?? "";
 
-  if (config.beforeDown) {
-    const hookCtx: HookContext = { scenarioName: testRunId, refs };
-    await config.beforeDown(hookCtx);
+  const scenario = name ? findScenario(config, name) : undefined;
+  if (scenario?.down) {
+    await scenario.down({ name, teardown, testRunId });
   }
 
-  const factories = config.factories ?? {};
-  const teardownOrder = computeTeardownOrder(
-    refs,
-    payload.aliasDependencies,
-    payload.aliasOwnerModel,
-  );
-
-  for (const model of teardownOrder) {
-    const factory = factories[model];
-    if (!factory || !factory.teardown) continue;
-    const records = refs[model] ?? [];
-    const ctx: FactoryContext = { refs, scenarioName: testRunId, testRunId };
-    for (const record of [...records].reverse()) {
-      let teardownInput: unknown = record;
-      if (factory.refSchema) {
-        const parsed = factory.refSchema.safeParse(record);
-        if (!parsed.success) {
-          const formatted = parsed.error.issues
-            .map(
-              (i: { path: (string | number)[]; message: string }) =>
-                `${i.path.join(".") || "<root>"}: ${i.message}`,
-            )
-            .join("; ");
-          throw new AutonomaError(
-            `Invalid teardown record for "${model}": ${formatted}`,
-            "INTERNAL_ERROR",
-            500,
-          );
-        }
-        teardownInput = parsed.data;
-      }
-      await factory.teardown(teardownInput as never, ctx);
-    }
-  }
-
-  return { status: 200, body: { ...buildSdkMeta(config), ok: true } };
+  const responseBody: DownResponse = { ...buildSdkMeta(config), ok: true };
+  return { status: 200, body: responseBody };
 }
 
-function swapTempIds(
-  value: unknown,
-  idMap: Map<string, string | number>,
-): unknown {
-  if (typeof value === "string" && value.startsWith("__temp_")) {
-    return idMap.get(value) ?? value;
-  }
-  if (Array.isArray(value)) return value.map((v) => swapTempIds(v, idMap));
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = swapTempIds(v, idMap);
-    }
-    return out;
-  }
-  return value;
+function findScenario(
+  config: HandlerConfig,
+  name: string,
+): ScenarioDefinition | undefined {
+  return (config.scenarios ?? []).find((s) => s.name === name);
 }
 
-function normaliseRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function findFirstUser(
-  refs: Record<string, Record<string, unknown>[]>,
-): Record<string, unknown> | null {
-  for (const [model, records] of Object.entries(refs)) {
-    const normalized = model.toLowerCase();
-    if (
-      (normalized === "user" || normalized === "users") &&
-      records.length > 0
-    ) {
-      return records[0]!;
-    }
-  }
-  return null;
-}
-
-function detectScopeValue(
-  refs: Record<string, Record<string, unknown>[]>,
-  scopeField: string,
-): string | null {
-  const scopeNormalized = scopeField.replace(/_/g, "").toLowerCase();
-  for (const records of Object.values(refs)) {
-    for (const record of records) {
-      for (const [key, value] of Object.entries(record)) {
-        if (
-          key.replace(/_/g, "").toLowerCase() === scopeNormalized &&
-          typeof value === "string"
-        ) {
-          return value;
-        }
-      }
-    }
-  }
-  return null;
+/** Read `body.scenario.name` from an untrusted JSON body without casts. */
+function readScenarioName(body: Record<string, unknown>): string | undefined {
+  const scenario = body.scenario;
+  return isRecord(scenario) ? readString(scenario, "name") : undefined;
 }
 
 function randomUUID(): string {

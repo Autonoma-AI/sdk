@@ -8,11 +8,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./graph": {
-      "types": "./dist/graph.d.ts",
-      "import": "./dist/graph.js",
-      "default": "./dist/graph.js"
     }
   },
   "files": [
